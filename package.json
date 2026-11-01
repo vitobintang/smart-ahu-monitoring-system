@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --import tsx --test tests/ahu.test.ts tests/permissions.test.ts",
+    "test": "node --import tsx --test tests/ahu.test.ts tests/permissions.test.ts tests/status.test.ts",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
