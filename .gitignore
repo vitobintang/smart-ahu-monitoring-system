@@ -1,17 +1,32 @@
-# Dependencies and generated files
+# Dependencies
 node_modules/
+/.pnp
+.pnp.js
+
+# Generated files and tests
 .next/
 out/
 dist/
 build/
+coverage/
 *.tsbuildinfo
+next-env.d.ts
 
 # Private environment settings
 .env*
 !.env.example
 
+# Private certificates
+*.pem
+
 # Logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Deployment files
+.vercel
 
 # Editor and operating system files
 .vscode/
