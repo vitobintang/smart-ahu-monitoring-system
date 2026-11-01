@@ -17,5 +17,16 @@
   "bugs": {
     "url": "https://github.com/vitobintang/smart-ahu-monitoring-system/issues"
   },
-  "homepage": "https://github.com/vitobintang/smart-ahu-monitoring-system#readme"
+  "homepage": "https://github.com/vitobintang/smart-ahu-monitoring-system#readme",
+  "dependencies": {
+    "next": "^16.4.3",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3"
+  }
 }
