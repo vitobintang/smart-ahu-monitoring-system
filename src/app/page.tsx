@@ -1,4 +1,5 @@
 import { AHU_IDS } from "../lib/ahu";
+import Link from "next/link";
 
 export default function HomePage() {
   return (
@@ -61,9 +62,10 @@ export default function HomePage() {
 
           <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {AHU_IDS.map((id) => (
-              <article
+              <Link
                 key={id}
-                className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+                href={`/ahu/${id}`}
+                className="block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-blue-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
               >
                 <div className="flex items-center justify-between gap-3">
                   <h3 className="text-base font-bold">{id}</h3>
@@ -86,7 +88,7 @@ export default function HomePage() {
                     <dd className="font-semibold text-slate-500">Unavailable</dd>
                   </div>
                 </dl>
-              </article>
+              </Link>
             ))}
           </div>
         </section>
