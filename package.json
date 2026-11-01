@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --import tsx --test tests/ahu.test.ts",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -34,6 +34,7 @@
     "@types/react-dom": "^19.2.3",
     "postcss": "^8.5.32",
     "tailwindcss": "^4.1.17",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   }
 }
