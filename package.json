@@ -4,11 +4,12 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --import tsx --test tests/ahu.test.ts tests/permissions.test.ts tests/status.test.ts tests/telemetry.test.ts tests/quality.test.ts tests/supabase-config.test.ts tests/schema.test.ts",
+    "test": "node --import tsx --test tests/ahu.test.ts tests/permissions.test.ts tests/status.test.ts tests/telemetry.test.ts tests/quality.test.ts tests/supabase-config.test.ts tests/schema.test.ts tests/migration.test.ts",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate"
   },
   "repository": {
     "type": "git",
