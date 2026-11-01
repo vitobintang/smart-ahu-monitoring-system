@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --import tsx --test tests/ahu.test.ts tests/permissions.test.ts tests/status.test.ts tests/telemetry.test.ts tests/quality.test.ts tests/supabase-config.test.ts tests/schema.test.ts tests/migration.test.ts",
+    "test": "node --import tsx --test tests/ahu.test.ts tests/permissions.test.ts tests/status.test.ts tests/telemetry.test.ts tests/quality.test.ts tests/supabase-config.test.ts tests/schema.test.ts tests/migration.test.ts tests/migration-database.test.ts",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -34,6 +34,7 @@
     "react-dom": "^19.2.6"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.14",
     "@tailwindcss/postcss": "^4.1.17",
     "@types/node": "^22.19.15",
     "@types/pg": "^8.18.0",
