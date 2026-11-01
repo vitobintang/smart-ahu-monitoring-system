@@ -1,0 +1,234 @@
+{
+  "id": "221dc45e-e51b-4c99-b2a1-c0d9a9bffa4b",
+  "prevId": "547d7072-579b-40df-902f-c9228ef70fd2",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "ahu_private.access_devices": {
+      "name": "access_devices",
+      "schema": "ahu_private",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "invitation_hash": {
+          "name": "invitation_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "invitation_expires_at": {
+          "name": "invitation_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "device_hash": {
+          "name": "device_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "claimed_at": {
+          "name": "claimed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "access_devices_invitation_hash_uidx": {
+          "name": "access_devices_invitation_hash_uidx",
+          "columns": [
+            {
+              "expression": "invitation_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "access_devices_device_hash_uidx": {
+          "name": "access_devices_device_hash_uidx",
+          "columns": [
+            {
+              "expression": "device_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "access_devices_user_idx": {
+          "name": "access_devices_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "access_devices_user_id_users_id_fk": {
+          "name": "access_devices_user_id_users_id_fk",
+          "tableFrom": "access_devices",
+          "tableTo": "users",
+          "schemaTo": "ahu_private",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "access_devices_claim_state_check": {
+          "name": "access_devices_claim_state_check",
+          "value": "\n        (\n          \"ahu_private\".\"access_devices\".\"device_hash\" IS NULL\n          AND \"ahu_private\".\"access_devices\".\"claimed_at\" IS NULL\n          AND \"ahu_private\".\"access_devices\".\"expires_at\" IS NULL\n        )\n        OR\n        (\n          \"ahu_private\".\"access_devices\".\"device_hash\" IS NOT NULL\n          AND \"ahu_private\".\"access_devices\".\"claimed_at\" IS NOT NULL\n          AND \"ahu_private\".\"access_devices\".\"expires_at\" IS NOT NULL\n          AND \"ahu_private\".\"access_devices\".\"expires_at\" > \"ahu_private\".\"access_devices\".\"claimed_at\"\n        )\n      "
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "ahu_private.users": {
+      "name": "users",
+      "schema": "ahu_private",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "full_name": {
+          "name": "full_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "role": {
+          "name": "role",
+          "type": "role",
+          "typeSchema": "ahu_private",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'Viewer'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "users_email_uidx": {
+          "name": "users_email_uidx",
+          "columns": [
+            {
+              "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "ahu_private.role": {
+      "name": "role",
+      "schema": "ahu_private",
+      "values": [
+        "Admin",
+        "Engineering",
+        "Operator",
+        "Viewer"
+      ]
+    }
+  },
+  "schemas": {
+    "ahu_private": "ahu_private"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
