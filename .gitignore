@@ -1,0 +1,20 @@
+# Dependencies and generated files
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# Private environment settings
+.env*
+!.env.example
+
+# Logs
+*.log
+
+# Editor and operating system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
