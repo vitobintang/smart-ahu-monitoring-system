@@ -27,9 +27,12 @@
     "react-dom": "^19.2.6"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.17",
     "@types/node": "^22.19.15",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "postcss": "^8.5.32",
+    "tailwindcss": "^4.1.17",
     "typescript": "^5.9.3"
   }
 }
