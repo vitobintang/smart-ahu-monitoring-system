@@ -4,6 +4,7 @@ import React, { useState } from "react";
 
 import { selectReportTimeline } from "../lib/report-selection";
 import ReportTrendExample from "./ReportTrendExample";
+import ReportIntervalsExample from "./ReportIntervalsExample";
 import { summarizeReadings } from "../lib/report-summary";
 import { buildFictionalReportCsv } from "../lib/fictional-report-csv";
 
@@ -11,49 +12,56 @@ import { buildFictionalReportCsv } from "../lib/fictional-report-csv";
 const EXAMPLE_READINGS = [
   {
     ahuId: "AHU-01",
-    source: "SIMULATION", parameter: "roomTemp",
+    source: "SIMULATION",
+    parameter: "roomTemp",
     measuredAt: "2026-01-01T09:00:00.000Z",
     value: 20,
     quality: "VALID",
   },
   {
     ahuId: "AHU-01",
-    source: "SIMULATION", parameter: "roomTemp",
+    source: "SIMULATION",
+    parameter: "roomTemp",
     measuredAt: "2026-01-01T10:00:00.000Z",
     value: 22,
     quality: "VALID",
   },
   {
     ahuId: "AHU-01",
-    source: "SIMULATION", parameter: "roomTemp",
+    source: "SIMULATION",
+    parameter: "roomTemp",
     measuredAt: "2026-01-01T11:00:00.000Z",
     value: null,
     quality: "MISSING",
   },
   {
     ahuId: "AHU-01",
-    source: "SIMULATION", parameter: "roomTemp",
+    source: "SIMULATION",
+    parameter: "roomTemp",
     measuredAt: "2026-01-01T12:00:00.000Z",
     value: 24,
     quality: "VALID",
   },
   {
     ahuId: "AHU-01",
-    source: "SIMULATION", parameter: "roomTemp",
+    source: "SIMULATION",
+    parameter: "roomTemp",
     measuredAt: "2026-01-01T13:00:00.000Z",
     value: 26,
     quality: "ESTIMATED",
   },
   {
     ahuId: "AHU-02",
-    source: "SIMULATION", parameter: "roomTemp",
+    source: "SIMULATION",
+    parameter: "roomTemp",
     measuredAt: "2026-01-01T09:30:00.000Z",
     value: 19,
     quality: "VALID",
   },
   {
     ahuId: "AHU-02",
-    source: "SIMULATION", parameter: "roomTemp",
+    source: "SIMULATION",
+    parameter: "roomTemp",
     measuredAt: "2026-01-01T12:30:00.000Z",
     value: 23,
     quality: "VALID",
@@ -83,7 +91,8 @@ export default function ReportFilterExample() {
 
   const selection = selectReportTimeline(EXAMPLE_READINGS, {
     ahuId,
-    source: "SIMULATION", parameter: "roomTemp",
+    source: "SIMULATION",
+    parameter: "roomTemp",
     ...WINDOWS[windowName],
   });
 
@@ -140,7 +149,6 @@ export default function ReportFilterExample() {
           >
             Fictional unit
           </label>
-
           <select
             id="report-example-ahu"
             value={ahuId}
@@ -166,7 +174,6 @@ export default function ReportFilterExample() {
           >
             Fictional time window (UTC)
           </label>
-
           <select
             id="report-example-window"
             value={windowName}
@@ -215,13 +222,9 @@ export default function ReportFilterExample() {
             </div>
 
             <div className="rounded-xl bg-slate-50 p-4">
-              <dt className="text-sm text-slate-600">
-                Minimum / maximum
-              </dt>
+              <dt className="text-sm text-slate-600">Minimum / maximum</dt>
               <dd className="mt-2 text-xl font-bold text-[#12294d]">
-                {summary
-                  ? `${summary.min} / ${summary.max}`
-                  : "Unavailable"}
+                {summary ? `${summary.min} / ${summary.max}` : "Unavailable"}
               </dd>
             </div>
 
@@ -242,6 +245,15 @@ export default function ReportFilterExample() {
           end={WINDOWS[windowName].end}
         />
       )}
+
+      {selection.ok === true && (
+        <ReportIntervalsExample
+          points={selection.points}
+          start={WINDOWS[windowName].start}
+          end={WINDOWS[windowName].end}
+        />
+      )}
+
       {selection.ok === true && (
         <div className="mt-5 rounded-xl border border-violet-200 bg-violet-50 p-4">
           {exampleCsvHref === null ? (

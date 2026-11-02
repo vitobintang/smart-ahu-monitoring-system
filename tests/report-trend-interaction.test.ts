@@ -40,18 +40,23 @@ test("fictional chart follows the report filters", async () => {
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
 
+  function trendRows() {
+    return container.querySelectorAll(
+      '[aria-labelledby="report-trend-title"] tbody tr',
+    ).length;
+  }
+
   try {
     await act(async () => {
       root.render(createElement(ReportFilterExample));
     });
 
-    assert.equal(container.querySelectorAll("tbody tr").length, 5);
+    assert.equal(trendRows(), 5);
     assert.equal(container.querySelectorAll("circle").length, 3);
 
     const windowSelect = container.querySelector<HTMLSelectElement>(
       "#report-example-window",
     );
-
     assert.ok(windowSelect);
 
     await act(async () => {
@@ -61,14 +66,13 @@ test("fictional chart follows the report filters", async () => {
       );
     });
 
-    assert.equal(container.querySelectorAll("tbody tr").length, 2);
+    assert.equal(trendRows(), 2);
     assert.equal(container.querySelectorAll("circle").length, 1);
     assert.match(container.textContent ?? "", /ESTIMATED · excluded/);
 
     const unitSelect = container.querySelector<HTMLSelectElement>(
       "#report-example-ahu",
     );
-
     assert.ok(unitSelect);
 
     await act(async () => {
@@ -78,14 +82,15 @@ test("fictional chart follows the report filters", async () => {
       );
     });
 
-    assert.equal(container.querySelectorAll("tbody tr").length, 1);
+    assert.equal(trendRows(), 1);
     assert.equal(container.querySelectorAll("circle").length, 1);
     assert.match(
       container.textContent ?? "",
       /2026-01-01T12:30:00.000Z/,
     );
     assert.doesNotMatch(
-      container.textContent ?? "",
+      container.querySelector('[aria-labelledby="report-trend-title"]')
+        ?.textContent ?? "",
       /2026-01-01T13:00:00.000Z/,
     );
   } finally {
