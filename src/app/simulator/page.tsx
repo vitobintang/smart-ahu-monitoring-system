@@ -7,6 +7,7 @@ import { AHU_IDS } from "../../lib/ahu";
 import { createSimulationSample } from "../../lib/simulation";
 
 import StatusScenario from "../../components/StatusScenario";
+import ThresholdScenario from "../../components/ThresholdScenario";
 
 type SimulatedSample = Extract<
   ReturnType<typeof createSimulationSample>,
@@ -192,6 +193,7 @@ export default function SimulatorPage() {
           </p>
         </section>
         <StatusScenario />
+        <ThresholdScenario />
       </div>
     </main>
   );
