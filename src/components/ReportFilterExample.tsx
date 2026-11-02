@@ -5,8 +5,9 @@ import React, { useState } from "react";
 import { selectReportTimeline } from "../lib/report-selection";
 import ReportTrendExample from "./ReportTrendExample";
 import { summarizeReadings } from "../lib/report-summary";
+import { buildFictionalReportCsv } from "../lib/fictional-report-csv";
 
-// Fictional records only. Nothing is fetched or saved.
+// Fictional records only. No data is fetched or sent to a server.
 const EXAMPLE_READINGS = [
   {
     ahuId: "AHU-01",
@@ -90,6 +91,22 @@ export default function ReportFilterExample() {
     selection.ok === true
       ? summarizeReadings(selection.values)
       : null;
+
+  const exampleCsv =
+    selection.ok === true
+      ? buildFictionalReportCsv({
+          ahuId,
+          ...WINDOWS[windowName],
+          points: selection.points,
+        })
+      : null;
+
+  const exampleCsvHref =
+    exampleCsv === null
+      ? null
+      : `data:text/csv;charset=utf-8,${encodeURIComponent(
+          "\uFEFF" + exampleCsv,
+        )}`;
 
   return (
     <section
@@ -224,6 +241,28 @@ export default function ReportFilterExample() {
           start={WINDOWS[windowName].start}
           end={WINDOWS[windowName].end}
         />
+      )}
+      {selection.ok === true && (
+        <div className="mt-5 rounded-xl border border-violet-200 bg-violet-50 p-4">
+          {exampleCsvHref === null ? (
+            <p className="text-sm text-slate-700">
+              Fictional CSV unavailable.
+            </p>
+          ) : (
+            <a
+              href={exampleCsvHref}
+              download={`fictional-room-temperature-${ahuId}.csv`}
+              className="inline-block rounded-lg bg-violet-700 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-700"
+            >
+              Download fictional CSV
+            </a>
+          )}
+
+          <p className="mt-2 text-xs leading-5 text-slate-600">
+            Fictional example only; the file contains no real AHU data.
+            Excluded readings have blank values.
+          </p>
+        </div>
       )}
 
       <p className="mt-4 text-xs leading-5 text-slate-500">
