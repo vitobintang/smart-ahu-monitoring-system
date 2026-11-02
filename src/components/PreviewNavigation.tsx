@@ -4,18 +4,31 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const links = [
-  { href: "/", label: "Dashboard" },
-  { href: "/alarms", label: "Alarms preview" },
-  { href: "/reports", label: "Reports preview" },
-  { href: "/simulator", label: "Simulator preview" },
-  { href: "/config", label: "Configuration preview" },
-  { href: "/trends", label: "Trends preview" },
-  { href: "/energy", label: "Energy preview" },
-  { href: "/maintenance", label: "Maintenance preview" },
-  { href: "/admin", label: "Administration preview" },
-  { href: "/audit", label: "Audit preview" },
-  { href: "/login", label: "Sign-in preview" },
+const groups = [
+  {
+    label: "Overview",
+    links: [{ href: "/", label: "Dashboard" }],
+  },
+  {
+    label: "Monitoring",
+    links: [
+      { href: "/alarms", label: "Alarms preview" },
+      { href: "/reports", label: "Reports preview" },
+      { href: "/trends", label: "Trends preview" },
+      { href: "/energy", label: "Energy preview" },
+      { href: "/maintenance", label: "Maintenance preview" },
+      { href: "/simulator", label: "Simulator preview" },
+    ],
+  },
+  {
+    label: "Management",
+    links: [
+      { href: "/config", label: "Configuration preview" },
+      { href: "/admin", label: "Administration preview" },
+      { href: "/audit", label: "Audit preview" },
+      { href: "/login", label: "Sign-in preview" },
+    ],
+  },
 ] as const;
 
 export function PreviewNavigationLinks({
@@ -24,31 +37,38 @@ export function PreviewNavigationLinks({
   pathname: string | null;
 }) {
   return (
-    <nav aria-label="Main navigation" className="mt-5 lg:mt-8">
-      <p className="text-[11px] font-semibold uppercase tracking-widest text-blue-200">
-        Preview sections
-      </p>
+    <nav
+      aria-label="Main navigation"
+      className="mt-5 space-y-4 lg:mt-8"
+    >
+      {groups.map((group) => (
+        <div key={group.label}>
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-blue-200">
+            {group.label}
+          </p>
 
-      <div className="mt-3 flex flex-wrap gap-2 lg:flex-col">
-        {links.map((link) => {
-          const current = pathname === link.href;
+          <div className="mt-2 flex flex-wrap gap-2 lg:flex-col lg:gap-1">
+            {group.links.map((link) => {
+              const current = pathname === link.href;
 
-          return (
-            <Link
-              key={link.href}
-              href={link.href}
-              aria-current={current ? "page" : undefined}
-              className={`rounded-xl px-3 py-2.5 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-200 ${
-                current
-                  ? "bg-blue-500/25 text-white"
-                  : "text-blue-100 hover:bg-white/10"
-              }`}
-            >
-              {link.label}
-            </Link>
-          );
-        })}
-      </div>
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  aria-current={current ? "page" : undefined}
+                  className={`rounded-xl px-3 py-2.5 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-200 ${
+                    current
+                      ? "bg-blue-500/25 text-white"
+                      : "text-blue-100 hover:bg-white/10"
+                  }`}
+                >
+                  {link.label}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </nav>
   );
 }
