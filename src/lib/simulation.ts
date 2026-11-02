@@ -28,7 +28,7 @@ export function createSimulationSample(input: {
     },
   });
 
-  if (!result.ok) {
+  if (result.ok === false) {
     return result;
   }
 
