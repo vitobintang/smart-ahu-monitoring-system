@@ -166,3 +166,71 @@ test("initial filter example is labelled simulated and shows totals", () => {
   match(html, />20 \/ 24</);
   match(html, />22\.0</);
 });
+
+test("a report window of exactly 31 days is allowed", () => {
+  const result = selectReportReadings([], {
+    ahuId: "AHU-01",
+    source: "SIMULATION",
+    start: "2026-01-01T00:00:00.000Z",
+    end: "2026-02-01T00:00:00.000Z",
+  });
+
+  deepStrictEqual(result, {
+    ok: true,
+    values: [],
+    matched: 0,
+    excluded: 0,
+  });
+});
+
+test("a report window exceeding 31 days is rejected", () => {
+  const result = selectReportReadings([], {
+    ahuId: "AHU-01",
+    source: "SIMULATION",
+    start: "2026-01-01T00:00:00.000Z",
+    end: "2026-02-01T00:00:00.001Z",
+  });
+
+  equal(result.ok, false);
+});
+
+test("the end of a 31-day window is excluded", () => {
+  const result = selectReportReadings(
+    [
+      {
+        ahuId: "AHU-01",
+        source: "SIMULATION",
+        measuredAt: "2026-01-01T00:00:00.000Z",
+        value: 1,
+        quality: "VALID",
+      },
+      {
+        ahuId: "AHU-01",
+        source: "SIMULATION",
+        measuredAt: "2026-01-31T23:59:59.999Z",
+        value: 2,
+        quality: "VALID",
+      },
+      {
+        ahuId: "AHU-01",
+        source: "SIMULATION",
+        measuredAt: "2026-02-01T00:00:00.000Z",
+        value: 3,
+        quality: "VALID",
+      },
+    ],
+    {
+      ahuId: "AHU-01",
+      source: "SIMULATION",
+      start: "2026-01-01T00:00:00.000Z",
+      end: "2026-02-01T00:00:00.000Z",
+    },
+  );
+
+  deepStrictEqual(result, {
+    ok: true,
+    values: [1, 2],
+    matched: 2,
+    excluded: 0,
+  });
+});

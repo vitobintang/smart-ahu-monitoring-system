@@ -1,5 +1,7 @@
 import { AHU_IDS } from "./ahu";
 
+const MAX_REPORT_WINDOW_MS = 31 * 24 * 60 * 60 * 1000;
+
 export type ReportSource = "PHYSICAL" | "SIMULATION";
 type Quality = "VALID" | "MISSING" | "ESTIMATED";
 
@@ -63,7 +65,12 @@ export function selectReportReadings(
   const start = utcTime(filter.start);
   const end = utcTime(filter.end);
 
-  if (start === null || end === null || start >= end) {
+  if (
+    start === null ||
+    end === null ||
+    start >= end ||
+    end - start > MAX_REPORT_WINDOW_MS
+  ) {
     return { ok: false, error: "Invalid report time range." };
   }
 
