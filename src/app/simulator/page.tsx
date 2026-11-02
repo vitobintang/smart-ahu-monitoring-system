@@ -10,6 +10,7 @@ import { parseSimulatedValue } from "../../lib/simulated-input";
 import StatusScenario from "../../components/StatusScenario";
 import ThresholdScenario from "../../components/ThresholdScenario";
 import SimulatedSampleThresholds from "../../components/SimulatedSampleThresholds";
+import FictionalPerformance from "../../components/FictionalPerformance";
 
 type SimulatedSample = Extract<
   ReturnType<typeof createSimulationSample>,
@@ -78,9 +79,11 @@ export default function SimulatorPage() {
           <p className="text-xs font-semibold uppercase tracking-widest text-blue-700">
             Development preview
           </p>
+
           <h1 className="mt-2 text-3xl font-bold tracking-tight text-[#12294d]">
             Local simulator
           </h1>
+
           <p className="mt-2 text-sm text-slate-600">
             Generate one example sample in this browser.
           </p>
@@ -90,9 +93,9 @@ export default function SimulatorPage() {
           aria-label="Safety notice"
           className="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950"
         >
-          <strong>Simulated data only.</strong> This page is not protected by
-          login. Samples are not sent or saved, and no equipment controls are
-          available. Do not use this preview to monitor real equipment.
+          <strong>Simulated data only.</strong> This page is not protected
+          by login. Samples are not sent or saved, and no equipment controls
+          are available. Do not use this preview to monitor real equipment.
         </section>
 
         <section
@@ -105,6 +108,7 @@ export default function SimulatorPage() {
           >
             Generate a sample
           </h2>
+
           <p className="mt-2 text-sm text-slate-600">
             Choose a planned unit and enter fictional values. Leave a field
             blank for a missing value. These are not measurements or
@@ -124,6 +128,7 @@ export default function SimulatorPage() {
               >
                 AHU identifier
               </label>
+
               <select
                 id="ahu-id"
                 value={ahuId}
@@ -149,6 +154,7 @@ export default function SimulatorPage() {
               >
                 Fictional room temperature (°C)
               </label>
+
               <input
                 id="simulation-temperature"
                 type="text"
@@ -170,6 +176,7 @@ export default function SimulatorPage() {
               >
                 Fictional humidity (%)
               </label>
+
               <input
                 id="simulation-humidity"
                 type="text"
@@ -182,7 +189,7 @@ export default function SimulatorPage() {
                 }}
                 className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
               />
-            </div>            
+            </div>
 
             <button
               type="button"
@@ -205,6 +212,7 @@ export default function SimulatorPage() {
             >
               Example sample
             </h2>
+
             <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-bold text-violet-800">
               SIMULATED
             </span>
@@ -229,12 +237,16 @@ export default function SimulatorPage() {
                     {sample.message.ahuId}
                   </dd>
                 </div>
+
                 <div>
-                  <dt className="text-sm text-slate-600">Sample time (UTC)</dt>
+                  <dt className="text-sm text-slate-600">
+                    Sample time (UTC)
+                  </dt>
                   <dd className="mt-1 break-all font-semibold">
                     {sample.message.measuredAt}
                   </dd>
                 </div>
+
                 <div>
                   <dt className="text-sm text-slate-600">
                     Example room temperature
@@ -245,8 +257,11 @@ export default function SimulatorPage() {
                       : `${sample.message.readings.roomTemp} °C`}
                   </dd>
                 </div>
+
                 <div>
-                  <dt className="text-sm text-slate-600">Example humidity</dt>
+                  <dt className="text-sm text-slate-600">
+                    Example humidity
+                  </dt>
                   <dd className="mt-1 font-semibold">
                     {sample.message.readings.humidity == null
                       ? "Unavailable"
@@ -262,11 +277,15 @@ export default function SimulatorPage() {
             or refresh. The dashboard is not connected to it.
           </p>
         </section>
+
         <SimulatedSampleThresholds
           hasSample={sample !== null}
           roomTemp={sample?.message.readings.roomTemp ?? null}
           humidity={sample?.message.readings.humidity ?? null}
         />
+
+        <FictionalPerformance />
+
         <StatusScenario />
         <ThresholdScenario />
       </div>
