@@ -44,3 +44,12 @@ test("empty search restores all seven units", () => {
 test("an unknown search returns no matches", () => {
   deepStrictEqual(filterPlannedUnits("AHU-99"), []);
 });
+
+test("search uses a labelled clear button instead of a native search input", () => {
+  const html = renderToStaticMarkup(createElement(AhuUnitGrid));
+
+  match(html, /type="text"/);
+  match(html, /role="searchbox"/);
+  match(html, /Clear search/);
+  doesNotMatch(html, /type="search"/);
+});

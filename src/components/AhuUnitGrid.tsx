@@ -56,7 +56,8 @@ export default function AhuUnitGrid() {
         <div className="mt-2 flex flex-wrap gap-2">
           <input
             id="unit-search"
-            type="search"
+            type="text"
+            role="searchbox"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="For example, AHU-01"
