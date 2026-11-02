@@ -12,7 +12,7 @@ import { summarizeReadings } from "../src/lib/report-summary";
 
 const filter: ReportFilter = {
   ahuId: "AHU-01",
-  source: "SIMULATION",
+  source: "SIMULATION", parameter: "roomTemp",
   start: "2026-01-01T09:00:00.000Z",
   end: "2026-01-01T12:00:00.000Z",
 };
@@ -20,56 +20,56 @@ const filter: ReportFilter = {
 const rows = [
   {
     ahuId: "AHU-01",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     measuredAt: "2026-01-01T09:00:00.000Z",
     value: 20,
     quality: "VALID",
   },
   {
     ahuId: "AHU-01",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     measuredAt: "2026-01-01T10:00:00.000Z",
     value: 22,
     quality: "VALID",
   },
   {
     ahuId: "AHU-01",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     measuredAt: "2026-01-01T11:00:00.000Z",
     value: null,
     quality: "MISSING",
   },
   {
     ahuId: "AHU-01",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     measuredAt: "2026-01-01T11:30:00.000Z",
     value: 25,
     quality: "ESTIMATED",
   },
   {
     ahuId: "AHU-01",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     measuredAt: "2026-01-01T11:45:00.000Z",
     value: NaN,
     quality: "VALID",
   },
   {
     ahuId: "AHU-01",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     measuredAt: "2026-01-01T12:00:00.000Z",
     value: 24,
     quality: "VALID",
   },
   {
     ahuId: "AHU-02",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     measuredAt: "2026-01-01T10:00:00.000Z",
     value: 99,
     quality: "VALID",
   },
   {
     ahuId: "AHU-01",
-    source: "PHYSICAL",
+    source: "PHYSICAL", parameter: "roomTemp",
     measuredAt: "2026-01-01T10:00:00.000Z",
     value: 98,
     quality: "VALID",
@@ -101,7 +101,7 @@ test("filters AHU, source and time before summary", () => {
 test("can select physical source without simulated rows", () => {
   const result = selectReportReadings(rows, {
     ...filter,
-    source: "PHYSICAL",
+    source: "PHYSICAL", parameter: "roomTemp",
   });
 
   deepStrictEqual(result, {
@@ -170,7 +170,7 @@ test("initial filter example is labelled simulated and shows totals", () => {
 test("a report window of exactly 31 days is allowed", () => {
   const result = selectReportReadings([], {
     ahuId: "AHU-01",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     start: "2026-01-01T00:00:00.000Z",
     end: "2026-02-01T00:00:00.000Z",
   });
@@ -186,7 +186,7 @@ test("a report window of exactly 31 days is allowed", () => {
 test("a report window exceeding 31 days is rejected", () => {
   const result = selectReportReadings([], {
     ahuId: "AHU-01",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     start: "2026-01-01T00:00:00.000Z",
     end: "2026-02-01T00:00:00.001Z",
   });
@@ -199,21 +199,21 @@ test("the end of a 31-day window is excluded", () => {
     [
       {
         ahuId: "AHU-01",
-        source: "SIMULATION",
+        source: "SIMULATION", parameter: "roomTemp",
         measuredAt: "2026-01-01T00:00:00.000Z",
         value: 1,
         quality: "VALID",
       },
       {
         ahuId: "AHU-01",
-        source: "SIMULATION",
+        source: "SIMULATION", parameter: "roomTemp",
         measuredAt: "2026-01-31T23:59:59.999Z",
         value: 2,
         quality: "VALID",
       },
       {
         ahuId: "AHU-01",
-        source: "SIMULATION",
+        source: "SIMULATION", parameter: "roomTemp",
         measuredAt: "2026-02-01T00:00:00.000Z",
         value: 3,
         quality: "VALID",
@@ -221,7 +221,7 @@ test("the end of a 31-day window is excluded", () => {
     ],
     {
       ahuId: "AHU-01",
-      source: "SIMULATION",
+      source: "SIMULATION", parameter: "roomTemp",
       start: "2026-01-01T00:00:00.000Z",
       end: "2026-02-01T00:00:00.000Z",
     },
@@ -233,4 +233,70 @@ test("the end of a 31-day window is excluded", () => {
     matched: 2,
     excluded: 0,
   });
+});
+
+test("different sensor parameters are not combined", () => {
+  const readings = [
+    { ...rows[0], parameter: "roomTemp", value: 20 },
+    { ...rows[0], parameter: "humidity", value: 50 },
+    { ...rows[0], parameter: "supplyTemp", value: 19 },
+  ];
+
+  deepStrictEqual(selectReportReadings(readings, filter), {
+    ok: true,
+    values: [20],
+    matched: 1,
+    excluded: 0,
+  });
+
+  deepStrictEqual(
+    selectReportReadings(readings, {
+      ...filter,
+      parameter: "humidity",
+    }),
+    {
+      ok: true,
+      values: [50],
+      matched: 1,
+      excluded: 0,
+    },
+  );
+});
+
+test("missing or unknown requested parameters are rejected", () => {
+  const { parameter, ...withoutParameter } = filter;
+
+  equal(
+    selectReportReadings(
+      rows,
+      withoutParameter as unknown as ReportFilter,
+    ).ok,
+    false,
+  );
+
+  equal(
+    selectReportReadings(rows, {
+      ...filter,
+      parameter: "unknown",
+    } as unknown as ReportFilter).ok,
+    false,
+  );
+});
+
+test("missing or unknown reading parameters are rejected", () => {
+  equal(
+    selectReportReadings(
+      [{ ...rows[0], parameter: undefined }],
+      filter,
+    ).ok,
+    false,
+  );
+
+  equal(
+    selectReportReadings(
+      [{ ...rows[0], parameter: "unknown" }],
+      filter,
+    ).ok,
+    false,
+  );
 });

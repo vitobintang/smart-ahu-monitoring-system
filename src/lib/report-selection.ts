@@ -1,4 +1,4 @@
-import { AHU_IDS } from "./ahu";
+import { AHU_IDS, SENSOR_PARAMETERS, type SensorKey } from "./ahu";
 
 const MAX_REPORT_WINDOW_MS = 31 * 24 * 60 * 60 * 1000;
 
@@ -8,6 +8,7 @@ type Quality = "VALID" | "MISSING" | "ESTIMATED";
 export type ReportFilter = {
   ahuId: string;
   source: ReportSource;
+  parameter: SensorKey;
   start: string;
   end: string;
 };
@@ -36,6 +37,13 @@ function isQuality(value: unknown): value is Quality {
   return value === "VALID" || value === "MISSING" || value === "ESTIMATED";
 }
 
+function isParameter(value: unknown): value is SensorKey {
+  return (
+    typeof value === "string" &&
+    SENSOR_PARAMETERS.some((sensor) => sensor.key === value)
+  );
+}
+
 function utcTime(value: unknown): number | null {
   if (typeof value !== "string") return null;
 
@@ -57,7 +65,8 @@ export function selectReportReadings(
     !isRecord(filter) ||
     typeof filter.ahuId !== "string" ||
     !AHU_IDS.some((id) => id === filter.ahuId) ||
-    !isSource(filter.source)
+    !isSource(filter.source) ||
+    !isParameter(filter.parameter)
   ) {
     return { ok: false, error: "Invalid report filter." };
   }
@@ -88,6 +97,7 @@ export function selectReportReadings(
       typeof row.ahuId !== "string" ||
       !AHU_IDS.some((id) => id === row.ahuId) ||
       !isSource(row.source) ||
+      !isParameter(row.parameter) ||
       !isQuality(row.quality) ||
       (row.value !== null && typeof row.value !== "number")
     ) {
@@ -103,6 +113,7 @@ export function selectReportReadings(
     if (
       row.ahuId !== filter.ahuId ||
       row.source !== filter.source ||
+      row.parameter !== filter.parameter ||
       time < start ||
       time >= end
     ) {

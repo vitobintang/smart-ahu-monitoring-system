@@ -9,49 +9,49 @@ import { summarizeReadings } from "../lib/report-summary";
 const EXAMPLE_READINGS = [
   {
     ahuId: "AHU-01",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     measuredAt: "2026-01-01T09:00:00.000Z",
     value: 20,
     quality: "VALID",
   },
   {
     ahuId: "AHU-01",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     measuredAt: "2026-01-01T10:00:00.000Z",
     value: 22,
     quality: "VALID",
   },
   {
     ahuId: "AHU-01",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     measuredAt: "2026-01-01T11:00:00.000Z",
     value: null,
     quality: "MISSING",
   },
   {
     ahuId: "AHU-01",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     measuredAt: "2026-01-01T12:00:00.000Z",
     value: 24,
     quality: "VALID",
   },
   {
     ahuId: "AHU-01",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     measuredAt: "2026-01-01T13:00:00.000Z",
     value: 26,
     quality: "ESTIMATED",
   },
   {
     ahuId: "AHU-02",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     measuredAt: "2026-01-01T09:30:00.000Z",
     value: 19,
     quality: "VALID",
   },
   {
     ahuId: "AHU-02",
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     measuredAt: "2026-01-01T12:30:00.000Z",
     value: 23,
     quality: "VALID",
@@ -81,7 +81,7 @@ export default function ReportFilterExample() {
 
   const selection = selectReportReadings(EXAMPLE_READINGS, {
     ahuId,
-    source: "SIMULATION",
+    source: "SIMULATION", parameter: "roomTemp",
     ...WINDOWS[windowName],
   });
 
@@ -104,8 +104,8 @@ export default function ReportFilterExample() {
             Example report filters
           </h2>
           <p className="mt-1 text-sm text-slate-600">
-            Fictional records and example units only. This is not stored
-            AHU history.
+            Fictional room-temperature records and example units only. This
+            is not stored AHU history.
           </p>
         </div>
 
