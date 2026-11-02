@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 
 import { AHU_IDS, SENSOR_PARAMETERS } from "../../../lib/ahu";
 
+import AhuSchematicPreview from "../../../components/AhuSchematicPreview";
+
 const unitInformation = [
   { label: "Status", value: "Unavailable" },
   { label: "Location", value: "Unavailable" },
@@ -88,7 +90,7 @@ export default async function AhuDetailPage({
             ))}
           </dl>
         </section>
-
+        <AhuSchematicPreview />
         <section aria-labelledby="sensors-heading" className="mt-9">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
