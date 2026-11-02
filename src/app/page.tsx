@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { AHU_IDS } from "../lib/ahu";
 
+import ProtectedUnitList from "../components/ProtectedUnitList";
+
 const summary = [
   {
     label: "Planned units",
@@ -103,7 +105,7 @@ export default function HomePage() {
             not connected. Status and readings are unavailable. This page
             is not protected by login yet.
           </section>
-
+          <ProtectedUnitList />
           <section aria-labelledby="overview-heading" className="mt-8">
             <h2
               id="overview-heading"
