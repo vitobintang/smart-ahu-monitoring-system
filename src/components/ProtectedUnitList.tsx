@@ -1,20 +1,43 @@
 "use client";
 
-import { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+
 import type { MonitoringUnit } from "../db/monitoring";
 import { parseMonitoringResponse } from "../lib/monitoring-client";
 
-type Phase = "idle" | "loading" | "ready" | "denied" | "error";
+type Phase =
+  | "idle"
+  | "loading"
+  | "ready"
+  | "denied"
+  | "error"
+  | "cleared";
 
 export default function ProtectedUnitList() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [units, setUnits] = useState<MonitoringUnit[]>([]);
-  const inFlight = useRef(false);
+  const active = useRef<AbortController | null>(null);
+
+  useEffect(
+    () => () => {
+      active.current?.abort();
+      active.current = null;
+    },
+    [],
+  );
+
+  function clear() {
+    active.current?.abort();
+    active.current = null;
+    setUnits([]);
+    setPhase("cleared");
+  }
 
   async function loadUnits() {
-    if (inFlight.current) return;
+    if (active.current) return;
 
-    inFlight.current = true;
+    const controller = new AbortController();
+    active.current = controller;
     setUnits([]);
     setPhase("loading");
 
@@ -23,7 +46,10 @@ export default function ProtectedUnitList() {
         cache: "no-store",
         credentials: "same-origin",
         headers: { Accept: "application/json" },
+        signal: controller.signal,
       });
+
+      if (controller.signal.aborted) return;
 
       if (response.status === 401) {
         setPhase("denied");
@@ -37,6 +63,8 @@ export default function ProtectedUnitList() {
 
       const parsed = parseMonitoringResponse(await response.json());
 
+      if (controller.signal.aborted) return;
+
       if (parsed === null) {
         setPhase("error");
         return;
@@ -45,9 +73,11 @@ export default function ProtectedUnitList() {
       setUnits(parsed);
       setPhase("ready");
     } catch {
-      setPhase("error");
+      if (!controller.signal.aborted) setPhase("error");
     } finally {
-      inFlight.current = false;
+      if (active.current === controller) {
+        active.current = null;
+      }
     }
   }
 
@@ -62,24 +92,45 @@ export default function ProtectedUnitList() {
       >
         Configured unit names
       </h2>
+
       <p className="mt-2 text-sm leading-6 text-slate-600">
         This optional read requires a verified session and an authorized
         browser. If a session already exists, it may contact Supabase when
         clicked. The dashboard itself is not protected by login yet.
       </p>
 
-      <button
-        type="button"
-        onClick={loadUnits}
-        disabled={phase === "loading"}
-        className="mt-4 rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-wait disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-      >
-        {phase === "loading" ? "Loading..." : "Load configured units"}
-      </button>
+      <div className="mt-4 flex flex-wrap gap-3">
+        <button
+          type="button"
+          onClick={loadUnits}
+          disabled={phase === "loading"}
+          className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-wait disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+        >
+          {phase === "loading" ? "Loading..." : "Load configured units"}
+        </button>
+
+        <button
+          type="button"
+          onClick={clear}
+          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+        >
+          Clear / cancel
+        </button>
+      </div>
 
       <div aria-live="polite" className="mt-4 text-sm">
         {phase === "idle" && (
           <p className="text-slate-600">No request has been made.</p>
+        )}
+
+        {phase === "cleared" && (
+          <p className="text-slate-600">
+            List cleared. No request in progress.
+          </p>
+        )}
+
+        {phase === "loading" && (
+          <p className="text-slate-600">Loading configured units...</p>
         )}
 
         {phase === "denied" && (
@@ -116,7 +167,9 @@ export default function ProtectedUnitList() {
 
       <p className="mt-4 text-xs text-slate-500">
         Names and locations are configuration, not live status or equipment
-        readings.
+        readings. Displayed data may remain visible after access is revoked
+        until you clear it or leave this page. Clear does not log you out or
+        guarantee removal from browser history.
       </p>
     </section>
   );
