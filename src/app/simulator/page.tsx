@@ -8,6 +8,7 @@ import { createSimulationSample } from "../../lib/simulation";
 
 import StatusScenario from "../../components/StatusScenario";
 import ThresholdScenario from "../../components/ThresholdScenario";
+import SimulatedSampleThresholds from "../../components/SimulatedSampleThresholds";
 
 type SimulatedSample = Extract<
   ReturnType<typeof createSimulationSample>,
@@ -192,6 +193,11 @@ export default function SimulatorPage() {
             or refresh. The dashboard is not connected to it.
           </p>
         </section>
+        <SimulatedSampleThresholds
+          hasSample={sample !== null}
+          roomTemp={sample?.message.readings.roomTemp ?? null}
+          humidity={sample?.message.readings.humidity ?? null}
+        />
         <StatusScenario />
         <ThresholdScenario />
       </div>
