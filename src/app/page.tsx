@@ -29,55 +29,9 @@ const summary = [
 export default function HomePage() {
   return (
     <main
-      className="min-h-screen bg-[#eef3fa] text-slate-900 lg:flex"
+      className="min-h-screen bg-[#eef3fa] text-slate-900"
       style={{ colorScheme: "light" }}
     >
-      <aside className="bg-[#102747] px-5 py-6 text-white lg:min-h-screen lg:w-60 lg:shrink-0">
-        <div className="flex items-center gap-3">
-          <span
-            aria-hidden="true"
-            className="grid h-10 w-10 place-items-center rounded-xl bg-blue-500 text-lg font-bold"
-          >
-            A
-          </span>
-          <div>
-            <p className="text-base font-bold">Smart AHU</p>
-            <p className="text-xs text-blue-200">Monitoring system</p>
-          </div>
-        </div>
-
-        <nav aria-label="Dashboard navigation" className="mt-8">
-          <p className="px-3 text-[11px] font-semibold uppercase tracking-widest text-blue-200">
-            Overview
-          </p>
-          <p
-            aria-current="page"
-            className="mt-3 rounded-xl bg-blue-500/25 px-3 py-3 text-sm font-semibold"
-          >
-            Dashboard
-          </p>
-          <Link
-            href="/simulator"
-            className="mt-2 block rounded-xl px-3 py-3 text-sm font-semibold text-blue-100 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-200"
-          >
-            Simulator preview
-          </Link>
-          <Link
-            href="/reports"
-            className="mt-2 block rounded-xl px-3 py-3 text-sm font-semibold text-blue-100 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-200"
-          >
-            Reports preview
-          </Link>
-        </nav>
-
-        <div className="mt-8 rounded-xl border border-blue-300/20 bg-white/5 p-4">
-          <p className="text-sm font-semibold">Development preview</p>
-          <p className="mt-1 text-xs leading-5 text-blue-100">
-            More sections will be added as they are built.
-          </p>
-        </div>
-      </aside>
-
       <div className="min-w-0 flex-1 px-4 py-6 sm:px-8 lg:px-10">
         <div className="mx-auto max-w-7xl">
           <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-5">
