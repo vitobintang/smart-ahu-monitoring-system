@@ -9,6 +9,10 @@ const links = [
   { href: "/alarms", label: "Alarms preview" },
   { href: "/reports", label: "Reports preview" },
   { href: "/simulator", label: "Simulator preview" },
+  { href: "/config", label: "Configuration preview" },
+  { href: "/trends", label: "Trends preview" },
+  { href: "/energy", label: "Energy preview" },
+  { href: "/maintenance", label: "Maintenance preview" },
   { href: "/login", label: "Sign-in preview" },
 ] as const;
 
@@ -62,14 +66,19 @@ export default function PreviewNavigation() {
 
         <div>
           <p className="text-base font-bold">Smart AHU</p>
-          <p className="text-xs text-blue-200">Monitoring system</p>
+          <p className="text-xs text-blue-200">
+            Monitoring system
+          </p>
         </div>
       </div>
 
       <PreviewNavigationLinks pathname={pathname} />
 
       <div className="mt-5 rounded-xl border border-blue-300/20 bg-white/5 p-3 lg:mt-8 lg:p-4">
-        <p className="text-sm font-semibold">Development preview</p>
+        <p className="text-sm font-semibold">
+          Development preview
+        </p>
+
         <p className="mt-1 text-xs leading-5 text-blue-100">
           Pages are not protected by login. Sign-in is not active yet.
         </p>
