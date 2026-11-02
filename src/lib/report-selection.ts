@@ -13,6 +13,12 @@ export type ReportFilter = {
   end: string;
 };
 
+export type ReportTimelinePoint = {
+  measuredAt: string;
+  value: number | null;
+  exclusion: "MISSING" | "ESTIMATED" | "UNAVAILABLE" | null;
+};
+
 type Selection =
   | {
       ok: true;
@@ -20,6 +26,15 @@ type Selection =
       matched: number;
       excluded: number;
     }
+  | {
+      ok: false;
+      error: string;
+    };
+
+type TimelineSelection =
+  | (Extract<Selection, { ok: true }> & {
+      points: ReportTimelinePoint[];
+    })
   | {
       ok: false;
       error: string;
@@ -55,12 +70,12 @@ function utcTime(value: unknown): number | null {
     : null;
 }
 
-// Inputs must come from a trusted source and validated equipment configuration.
-// This helper does not authenticate data or establish sensor quality.
-export function selectReportReadings(
+// Callers must establish trusted source, units, installation and quality.
+// This helper validates and filters data; it does not authenticate it.
+export function selectReportTimeline(
   input: unknown,
   filter: ReportFilter,
-): Selection {
+): TimelineSelection {
   if (
     !isRecord(filter) ||
     typeof filter.ahuId !== "string" ||
@@ -88,6 +103,7 @@ export function selectReportReadings(
   }
 
   const values: number[] = [];
+  const points: ReportTimelinePoint[] = [];
   let matched = 0;
   let excluded = 0;
 
@@ -106,7 +122,7 @@ export function selectReportReadings(
 
     const time = utcTime(row.measuredAt);
 
-    if (time === null) {
+    if (time === null || typeof row.measuredAt !== "string") {
       return { ok: false, error: "Invalid reading time." };
     }
 
@@ -122,17 +138,61 @@ export function selectReportReadings(
 
     matched++;
 
-    if (
-      row.quality !== "VALID" ||
+    let exclusion: ReportTimelinePoint["exclusion"] = null;
+
+    if (row.quality === "MISSING") {
+      exclusion = "MISSING";
+    } else if (row.quality === "ESTIMATED") {
+      exclusion = "ESTIMATED";
+    } else if (
       typeof row.value !== "number" ||
       !Number.isFinite(row.value)
     ) {
-      excluded++;
-      continue;
+      exclusion = "UNAVAILABLE";
     }
 
-    values.push(row.value);
+    if (exclusion !== null) {
+      excluded++;
+      points.push({
+        measuredAt: row.measuredAt,
+        value: null,
+        exclusion,
+      });
+    } else {
+      // The checks above guarantee this is a finite number.
+      const value = row.value as number;
+
+      values.push(value);
+      points.push({
+        measuredAt: row.measuredAt,
+        value,
+        exclusion: null,
+      });
+    }
   }
 
-  return { ok: true, values, matched, excluded };
+  points.sort(
+    (a, b) => Date.parse(a.measuredAt) - Date.parse(b.measuredAt),
+  );
+
+  return { ok: true, values, matched, excluded, points };
+}
+
+// Preserve the existing summary contract for existing callers.
+export function selectReportReadings(
+  input: unknown,
+  filter: ReportFilter,
+): Selection {
+  const result = selectReportTimeline(input, filter);
+
+  if (result.ok === false) {
+    return result;
+  }
+
+  return {
+    ok: true,
+    values: result.values,
+    matched: result.matched,
+    excluded: result.excluded,
+  };
 }

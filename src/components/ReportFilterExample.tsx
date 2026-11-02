@@ -2,7 +2,8 @@
 
 import React, { useState } from "react";
 
-import { selectReportReadings } from "../lib/report-selection";
+import { selectReportTimeline } from "../lib/report-selection";
+import ReportTrendExample from "./ReportTrendExample";
 import { summarizeReadings } from "../lib/report-summary";
 
 // Fictional records only. Nothing is fetched or saved.
@@ -79,7 +80,7 @@ export default function ReportFilterExample() {
   const [ahuId, setAhuId] = useState<"AHU-01" | "AHU-02">("AHU-01");
   const [windowName, setWindowName] = useState<WindowName>("ALL");
 
-  const selection = selectReportReadings(EXAMPLE_READINGS, {
+  const selection = selectReportTimeline(EXAMPLE_READINGS, {
     ahuId,
     source: "SIMULATION", parameter: "roomTemp",
     ...WINDOWS[windowName],
@@ -216,6 +217,14 @@ export default function ReportFilterExample() {
           </dl>
         )}
       </div>
+
+      {selection.ok === true && (
+        <ReportTrendExample
+          points={selection.points}
+          start={WINDOWS[windowName].start}
+          end={WINDOWS[windowName].end}
+        />
+      )}
 
       <p className="mt-4 text-xs leading-5 text-slate-500">
         Missing, estimated, and non-finite example values are excluded after

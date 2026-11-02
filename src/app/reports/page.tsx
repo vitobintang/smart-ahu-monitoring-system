@@ -43,7 +43,7 @@ export default function ReportsPage() {
         <ReportFilterExample />
 
         <p className="mt-8 text-xs text-slate-500">
-          Preview only. Do not use these values for equipment decisions.
+        A preview of report filters, summaries and a fictional trend chart.
         </p>
       </div>
     </main>
