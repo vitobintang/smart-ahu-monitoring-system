@@ -6,6 +6,8 @@ import { useState } from "react";
 import { AHU_IDS } from "../../lib/ahu";
 import { createSimulationSample } from "../../lib/simulation";
 
+import StatusScenario from "../../components/StatusScenario";
+
 type SimulatedSample = Extract<
   ReturnType<typeof createSimulationSample>,
   { ok: true }
@@ -189,6 +191,7 @@ export default function SimulatorPage() {
             or refresh. The dashboard is not connected to it.
           </p>
         </section>
+        <StatusScenario />
       </div>
     </main>
   );
