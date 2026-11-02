@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --import tsx --test --test-concurrency=2 tests/ahu.test.ts tests/permissions.test.ts tests/status.test.ts tests/telemetry.test.ts tests/quality.test.ts tests/supabase-config.test.ts tests/schema.test.ts tests/migration.test.ts tests/migration-database.test.ts tests/access-devices.test.ts tests/device-tokens.test.ts tests/device-claims.test.ts tests/device-verification.test.ts tests/device-invitations.test.ts tests/device-revocations.test.ts tests/device-legacy.test.ts tests/existing-schema-upgrade.test.ts",
+    "test": "node --import tsx --test --test-concurrency=2 tests/ahu.test.ts tests/permissions.test.ts tests/status.test.ts tests/telemetry.test.ts tests/quality.test.ts tests/supabase-config.test.ts tests/schema.test.ts tests/migration.test.ts tests/migration-database.test.ts tests/access-devices.test.ts tests/device-tokens.test.ts tests/device-claims.test.ts tests/device-verification.test.ts tests/device-invitations.test.ts tests/device-revocations.test.ts tests/device-legacy.test.ts tests/existing-schema-upgrade.test.ts tests/request-security.test.ts",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
