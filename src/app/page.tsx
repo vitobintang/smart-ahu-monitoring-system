@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AHU_IDS } from "../lib/ahu";
 
 import ProtectedUnitList from "../components/ProtectedUnitList";
+import AhuUnitGrid from "../components/AhuUnitGrid";
 
 const summary = [
   {
@@ -84,75 +85,7 @@ export default function HomePage() {
               ))}
             </div>
           </section>
-
-          <section aria-labelledby="units-heading" className="mt-9">
-            <div className="flex flex-wrap items-end justify-between gap-3">
-              <div>
-                <h2
-                  id="units-heading"
-                  className="text-xl font-bold text-[#12294d]"
-                >
-                  Air-handling units
-                </h2>
-                <p className="mt-1 text-sm text-slate-600">
-                  Select a unit to view its preview.
-                </p>
-              </div>
-              <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800">
-                {AHU_IDS.length} planned units
-              </span>
-            </div>
-
-            <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {AHU_IDS.map((id) => (
-                <Link
-                  key={id}
-                  href={`/ahu/${id}`}
-                  className="block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-blue-400 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-medium text-slate-500">
-                        Air-handling unit
-                      </p>
-                      <h3 className="mt-1 text-lg font-bold text-[#12294d]">
-                        {id}
-                      </h3>
-                    </div>
-                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-                      Status unavailable
-                    </span>
-                  </div>
-
-                  <dl className="mt-5 space-y-3 border-t border-slate-100 pt-4 text-sm">
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-slate-600">Room temperature</dt>
-                      <dd className="font-medium text-slate-600">
-                        Unavailable
-                      </dd>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-slate-600">Humidity</dt>
-                      <dd className="font-medium text-slate-600">
-                        Unavailable
-                      </dd>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-slate-600">Data source</dt>
-                      <dd className="font-medium text-slate-600">
-                        Unavailable
-                      </dd>
-                    </div>
-                  </dl>
-
-                  <p className="mt-5 text-sm font-semibold text-blue-700">
-                    View unit <span aria-hidden="true">&rarr;</span>
-                  </p>
-                </Link>
-              ))}
-            </div>
-          </section>
-
+          <AhuUnitGrid />
           <p className="mt-8 text-xs text-slate-500">
             Preview only. Do not use this page to monitor or control equipment.
           </p>
