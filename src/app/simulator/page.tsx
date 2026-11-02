@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import React, { useState } from "react";
 
 import { AHU_IDS } from "../../lib/ahu";
 import { createSimulationSample } from "../../lib/simulation";
+import { parseSimulatedValue } from "../../lib/simulated-input";
 
 import StatusScenario from "../../components/StatusScenario";
 import ThresholdScenario from "../../components/ThresholdScenario";
@@ -19,10 +20,22 @@ export default function SimulatorPage() {
   const [ahuId, setAhuId] = useState<string>(AHU_IDS[0]);
   const [sample, setSample] = useState<SimulatedSample | null>(null);
   const [error, setError] = useState("");
+  const [temperatureInput, setTemperatureInput] = useState("22");
+  const [humidityInput, setHumidityInput] = useState("50");
 
   function generateSample() {
     setSample(null);
     setError("");
+
+    const temperature = parseSimulatedValue(temperatureInput);
+    const humidity = parseSimulatedValue(humidityInput);
+
+    if (temperature.ok === false || humidity.ok === false) {
+      setError(
+        "Enter decimal example values using a dot, or leave a field blank.",
+      );
+      return;
+    }
 
     if (typeof globalThis.crypto?.randomUUID !== "function") {
       setError("This browser cannot generate a sample ID in this context.");
@@ -33,6 +46,10 @@ export default function SimulatorPage() {
       ahuId,
       messageId: `simulation-${globalThis.crypto.randomUUID()}`,
       measuredAt: new Date().toISOString(),
+      readings: {
+        roomTemp: temperature.value,
+        humidity: humidity.value,
+      },
     });
 
     if (result.ok === false) {
@@ -89,8 +106,14 @@ export default function SimulatorPage() {
             Generate a sample
           </h2>
           <p className="mt-2 text-sm text-slate-600">
-            Choose a planned unit. The sample values are fixed examples,
-            not measurements or equipment settings.
+            Choose a planned unit and enter fictional values. Leave a field
+            blank for a missing value. These are not measurements or
+            equipment settings.
+          </p>
+
+          <p className="mt-2 text-xs leading-5 text-slate-500">
+            Use decimal numbers with a dot, or leave a field blank. Inputs
+            are not checked against real equipment limits.
           </p>
 
           <div className="mt-5 flex flex-wrap items-end gap-4">
@@ -118,6 +141,48 @@ export default function SimulatorPage() {
                 ))}
               </select>
             </div>
+
+            <div className="w-full sm:w-56">
+              <label
+                htmlFor="simulation-temperature"
+                className="block text-sm font-semibold text-slate-700"
+              >
+                Fictional room temperature (°C)
+              </label>
+              <input
+                id="simulation-temperature"
+                type="text"
+                inputMode="decimal"
+                value={temperatureInput}
+                onChange={(event) => {
+                  setTemperatureInput(event.target.value);
+                  setSample(null);
+                  setError("");
+                }}
+                className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+              />
+            </div>
+
+            <div className="w-full sm:w-56">
+              <label
+                htmlFor="simulation-humidity"
+                className="block text-sm font-semibold text-slate-700"
+              >
+                Fictional humidity (%)
+              </label>
+              <input
+                id="simulation-humidity"
+                type="text"
+                inputMode="decimal"
+                value={humidityInput}
+                onChange={(event) => {
+                  setHumidityInput(event.target.value);
+                  setSample(null);
+                  setError("");
+                }}
+                className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+              />
+            </div>            
 
             <button
               type="button"
@@ -175,13 +240,17 @@ export default function SimulatorPage() {
                     Example room temperature
                   </dt>
                   <dd className="mt-1 font-semibold">
-                    {sample.message.readings.roomTemp ?? "Unavailable"} &#176;C
+                    {sample.message.readings.roomTemp == null
+                      ? "Unavailable"
+                      : `${sample.message.readings.roomTemp} °C`}
                   </dd>
                 </div>
                 <div>
                   <dt className="text-sm text-slate-600">Example humidity</dt>
                   <dd className="mt-1 font-semibold">
-                    {sample.message.readings.humidity ?? "Unavailable"} %
+                    {sample.message.readings.humidity == null
+                      ? "Unavailable"
+                      : `${sample.message.readings.humidity} %`}
                   </dd>
                 </div>
               </dl>
