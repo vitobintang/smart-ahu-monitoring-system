@@ -1,5 +1,6 @@
 import Link from "next/link";
 import ReportExample from "../../components/ReportExample";
+import ReportFilterExample from "../../components/ReportFilterExample";
 
 export default function ReportsPage() {
   return (
@@ -33,12 +34,13 @@ export default function ReportsPage() {
           className="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950"
         >
           <strong>Not operational:</strong> This page is not protected by
-          login and is not connected to stored history. AHU, time and source
-          filters, charts and exports are not available yet. The example is
-          simulated.
+          login and is not connected to stored history. Real AHU, time and
+          source filters, charts and exports are not available yet. The
+          examples below use fictional data only.
         </section>
 
         <ReportExample />
+        <ReportFilterExample />
 
         <p className="mt-8 text-xs text-slate-500">
           Preview only. Do not use these values for equipment decisions.
