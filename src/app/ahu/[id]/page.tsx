@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { AHU_IDS, SENSOR_PARAMETERS } from "../../../lib/ahu";
+import { AHU_IDS } from "../../../lib/ahu";
 
 import AhuSchematicPreview from "../../../components/AhuSchematicPreview";
 import HistoricalObservationsPanel from "../../../components/HistoricalObservationsPanel";
+import SensorParameterPreview from "../../../components/SensorParameterPreview";
 
 const unitInformation = [
   { label: "Status", value: "Unavailable" },
@@ -93,48 +94,7 @@ export default async function AhuDetailPage({
         </section>
         <AhuSchematicPreview />
         <HistoricalObservationsPanel key={id} ahuId={id} />
-        <section aria-labelledby="sensors-heading" className="mt-9">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h2
-                id="sensors-heading"
-                className="text-xl font-bold text-[#12294d]"
-              >
-                Sensor parameters
-              </h2>
-              <p className="mt-1 text-sm text-slate-600">
-                Sensor installation and readings are not connected. Units
-                shown are preliminary and need equipment confirmation.
-              </p>
-            </div>
-            <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800">
-              {SENSOR_PARAMETERS.length} planned types
-            </span>
-          </div>
-
-          <dl className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {SENSOR_PARAMETERS.map((sensor) => (
-              <div
-                key={sensor.key}
-                className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
-              >
-                <dt className="text-sm font-medium text-slate-600">
-                  {sensor.label}
-                  <span className="ml-1 text-xs text-slate-500">
-                    ({sensor.unit})
-                  </span>
-                </dt>
-                <dd className="mt-3 text-lg font-bold text-slate-700">
-                  Unavailable
-                </dd>
-                <p className="mt-2 text-xs text-slate-500">
-                  Installation and data unknown
-                </p>
-              </div>
-            ))}
-          </dl>
-        </section>
-
+        <SensorParameterPreview />
         <section
           aria-labelledby="future-heading"
           className="mt-9 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
