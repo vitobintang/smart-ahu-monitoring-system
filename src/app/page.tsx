@@ -60,6 +60,12 @@ export default function HomePage() {
           >
             Simulator preview
           </Link>
+          <Link
+            href="/reports"
+            className="mt-2 block rounded-xl px-3 py-3 text-sm font-semibold text-blue-100 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-200"
+          >
+            Reports preview
+          </Link>
         </nav>
 
         <div className="mt-8 rounded-xl border border-blue-300/20 bg-white/5 p-4">
