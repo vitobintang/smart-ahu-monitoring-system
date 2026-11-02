@@ -12,11 +12,10 @@ test("navigation links only to the current preview pages", () => {
 
   match(html, /aria-label="Main navigation"/);
 
-  for (const path of ["/", "/reports", "/simulator", "/login"]) {
+  for (const path of ["/", "/alarms", "/reports", "/simulator", "/login"]) {
     match(html, new RegExp(`href="${path}"`));
   }
 
-  doesNotMatch(html, /href="\/alarms"/);
   equal((html.match(/aria-current="page"/g) ?? []).length, 1);
 });
 
@@ -49,4 +48,17 @@ test("unknown pathname does not mark a link current", () => {
   );
 
   doesNotMatch(html, /aria-current="page"/);
+});
+
+test("alarms link alone is current on the alarms page", () => {
+  const html = renderToStaticMarkup(
+    createElement(PreviewNavigationLinks, { pathname: "/alarms" }),
+  );
+
+  match(
+    html,
+    /href="\/alarms"[^>]*aria-current="page"|aria-current="page"[^>]*href="\/alarms"/,
+  );
+
+  equal((html.match(/aria-current="page"/g) ?? []).length, 1);
 });
