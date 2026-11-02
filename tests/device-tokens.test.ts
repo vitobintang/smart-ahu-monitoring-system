@@ -7,31 +7,27 @@ import {
   type DeviceTokenPurpose,
 } from "../src/lib/device-tokens";
 
-test("tokens use 32 bytes in URL-safe form", () => {
+test("tokens use 32 random bytes encoded as lowercase hex", () => {
   const token = createDeviceToken();
 
-  match(token, /^[A-Za-z0-9_-]{43}$/);
-  equal(Buffer.from(token, "base64url").length, 32);
+  match(token, /^[a-f0-9]{64}$/);
+  equal(Buffer.from(token, "hex").length, 32);
 });
 
 test("separately created tokens differ", () => {
   notEqual(createDeviceToken(), createDeviceToken());
 });
 
-test("hashes are deterministic and separated by purpose", () => {
-  const token = "A".repeat(43);
+test("token hashes match the existing format", () => {
+  const token = "a".repeat(64);
 
   equal(
     hashDeviceToken(token, "invitation"),
-    "fed949ab88fabd69d6424c534a21ba0196370b340444ae3251290614105b03c6",
+    "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb",
   );
 
+  // The existing app uses the same hash calculation for both purposes.
   equal(
-    hashDeviceToken(token, "invitation"),
-    hashDeviceToken(token, "invitation"),
-  );
-
-  notEqual(
     hashDeviceToken(token, "invitation"),
     hashDeviceToken(token, "browser"),
   );
@@ -39,15 +35,15 @@ test("hashes are deterministic and separated by purpose", () => {
 
 test("invalid token formats are rejected", () => {
   throws(() => hashDeviceToken("short", "invitation"), /format/);
-  throws(() => hashDeviceToken("A".repeat(42) + "@", "browser"), /format/);
-  throws(() => hashDeviceToken(" " + "A".repeat(43), "browser"), /format/);
+  throws(() => hashDeviceToken("a".repeat(63) + "G", "browser"), /format/);
+  throws(() => hashDeviceToken(" " + "a".repeat(64), "browser"), /format/);
 });
 
 test("unknown token purposes are rejected", () => {
   throws(
     () =>
       hashDeviceToken(
-        "A".repeat(43),
+        "a".repeat(64),
         "unknown" as DeviceTokenPurpose,
       ),
     /purpose/,
