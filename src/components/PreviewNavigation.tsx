@@ -13,6 +13,8 @@ const links = [
   { href: "/trends", label: "Trends preview" },
   { href: "/energy", label: "Energy preview" },
   { href: "/maintenance", label: "Maintenance preview" },
+  { href: "/admin", label: "Administration preview" },
+  { href: "/audit", label: "Audit preview" },
   { href: "/login", label: "Sign-in preview" },
 ] as const;
 
