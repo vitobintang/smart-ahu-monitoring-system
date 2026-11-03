@@ -1,11 +1,23 @@
-import { authorizeServerRequest } from "../../../../lib/server-authorization";
-import { buildSessionResponse } from "../../../../lib/session-response";
+import { getSession, safePublicUser } from "@/lib/auth";
+import { getSyncStatus } from "@/lib/realtime";
 
 export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
 
 export async function GET() {
-  return buildSessionResponse(() =>
-    authorizeServerRequest("monitoring:read"),
+  const ctx = await getSession();
+  const sync = await getSyncStatus();
+  if (!ctx) {
+    return Response.json(
+      { user: null, sync },
+      { status: 200, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+  return Response.json(
+    {
+      user: safePublicUser(ctx.user),
+      physicalControlUnlocked: false,
+      sync,
+    },
+    { headers: { "Cache-Control": "no-store" } },
   );
 }
