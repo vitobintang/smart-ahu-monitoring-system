@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AHU_IDS } from "../lib/ahu";
 
 import ProtectedUnitList from "../components/ProtectedUnitList";
+import HistoricalFleetPanel from "../components/HistoricalFleetPanel";
 import AhuUnitGrid from "../components/AhuUnitGrid";
 
 const summary = [
@@ -84,9 +85,9 @@ export default function HomePage() {
             className="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950"
           >
             <strong>Not operational:</strong> Live telemetry and alarms
-            are not connected to this dashboard. Status and readings
-            are unavailable. This page is not protected by login. Do
-            not use it to assess or control equipment.
+            are not connected to this dashboard. Live status and live
+            readings are unavailable. This page is not protected by
+            login. Do not use it to assess or control equipment.
           </section>
 
           <section aria-labelledby="overview-heading" className="mt-8">
@@ -180,6 +181,8 @@ export default function HomePage() {
           </section>
 
           <AhuUnitGrid />
+
+          <HistoricalFleetPanel />
 
           <ProtectedUnitList />
 
