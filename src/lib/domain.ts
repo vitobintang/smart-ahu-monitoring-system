@@ -1,0 +1,258 @@
+import type { AhuStatus, DataSource } from "@/lib/ahu";
+
+/* ------------------------------------------------------------------ */
+/* FR-06: the twelve supported AHU parameters                         */
+/* ------------------------------------------------------------------ */
+
+export type ParamKey =
+  | "roomTemp"
+  | "supplyTemp"
+  | "returnTemp"
+  | "humidity"
+  | "filterDiffPressure"
+  | "fanSpeed"
+  | "coilTemp"
+  | "damperPosition"
+  | "current"
+  | "voltage"
+  | "runHours"
+  | "heaterOutput";
+
+export interface ParamMeta {
+  key: ParamKey;
+  label: string;
+  localLabel: string;
+  unit: string;
+  validMin: number;
+  validMax: number;
+  decimals: number;
+  defaultLow: number | null;
+  defaultHigh: number | null;
+  defaultPriority: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  trendByDefault: boolean;
+}
+
+export const PARAMETERS: ParamMeta[] = [
+  { key: "roomTemp", label: "Room Temperature", localLabel: "Suhu Ruangan", unit: "°C", validMin: -20, validMax: 60, decimals: 1, defaultLow: 16, defaultHigh: 28, defaultPriority: "MEDIUM", trendByDefault: true },
+  { key: "supplyTemp", label: "Supply Air Temperature", localLabel: "Suhu Supply", unit: "°C", validMin: -20, validMax: 60, decimals: 1, defaultLow: 10, defaultHigh: 22, defaultPriority: "HIGH", trendByDefault: true },
+  { key: "returnTemp", label: "Return Air Temperature", localLabel: "Suhu Return", unit: "°C", validMin: -20, validMax: 60, decimals: 1, defaultLow: 15, defaultHigh: 30, defaultPriority: "MEDIUM", trendByDefault: true },
+  { key: "humidity", label: "Relative Humidity", localLabel: "Kelembapan", unit: "%RH", validMin: 0, validMax: 100, decimals: 1, defaultLow: 30, defaultHigh: 70, defaultPriority: "MEDIUM", trendByDefault: true },
+  { key: "filterDiffPressure", label: "Filter Differential Pressure", localLabel: "Tekanan Diferensial Filter", unit: "Pa", validMin: 0, validMax: 2000, decimals: 0, defaultLow: 20, defaultHigh: 250, defaultPriority: "HIGH", trendByDefault: true },
+  { key: "fanSpeed", label: "Fan Status / Speed", localLabel: "Fan", unit: "%", validMin: 0, validMax: 100, decimals: 0, defaultLow: null, defaultHigh: null, defaultPriority: "MEDIUM", trendByDefault: false },
+  { key: "coilTemp", label: "Cooling Coil Status / Temp", localLabel: "Coil", unit: "°C", validMin: -20, validMax: 60, decimals: 1, defaultLow: 4, defaultHigh: 18, defaultPriority: "MEDIUM", trendByDefault: true },
+  { key: "damperPosition", label: "Damper Position", localLabel: "Damper", unit: "%", validMin: 0, validMax: 100, decimals: 0, defaultLow: null, defaultHigh: null, defaultPriority: "LOW", trendByDefault: false },
+  { key: "current", label: "Current", localLabel: "Arus", unit: "A", validMin: 0, validMax: 400, decimals: 2, defaultLow: null, defaultHigh: 25, defaultPriority: "HIGH", trendByDefault: true },
+  { key: "voltage", label: "Voltage", localLabel: "Tegangan", unit: "V", validMin: 0, validMax: 500, decimals: 1, defaultLow: 198, defaultHigh: 242, defaultPriority: "MEDIUM", trendByDefault: false },
+  { key: "runHours", label: "Operating Hours", localLabel: "Jam Operasi", unit: "h", validMin: 0, validMax: 200000, decimals: 1, defaultLow: null, defaultHigh: null, defaultPriority: "LOW", trendByDefault: false },
+  { key: "heaterOutput", label: "Heater Output", localLabel: "Output Heater", unit: "%", validMin: 0, validMax: 100, decimals: 0, defaultLow: null, defaultHigh: null, defaultPriority: "LOW", trendByDefault: false },
+];
+
+export const PARAM_MAP: Record<ParamKey, ParamMeta> = PARAMETERS.reduce(
+  (acc, p) => ({ ...acc, [p.key]: p }),
+  {} as Record<ParamKey, ParamMeta>,
+);
+
+export const PARAM_KEYS = PARAMETERS.map((p) => p.key);
+
+export const AHU_IDS = ["AHU-01", "AHU-02", "AHU-03", "AHU-04", "AHU-05", "AHU-06", "AHU-07"] as const;
+
+export const SETPOINT_MIN = 16.0;
+export const SETPOINT_MAX = 30.0;
+export const COMMAND_TTL_SEC = 60;
+export const MAX_REPORT_RANGE_DAYS = 31;
+export const LOCAL_POLL_INTERVAL_MS = 5000;
+export const LOGIN_RATE_LIMIT = { max: 10, windowMs: 15 * 60 * 1000 };
+
+/* ------------------------------------------------------------------ */
+/* NFR-06: data clarity & disambiguation                              */
+/* ------------------------------------------------------------------ */
+
+export type DataQuality =
+  | "OK"
+  | "UNINSTALLED"
+  | "NULL_UNAVAILABLE"
+  | "STALE"
+  | "SIMULATED"
+  | "ESTIMATED_FALLBACK";
+
+export const QUALITY_LABEL: Record<DataQuality, string> = {
+  OK: "OK",
+  UNINSTALLED: "UNINSTALLED",
+  NULL_UNAVAILABLE: "NULL / UNAVAILABLE",
+  STALE: "STALE",
+  SIMULATED: "SIMULATED",
+  ESTIMATED_FALLBACK: "ESTIMATED_FALLBACK",
+};
+
+export const QUALITY_STYLE: Record<DataQuality, string> = {
+  OK: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
+  UNINSTALLED: "bg-slate-500/15 text-slate-400 ring-slate-500/30",
+  NULL_UNAVAILABLE: "bg-sky-500/15 text-sky-300 ring-sky-500/30",
+  STALE: "bg-amber-500/15 text-amber-300 ring-amber-500/30",
+  SIMULATED: "bg-violet-500/15 text-violet-300 ring-violet-500/30",
+  ESTIMATED_FALLBACK: "bg-fuchsia-500/15 text-fuchsia-300 ring-fuchsia-500/30",
+};
+
+export const FALLBACK_PARAMS: ParamKey[] = ["current", "voltage"];
+
+/**
+ * Classify one parameter value for an AHU reading.
+ * Precedence: UNINSTALLED > STALE > ESTIMATED_FALLBACK > NULL_UNAVAILABLE > SIMULATED > OK
+ */
+export function classifyQuality(opts: {
+  param: ParamKey;
+  installed: string[];
+  value: number | null | undefined;
+  fallbackFlag?: boolean | null;
+  stale: boolean;
+  source: DataSource | null;
+}): DataQuality {
+  if (!opts.installed.includes(opts.param)) return "UNINSTALLED";
+  if (opts.stale) return "STALE";
+  if (opts.fallbackFlag) return "ESTIMATED_FALLBACK";
+  if (opts.value === null || opts.value === undefined || Number.isNaN(opts.value))
+    return "NULL_UNAVAILABLE";
+  if (opts.source === "SIMULATION") return "SIMULATED";
+  return "OK";
+}
+
+export function formatValue(value: number | null | undefined, param: ParamKey): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return value.toFixed(PARAM_MAP[param].decimals);
+}
+
+/* ------------------------------------------------------------------ */
+/* FR-04: AHU status computation                                      */
+/* ------------------------------------------------------------------ */
+
+export function computeAhuStatus(input: {
+  lastSeenAt: Date | string | null;
+  commTimeoutSec: number;
+  faultCode?: string | null;
+  hasCriticalAlarm?: boolean;
+  fanSpeed?: number | null;
+  runState?: string | null;
+  now?: Date;
+}): { status: AhuStatus; ageSec: number | null; stale: boolean } {
+  const now = input.now ?? new Date();
+  const lastSeen = input.lastSeenAt ? new Date(input.lastSeenAt) : null;
+  const ageSec = lastSeen ? Math.max(0, (now.getTime() - lastSeen.getTime()) / 1000) : null;
+  const stale = ageSec === null || ageSec > input.commTimeoutSec;
+
+  const fault = Boolean(input.faultCode) || Boolean(input.hasCriticalAlarm);
+  if (fault) return { status: "FAULT", ageSec, stale };
+  if (stale) return { status: "OFFLINE", ageSec, stale };
+  // Do not turn missing or contradictory feedback into a false STOP/RUN.
+  const speedKnown = typeof input.fanSpeed === "number" && Number.isFinite(input.fanSpeed);
+  if (input.runState === "RUN") {
+    if (speedKnown && input.fanSpeed === 0) return { status: "OFFLINE", ageSec, stale: true };
+    return { status: "RUN", ageSec, stale };
+  }
+  if (input.runState === "STOP") {
+    if (speedKnown && (input.fanSpeed as number) > 0) return { status: "OFFLINE", ageSec, stale: true };
+    return { status: "STOP", ageSec, stale };
+  }
+  if (!speedKnown) return { status: "OFFLINE", ageSec, stale: true };
+  return { status: (input.fanSpeed as number) > 0 ? "RUN" : "STOP", ageSec, stale };
+}
+
+/** Matching feedback is necessary but not by itself proof of physical actuation. */
+export function commandFeedbackMatches(
+  command: string,
+  reading: { runState: string | null; fanSpeed: number | null },
+  echo: { setpoint: number | null; controlMode: string | null },
+  target?: number,
+): boolean {
+  switch (command) {
+    case "START":
+      return reading.runState === "RUN" && reading.fanSpeed !== null && reading.fanSpeed > 0;
+    case "STOP":
+      return (
+        (reading.runState === "STOP" && (reading.fanSpeed === null || reading.fanSpeed === 0)) ||
+        (reading.runState === null && reading.fanSpeed === 0)
+      );
+    case "MODE_AUTO":
+      return echo.controlMode === "AUTO";
+    case "MODE_MANUAL":
+      return echo.controlMode === "MANUAL";
+    case "SETPOINT":
+      return (
+        typeof target === "number" &&
+        typeof echo.setpoint === "number" &&
+        Math.abs(echo.setpoint - target) < 0.05
+      );
+    default:
+      return false;
+  }
+}
+
+export const STATUS_STYLE: Record<AhuStatus, { badge: string; dot: string; label: string }> = {
+  RUN: {
+    badge: "bg-emerald-500/15 text-emerald-300 ring-emerald-400/40",
+    dot: "bg-emerald-400 animate-pulse shadow-[0_0_10px_2px_rgba(16,185,129,0.7)]",
+    label: "RUN",
+  },
+  STOP: {
+    badge: "bg-slate-500/15 text-slate-300 ring-slate-400/40",
+    dot: "bg-slate-400",
+    label: "STOP",
+  },
+  FAULT: {
+    badge: "bg-red-500/15 text-red-300 ring-red-400/50",
+    dot: "bg-red-500 animate-ping-slow shadow-[0_0_10px_2px_rgba(239,68,68,0.8)]",
+    label: "FAULT",
+  },
+  OFFLINE: {
+    badge: "bg-rose-900/40 text-rose-300 ring-rose-500/40",
+    dot: "bg-rose-500/70",
+    label: "OFFLINE",
+  },
+};
+
+export const PRIORITY_STYLE: Record<string, string> = {
+  CRITICAL: "bg-red-500/20 text-red-300 ring-red-400/40",
+  HIGH: "bg-orange-500/20 text-orange-300 ring-orange-400/40",
+  MEDIUM: "bg-amber-500/20 text-amber-300 ring-amber-400/40",
+  LOW: "bg-sky-500/20 text-sky-300 ring-sky-400/40",
+};
+
+export const COMMAND_STATUS_STYLE: Record<string, string> = {
+  REQUESTED: "bg-sky-500/20 text-sky-300 ring-sky-400/40",
+  ACCEPTED: "bg-amber-500/20 text-amber-300 ring-amber-400/40",
+  SUCCEEDED: "bg-emerald-500/20 text-emerald-300 ring-emerald-400/40",
+  FAILED: "bg-red-500/20 text-red-300 ring-red-400/40",
+  EXPIRED: "bg-slate-500/20 text-slate-300 ring-slate-400/40",
+};
+
+export const SOURCE_STYLE: Record<DataSource, string> = {
+  PHYSICAL: "bg-cyan-500/15 text-cyan-300 ring-cyan-400/40",
+  SIMULATION: "bg-violet-500/15 text-violet-300 ring-violet-400/40",
+};
+
+/* ------------------------------------------------------------------ */
+/* RBAC matrix (FR-02 / NFR-03)                                       */
+/* ------------------------------------------------------------------ */
+
+export type Activity =
+  | "view"
+  | "ack"
+  | "control"
+  | "configure"
+  | "viewAudit"
+  | "manageUsers";
+
+export const ROLES = ["Admin", "Engineering", "Operator", "Viewer"] as const;
+
+export const RBAC: Record<Activity, ReadonlyArray<(typeof ROLES)[number]>> = {
+  view: ["Admin", "Engineering", "Operator", "Viewer"],
+  ack: ["Admin", "Engineering", "Operator"],
+  control: ["Admin", "Engineering", "Operator"],
+  configure: ["Admin", "Engineering"],
+  viewAudit: ["Admin", "Engineering"],
+  manageUsers: ["Admin"],
+};
+
+export function can(role: string | undefined | null, activity: Activity): boolean {
+  if (!role) return false;
+  return (RBAC[activity] as readonly string[]).includes(role);
+}
