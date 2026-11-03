@@ -8,3 +8,28 @@ body {
   margin: 0;
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@media print {
+  body:has(.fictional-report-print) aside {
+    display: none;
+  }
+
+  .fictional-report-print .overflow-x-auto {
+    overflow: visible !important;
+  }
+
+  .fictional-report-print table {
+    min-width: 0 !important;
+    width: 100%;
+    table-layout: fixed;
+    overflow-wrap: anywhere;
+  }
+
+  .fictional-report-print svg {
+    min-width: 0 !important;
+  }
+
+  .fictional-report-print {
+    font-size: 10pt;
+  }
+}
