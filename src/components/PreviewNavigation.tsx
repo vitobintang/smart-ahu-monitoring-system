@@ -18,6 +18,7 @@ const groups = [
       { href: "/energy", label: "Energy preview" },
       { href: "/maintenance", label: "Maintenance preview" },
       { href: "/simulator", label: "Simulator preview" },
+      { href: "/simulator/commands", label: "Command practice" },
     ],
   },
   {
