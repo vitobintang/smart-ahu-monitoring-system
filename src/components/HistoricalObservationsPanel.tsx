@@ -19,13 +19,47 @@ export default function HistoricalObservationsPanel({
     useState<HistoricalObservation | null>(null);
   const active = useRef<AbortController | null>(null);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    function clearForPrivacy() {
       active.current?.abort();
       active.current = null;
-    },
-    [],
-  );
+      setObservation(null);
+      setPhase("idle");
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "hidden") {
+        clearForPrivacy();
+      }
+    }
+
+    function onPageShow(event: PageTransitionEvent) {
+      if (event.persisted) {
+        clearForPrivacy();
+      }
+    }
+
+    document.addEventListener(
+      "visibilitychange",
+      onVisibilityChange,
+    );
+
+    window.addEventListener("pagehide", clearForPrivacy);
+    window.addEventListener("pageshow", onPageShow);
+
+    return () => {
+      document.removeEventListener(
+        "visibilitychange",
+        onVisibilityChange,
+      );
+
+      window.removeEventListener("pagehide", clearForPrivacy);
+      window.removeEventListener("pageshow", onPageShow);
+
+      active.current?.abort();
+      active.current = null;
+    };
+  }, []);
 
   function clear() {
     active.current?.abort();
@@ -35,7 +69,9 @@ export default function HistoricalObservationsPanel({
   }
 
   async function load() {
-    if (active.current) return;
+    if (active.current || document.visibilityState === "hidden") {
+      return;
+    }
 
     const controller = new AbortController();
     active.current = controller;
@@ -212,8 +248,11 @@ export default function HistoricalObservationsPanel({
       </div>
 
       <p className="mt-4 text-xs text-slate-500">
-        Displayed values may remain visible until cleared or the page is
-        closed, even if access is later revoked.
+        This panel clears its display when the tab is hidden or the page
+        is left or restored from the back/forward cache. It does not
+        automatically reload. Browser behavior can vary; clearing does not
+        log you out or guarantee removal from browser memory or history.
+        Revocation is not detected while the panel stays idle.
       </p>
     </section>
   );

@@ -18,13 +18,47 @@ export default function ProtectedUnitList() {
   const [units, setUnits] = useState<MonitoringUnit[]>([]);
   const active = useRef<AbortController | null>(null);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    function clearForPrivacy() {
       active.current?.abort();
       active.current = null;
-    },
-    [],
-  );
+      setUnits([]);
+      setPhase("cleared");
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "hidden") {
+        clearForPrivacy();
+      }
+    }
+
+    function onPageShow(event: PageTransitionEvent) {
+      if (event.persisted) {
+        clearForPrivacy();
+      }
+    }
+
+    document.addEventListener(
+      "visibilitychange",
+      onVisibilityChange,
+    );
+
+    window.addEventListener("pagehide", clearForPrivacy);
+    window.addEventListener("pageshow", onPageShow);
+
+    return () => {
+      document.removeEventListener(
+        "visibilitychange",
+        onVisibilityChange,
+      );
+
+      window.removeEventListener("pagehide", clearForPrivacy);
+      window.removeEventListener("pageshow", onPageShow);
+
+      active.current?.abort();
+      active.current = null;
+    };
+  }, []);
 
   function clear() {
     active.current?.abort();
@@ -33,8 +67,10 @@ export default function ProtectedUnitList() {
     setPhase("cleared");
   }
 
-  async function loadUnits() {
-    if (active.current) return;
+   async function loadUnits() {
+    if (active.current || document.visibilityState === "hidden") {
+      return;
+    }
 
     const controller = new AbortController();
     active.current = controller;
@@ -167,9 +203,11 @@ export default function ProtectedUnitList() {
 
       <p className="mt-4 text-xs text-slate-500">
         Names and locations are configuration, not live status or equipment
-        readings. Displayed data may remain visible after access is revoked
-        until you clear it or leave this page. Clear does not log you out or
-        guarantee removal from browser history.
+        readings. This panel clears its display when the tab is hidden or
+        the page is left or restored from the back/forward cache. It does
+        not automatically reload. Browser behavior can vary, and clearing
+        does not log you out or guarantee removal from browser memory or
+        history. Revocation is not detected while the panel stays idle.
       </p>
     </section>
   );
