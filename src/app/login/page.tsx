@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import SessionStatusPanel from "../../components/SessionStatusPanel";
+
 export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#f2f6fc] px-5 py-10 text-slate-900">
@@ -11,14 +13,18 @@ export default function LoginPage() {
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-200">
             Smart facilities
           </p>
-          <h1 className="mt-3 text-2xl font-bold">Smart AHU Monitoring</h1>
+
+          <h1 className="mt-3 text-2xl font-bold">
+            Smart AHU Monitoring
+          </h1>
+
           <p className="mt-4 text-sm leading-6 text-blue-100">
             Monitoring and control for seven air-handling units.
           </p>
 
           <div className="mt-8 rounded-xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm leading-6 text-amber-100">
-            This application is under development. Physical control is not
-            available. A web STOP button is not an emergency stop.
+            This application is under development. Physical control is
+            not available. A web STOP button is not an emergency stop.
           </div>
         </div>
 
@@ -26,15 +32,21 @@ export default function LoginPage() {
           <h2 id="login-heading" className="text-2xl font-bold">
             Sign in
           </h2>
+
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            Login is not connected yet. Please do not enter real credentials.
+            Login is not connected yet. Please do not enter real
+            credentials.
           </p>
 
           <div className="mt-6 space-y-4">
             <div>
-              <label htmlFor="email" className="block text-sm font-semibold">
+              <label
+                htmlFor="email"
+                className="block text-sm font-semibold"
+              >
                 Email address
               </label>
+
               <input
                 id="email"
                 type="email"
@@ -45,9 +57,13 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm font-semibold">
+              <label
+                htmlFor="password"
+                className="block text-sm font-semibold"
+              >
                 Password
               </label>
+
               <input
                 id="password"
                 type="password"
@@ -57,20 +73,12 @@ export default function LoginPage() {
               />
             </div>
 
-            <div>
-              <label htmlFor="device-token" className="block text-sm font-semibold">
-                Browser/device token
-              </label>
-              <input
-                id="device-token"
-                type="text"
-                disabled
-                placeholder="Not available yet"
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-500"
-              />
-              <p className="mt-1 text-xs leading-5 text-slate-500">
-                An Admin-issued token will be used when authorizing a browser.
-              </p>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm leading-6 text-slate-700">
+              <strong>Separate browser authorization:</strong> An
+              Admin-issued token is intended to authorize each user’s
+              browser. Browser authorization is not connected yet. The
+              first Admin’s bootstrap is also unfinished. Telemetry
+              device credentials are separate.
             </div>
 
             <button
@@ -82,9 +90,11 @@ export default function LoginPage() {
             </button>
           </div>
 
+          <SessionStatusPanel />
+
           <Link
             href="/"
-            className="mt-6 inline-block text-sm font-semibold text-blue-700 hover:underline"
+            className="mt-6 inline-block text-sm font-semibold text-blue-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
           >
             Back to dashboard preview
           </Link>
