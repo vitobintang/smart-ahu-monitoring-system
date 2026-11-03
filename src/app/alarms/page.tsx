@@ -71,6 +71,30 @@ export default function AlarmsPage() {
           </section>
         </div>
 
+        <section
+          aria-labelledby="alarm-practice-link-title"
+          className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+        >
+          <h2
+            id="alarm-practice-link-title"
+            className="font-bold text-[#12294d]"
+          >
+            Learn the example lifecycle
+          </h2>
+
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Try a fictional delay, acknowledgment and recovery in a
+            separate, non-operational exercise.
+          </p>
+
+          <Link
+            href="/alarms/practice"
+            className="mt-3 inline-block rounded text-sm font-semibold text-blue-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+          >
+            Open alarm lifecycle practice
+          </Link>
+        </section>
+
         <AlarmPreviewExample />
       </div>
     </main>
