@@ -3,25 +3,37 @@
 import { useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { Fan, Lock, ShieldCheck, Wifi } from "lucide-react";
+import { Eye, EyeOff, Fan, KeyRound, Lock, ShieldCheck, Wifi } from "lucide-react";
 import { api } from "@/lib/client";
 import { BUILD_NOTES, BUILD_STAMP } from "@/lib/build";
-import { Btn, Field, inputClass } from "@/components/ui";
+import type { LoginMode } from "@/lib/role-auth";
+import { Btn, Field, cx, inputClass } from "@/components/ui";
 
 export default function LoginPage() {
   const router = useRouter();
+  const [mode, setMode] = useState<LoginMode>("admin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [deviceToken, setDeviceToken] = useState("");
+  const [token, setToken] = useState("");
+  const [showToken, setShowToken] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  function switchMode(next: LoginMode) {
+    setMode(next);
+    setError(null);
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password, deviceToken }) });
+      const payload =
+        mode === "admin"
+          ? { mode: "admin", email, password }
+          : { mode: "token", token: token.trim() };
+      await api("/api/auth/login", { method: "POST", body: JSON.stringify(payload) });
       router.push("/dashboard");
       router.refresh();
     } catch (err) {
@@ -95,45 +107,123 @@ export default function LoginPage() {
 
         <div className="bg-white p-6 sm:p-8">
           <h2 className="flex items-center gap-2 text-[16px] font-bold tracking-[-0.01em] text-slate-800">
-            <Lock size={16} className="text-[#1d6ef2]" /> Operator sign-in
+            {mode === "admin" ? (
+              <Lock size={16} className="text-[#1d6ef2]" />
+            ) : (
+              <KeyRound size={16} className="text-[#1d6ef2]" />
+            )}
+            Sign in to Smart Monitoring AHU
           </h2>
           <p className="mt-1 text-[11.5px] leading-relaxed text-slate-500">
-            FR-01 Supabase Auth email/password authentication · CSRF-protected mutations · 10 login attempts per IP
-            per 15 minutes (NFR-02).
+            Administrators sign in with email &amp; password · Other roles sign in using an admin-issued access token ·
+            10 login attempts per 15 minutes (NFR-02).
           </p>
 
-          <form onSubmit={submit} className="mt-6 space-y-4">
-            <Field label="Email address">
-              <input
-                className={inputClass}
-                type="email"
-                autoComplete="username"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-            </Field>
-            <Field label="Password">
-              <input
-                className={inputClass}
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </Field>
+          <div
+            role="tablist"
+            aria-label="Sign-in method"
+            className="mt-5 grid grid-cols-2 gap-1.5 rounded-xl border border-[#e4eaf3] bg-[#f4f7fc] p-1"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "admin"}
+              onClick={() => switchMode("admin")}
+              className={cx(
+                "flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[12px] font-semibold transition-all",
+                mode === "admin"
+                  ? "bg-white text-[#1d6ef2] shadow-[0_2px_8px_-4px_rgba(16,24,40,0.2)] ring-1 ring-[#dbe7fb]"
+                  : "text-slate-500 hover:text-slate-800",
+              )}
+            >
+              <Lock size={13} />
+              Admin (Email)
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "token"}
+              onClick={() => switchMode("token")}
+              className={cx(
+                "flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[12px] font-semibold transition-all",
+                mode === "token"
+                  ? "bg-white text-[#1d6ef2] shadow-[0_2px_8px_-4px_rgba(16,24,40,0.2)] ring-1 ring-[#dbe7fb]"
+                  : "text-slate-500 hover:text-slate-800",
+              )}
+            >
+              <KeyRound size={13} />
+              Other Roles (Token)
+            </button>
+          </div>
 
-            <Field label="Device token" hint="Required the first time this browser is authorized. Ask your administrator.">
-              <input className={inputClass} type="password" autoComplete="off" value={deviceToken} onChange={(e) => setDeviceToken(e.target.value)} />
-            </Field>
+          <form onSubmit={submit} className="mt-5 space-y-4">
+            {mode === "admin" ? (
+              <>
+                <div className="rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2 text-[11px] leading-relaxed text-slate-600">
+                  <span className="font-semibold text-slate-800">Administrator sign-in:</span> enter your admin email
+                  and password. No access token is required.
+                </div>
+                <Field label="Admin email address">
+                  <input
+                    className={inputClass}
+                    type="email"
+                    autoComplete="username"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                  />
+                </Field>
+                <Field label="Password">
+                  <input
+                    className={inputClass}
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
+                </Field>
+              </>
+            ) : (
+              <>
+                <div className="rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2 text-[11px] leading-relaxed text-slate-600">
+                  <span className="font-semibold text-slate-800">Engineering · Operator · Viewer:</span> enter the
+                  one-time access token provided by your administrator. No email or password is required.
+                </div>
+                <Field
+                  label="Access token"
+                  hint="Issued by an administrator for Engineering, Operator, or Viewer access."
+                >
+                  <div className="relative">
+                    <input
+                      className={cx(inputClass, "pr-10 font-mono text-[12px]")}
+                      type={showToken ? "text" : "password"}
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder="Paste 64-character access token…"
+                      value={token}
+                      onChange={(e) => setToken(e.target.value)}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowToken((v) => !v)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 transition hover:text-slate-700"
+                      aria-label={showToken ? "Hide access token" : "Show access token"}
+                    >
+                      {showToken ? <EyeOff size={15} /> : <Eye size={15} />}
+                    </button>
+                  </div>
+                </Field>
+              </>
+            )}
 
             {error ? (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11.5px] text-red-600">{error}</div>
             ) : null}
 
             <Btn type="submit" variant="primary" disabled={busy} className="w-full py-2.5">
-              {busy ? "Authenticating…" : "Sign in"}
+              {busy ? "Authenticating…" : mode === "admin" ? "Sign in as Admin" : "Sign in with Token"}
             </Btn>
           </form>
 

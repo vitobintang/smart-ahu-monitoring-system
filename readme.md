@@ -1,6 +1,6 @@
 # Smart AHU Monitoring System
 
-A Next.js application for monitoring seven air-handling units (AHUs). It records telemetry in Supabase PostgreSQL, displays dashboards and reports, evaluates alarms and trends, and includes a simulator. Supabase Auth provides sign-in; the application checks roles and per-user browser authorizations on the server.
+A Next.js application for monitoring seven air-handling units (AHUs). It records telemetry in Supabase PostgreSQL, displays dashboards and reports, evaluates alarms and trends, and includes a simulator. Administrators sign in with Supabase Auth email and password; Engineering, Operator and Viewer roles sign in using one-time browser access tokens issued by an Administrator.
 
 > **Status: prototype, not a commissioned industrial control system.** Physical control commands are disabled. The web STOP button is **not** an emergency stop. Independent local safety interlocks, control hardware, communications, failover, access security and operational procedures must be designed and validated by qualified professionals. Do not use this software to protect people or equipment.
 
@@ -20,7 +20,7 @@ A Next.js application for monitoring seven air-handling units (AHUs). It records
 - Monitors AHU-01 through AHU-07, with configurable installed sensors and up to 12 readings per unit.
 - Offers dashboards, histories, source-filtered reports, CSV downloads, and browser print/PDF.
 - Records threshold, fault and communication alarms; acknowledgement is separate from resolution. Trend proximity uses regression, not an AI prediction of equipment failure.
-- Uses four server-checked roles: Admin, Engineering, Operator and Viewer. Admin creates accounts and issues/revokes app browser authorizations.
+- Uses four server-checked roles: Admin, Engineering, Operator and Viewer. Admin signs in with email and password only; Admin creates non-Admin members and issues/revokes one-time access tokens (no email or password needed for non-Admin roles).
 - Includes an experimental simulator and simulated command workflow. Physical commands are always rejected; an environment variable cannot unlock them.
 
 The project is informed by FR-01–FR-29 and NFR-01–NFR-09, but **full compliance has not been demonstrated**. Supabase replaces the specification's MySQL/Firebase choices by project decision. See the limitations below before any deployment.

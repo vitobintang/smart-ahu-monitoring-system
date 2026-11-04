@@ -159,6 +159,14 @@ export default function AppShell({
   }
 
   async function logout() {
+    if (
+      user.role !== "Admin" &&
+      !window.confirm(
+        "Sign out of this browser? Non-admin roles use one-time browser tokens, so you will need a new token from an administrator to sign in again.",
+      )
+    ) {
+      return;
+    }
     try {
       await api("/api/auth/logout", { method: "POST" });
     } finally {
@@ -354,7 +362,7 @@ export default function AppShell({
                 title="Logout (FR-01)"
               >
                 <span className="grid h-10 w-10 place-items-center rounded-full bg-[#0b1f3f] text-[12px] font-bold text-white shadow-[0_6px_16px_-6px_rgba(11,31,63,0.7)]">
-                  {user.email.slice(0, 2).toUpperCase()}
+                  {((user.fullName || user.email).trim().slice(0, 2) || user.role.slice(0, 2)).toUpperCase()}
                 </span>
                 <span className="hidden text-left leading-tight sm:block">
                   <span className="block max-w-[10rem] truncate text-[13px] font-bold text-slate-800">

@@ -1,9 +1,10 @@
-import { eq } from "drizzle-orm";
+import { eq, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { accessDevices, users } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { secretHash } from "@/lib/device-access";
 import { randomHex, randomId } from "@/lib/ids";
+import { isAdminRole } from "@/lib/role-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,8 @@ export async function GET() {
         id: accessDevices.id,
         userId: accessDevices.userId,
         email: users.email,
+        fullName: users.fullName,
+        role: users.role,
         label: accessDevices.label,
         createdAt: accessDevices.createdAt,
         claimedAt: accessDevices.claimedAt,
@@ -24,6 +27,7 @@ export async function GET() {
       })
       .from(accessDevices)
       .innerJoin(users, eq(accessDevices.userId, users.id))
+      .where(ne(users.role, "Admin"))
       .orderBy(accessDevices.createdAt);
     return Response.json({ devices: rows }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
@@ -68,13 +72,23 @@ export async function POST(req: Request) {
       body.label.trim().length > 120
     ) {
       return Response.json(
-        { error: "Select a user and enter a device label (1–120 characters)" },
+        { error: "Select a non-Admin member and enter a device label (1–120 characters)" },
         { status: 400 },
       );
     }
 
-    const [target] = await db.select({ id: users.id }).from(users).where(eq(users.id, body.userId)).limit(1);
+    const [target] = await db
+      .select({ id: users.id, role: users.role })
+      .from(users)
+      .where(eq(users.id, body.userId))
+      .limit(1);
     if (!target) return Response.json({ error: "User not found" }, { status: 404 });
+    if (isAdminRole(target.role)) {
+      return Response.json(
+        { error: "Administrators sign in with email and password and do not use access tokens" },
+        { status: 400 },
+      );
+    }
 
     const code = randomHex(32);
     const id = randomId();
@@ -91,7 +105,7 @@ export async function POST(req: Request) {
           action: "ACCESS_DEVICE_ISSUED",
           entity: `access-device:${id}`,
           ipAddress: await getClientIp(),
-          details: { targetUserId: target.id, label },
+          details: { targetUserId: target.id, role: target.role, label },
         },
         tx,
       );

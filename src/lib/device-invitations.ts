@@ -51,6 +51,7 @@ export async function issueBrowserInvitation(
       FROM ahu_private.users AS target
       CROSS JOIN authorized_admin
       WHERE target.id = $2
+        AND target.role <> 'Admin'
       RETURNING id
     `,
     [deviceId, targetUserId, cleanLabel, invitationHash, issuerId],

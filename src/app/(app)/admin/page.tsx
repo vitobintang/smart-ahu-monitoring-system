@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { HardDrive, KeyRound, Plus, ShieldAlert, UserPlus, Users } from "lucide-react";
+import { Check, Copy, HardDrive, KeyRound, Plus, ShieldAlert, UserPlus, Users } from "lucide-react";
 import { api, fmtDateTime, usePoll } from "@/lib/client";
 import { AHU_IDS, ROLES } from "@/lib/domain";
+import { isAdminRole, isSyntheticTokenEmail } from "@/lib/role-auth";
 import { Btn, Empty, ErrorNote, Field, QualityTag, Spinner, cx, inputClass } from "@/components/ui";
 
 interface UserRow {
@@ -22,41 +23,103 @@ interface DeviceRow {
   enabled: boolean;
   createdAt: string;
 }
+interface AccessDeviceItem {
+  id: string;
+  userId: string;
+  email: string;
+  fullName: string | null;
+  role: string;
+  label: string;
+  claimedAt: string | null;
+  revokedAt: string | null;
+  invitationExpiresAt: string;
+  expiresAt: string | null;
+}
+
+function displayMemberLabel(u: { email: string; fullName: string | null; role: string }) {
+  if (isAdminRole(u.role)) {
+    return u.fullName ? `${u.fullName} (${u.email})` : u.email;
+  }
+  if (u.fullName) return u.fullName;
+  return isSyntheticTokenEmail(u.email) ? "Token member" : u.email;
+}
 
 export default function AdminPage() {
   const params = useSearchParams();
   const router = useRouter();
   const tab = params.get("tab") === "devices" ? "devices" : "users";
   const users = usePoll<{ users: UserRow[] }>("/api/users", 30000, tab === "users");
-  const devices = usePoll<{ devices: DeviceRow[]; physicalControlUnlocked: boolean }>("/api/devices", 30000, tab === "devices");
+  const devices = usePoll<{ devices: DeviceRow[]; physicalControlUnlocked: boolean }>(
+    "/api/devices",
+    30000,
+    tab === "devices",
+  );
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
-  const [role, setRole] = useState<string>("Viewer");
+  const [role, setRole] = useState<string>("Operator");
   const [password, setPassword] = useState("");
+  const [memberDeviceLabel, setMemberDeviceLabel] = useState("");
 
   const [devAhu, setDevAhu] = useState<string>(AHU_IDS[0]);
   const [devLabel, setDevLabel] = useState("");
   const [devSource, setDevSource] = useState<"PHYSICAL" | "SIMULATION">("SIMULATION");
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
-  const access = usePoll<{ devices: { id: string; userId: string; email: string; label: string; claimedAt: string | null; revokedAt: string | null; invitationExpiresAt: string; expiresAt: string | null }[] }>("/api/access-devices", 30000, tab === "users");
+
+  const access = usePoll<{ devices: AccessDeviceItem[] }>("/api/access-devices", 30000, tab === "users");
   const [accessUser, setAccessUser] = useState("");
   const [accessLabel, setAccessLabel] = useState("");
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  async function issueAccess(e: React.FormEvent) {
-    e.preventDefault(); setBusy(true); setError(null); setAccessToken(null);
+  const [copiedToken, setCopiedToken] = useState(false);
+
+  const nonAdminUsers = (users.data?.users ?? []).filter((u) => !isAdminRole(u.role));
+  const creatingAdmin = isAdminRole(role);
+
+  async function copyTokenToClipboard(value: string) {
     try {
-      const result = await api<{ token: string }>("/api/access-devices", { method: "POST", body: JSON.stringify({ userId: accessUser, label: accessLabel }) });
-      setAccessToken(result.token); setAccessLabel(""); await access.reload();
-    } catch (err) { setError(err instanceof Error ? err.message : "Could not issue token"); } finally { setBusy(false); }
+      await navigator.clipboard.writeText(value);
+      setCopiedToken(true);
+      setTimeout(() => setCopiedToken(false), 2500);
+    } catch {
+      /* clipboard unavailable */
+    }
   }
+
+  async function issueAccess(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    setAccessToken(null);
+    setCopiedToken(false);
+    try {
+      const result = await api<{ token: string }>("/api/access-devices", {
+        method: "POST",
+        body: JSON.stringify({ userId: accessUser, label: accessLabel }),
+      });
+      setAccessToken(result.token);
+      setAccessLabel("");
+      await access.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not issue token");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function revokeAccess(id: string) {
-    setBusy(true); setError(null);
-    try { await api("/api/access-devices", { method: "POST", body: JSON.stringify({ revokeId: id }) }); await access.reload(); }
-    catch (err) { setError(err instanceof Error ? err.message : "Could not revoke device"); } finally { setBusy(false); }
+    setBusy(true);
+    setError(null);
+    try {
+      await api("/api/access-devices", { method: "POST", body: JSON.stringify({ revokeId: id }) });
+      await access.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not revoke device");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function createUser(e: React.FormEvent) {
@@ -64,16 +127,38 @@ export default function AdminPage() {
     setBusy(true);
     setError(null);
     setNotice(null);
+    setAccessToken(null);
+    setCopiedToken(false);
     try {
-      const res = await api<{ user: UserRow }>("/api/users", {
-        method: "POST",
-        body: JSON.stringify({ email, fullName, role, password }),
-      });
-      setNotice(`User ${res.user.email} created with role ${res.user.role} (FR-20). Recorded in the audit log.`);
-      setEmail("");
-      setFullName("");
-      setPassword("");
-      await users.reload();
+      if (creatingAdmin) {
+        const res = await api<{ user: UserRow }>("/api/users", {
+          method: "POST",
+          body: JSON.stringify({ email, fullName, role, password }),
+        });
+        setNotice(
+          `Admin ${res.user.email} created (FR-20). Administrators sign in with email and password only.`,
+        );
+        setEmail("");
+        setFullName("");
+        setPassword("");
+        await users.reload();
+      } else {
+        const res = await api<{ user: UserRow; token: string }>("/api/users", {
+          method: "POST",
+          body: JSON.stringify({
+            fullName,
+            role,
+            label: memberDeviceLabel || undefined,
+          }),
+        });
+        setAccessToken(res.token);
+        setNotice(
+          `${res.user.role} member "${res.user.fullName ?? "Member"}" created and one-time access token generated. Copy and share the token below.`,
+        );
+        setFullName("");
+        setMemberDeviceLabel("");
+        await Promise.all([users.reload(), access.reload()]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "User creation failed");
     } finally {
@@ -125,8 +210,8 @@ export default function AdminPage() {
           <Users size={20} className="text-cyan-300" /> User &amp; Device Administration
         </h1>
         <p className="text-xs text-slate-500">
-          FR-20 user administration and FR-21 device provisioning — Admin only. Constraint: role editing, password
-          reset and user deactivation are intentionally not available through the UI.
+          FR-20 user administration and FR-21 device provisioning — Admin only. Administrators sign in with email &amp;
+          password; Engineering, Operator, and Viewer roles sign in using one-time access tokens issued below.
         </p>
       </div>
 
@@ -140,33 +225,130 @@ export default function AdminPage() {
               tab === t ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-100" : "border-ink-600 bg-ink-900/60 text-slate-400",
             )}
           >
-            {t === "users" ? "Users" : "Devices & tokens"}
+            {t === "users" ? "Users & role tokens" : "AHU telemetry devices"}
           </button>
         ))}
       </div>
 
-      {notice ? <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-200">{notice}</p> : null}
+      {notice ? (
+        <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-200">
+          {notice}
+        </p>
+      ) : null}
       <ErrorNote message={error ?? users.error ?? devices.error} />
 
-      {tab === "users" ? (
-        <div className="panel rounded-2xl p-4 space-y-3">
-          <h2 className="text-sm font-semibold uppercase text-slate-100">App access devices</h2>
-          <p className="text-xs text-slate-400">Issue a one-time token to a specific user for one browser. It expires after 24 hours; authorized browsers expire after 90 days. Send tokens privately. A copied browser credential can still be misused.</p>
-          <form onSubmit={issueAccess} className="flex flex-wrap gap-2">
-            <select required className={inputClass} value={accessUser} onChange={(e) => setAccessUser(e.target.value)}>
-              <option value="">Select user</option>{users.data?.users.map((u) => <option key={u.id} value={u.id}>{u.email}</option>)}
-            </select>
-            <input required maxLength={120} className={inputClass} value={accessLabel} onChange={(e) => setAccessLabel(e.target.value)} placeholder="Device label, e.g. office laptop" />
-            <Btn type="submit" variant="primary" disabled={busy}>Generate app access token</Btn>
-          </form>
-          {accessToken ? <div className="text-xs text-amber-200">Show once—copy and deliver securely: <code className="break-all">{accessToken}</code></div> : null}
-          {access.error ? <ErrorNote message={access.error} /> : null}
-          <ul className="space-y-2 text-xs text-slate-300">{access.data?.devices.map((d) => <li key={d.id} className="flex flex-wrap items-center gap-2"><span>{d.email} · {d.label} · {d.revokedAt ? "revoked" : d.claimedAt ? `authorized until ${fmtDateTime(d.expiresAt)}` : `token expires ${fmtDateTime(d.invitationExpiresAt)}`}</span>{!d.revokedAt ? <Btn variant="ghost" disabled={busy} onClick={() => { if (window.confirm("Revoke this browser authorization? Its user will need a new token. Revoking your own browser will sign you out of protected pages.")) void revokeAccess(d.id); }}>Revoke</Btn> : null}</li>)}</ul>
+      {tab === "users" && accessToken ? (
+        <div className="panel rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-200">
+              One-time role access token (shown once — copy and share privately)
+            </p>
+            <Btn size="sm" variant="default" onClick={() => void copyTokenToClipboard(accessToken)}>
+              {copiedToken ? <Check size={13} /> : <Copy size={13} />}
+              {copiedToken ? "Copied" : "Copy token"}
+            </Btn>
+          </div>
+          <code className="block break-all rounded-lg border border-ink-600 bg-ink-950/80 px-3 py-2 font-mono text-xs text-slate-100">
+            {accessToken}
+          </code>
+          <p className="text-[11px] text-slate-400">
+            The recipient signs in at <span className="font-mono">/login</span> under{" "}
+            <strong>Other Roles (Token)</strong> using only this token (no email or password). Unclaimed tokens expire
+            in 24 hours; claimed browsers remain authorized for 90 days until sign-out or revocation.
+          </p>
         </div>
       ) : null}
 
       {tab === "users" ? (
-        <div className="grid gap-4 xl:grid-cols-[1fr_22rem]">
+        <div className="panel rounded-2xl p-4 space-y-3">
+          <div>
+            <h2 className="text-sm font-semibold uppercase text-slate-100">
+              Issue token for existing non-Admin member
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-400">
+              Issue a fresh one-time token for an Engineering, Operator, or Viewer member (for example, after they sign
+              out or for another browser). Administrators sign in with email &amp; password and do not use tokens.
+            </p>
+          </div>
+          {nonAdminUsers.length > 0 ? (
+            <form onSubmit={issueAccess} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+              <select
+                required
+                className={inputClass}
+                value={accessUser}
+                onChange={(e) => setAccessUser(e.target.value)}
+              >
+                <option value="">Select non-Admin member…</option>
+                {nonAdminUsers.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {displayMemberLabel(u)} — {u.role}
+                  </option>
+                ))}
+              </select>
+              <input
+                required
+                maxLength={120}
+                className={inputClass}
+                value={accessLabel}
+                onChange={(e) => setAccessLabel(e.target.value)}
+                placeholder="Browser label, e.g. Control room PC"
+              />
+              <Btn type="submit" variant="primary" disabled={busy}>
+                <KeyRound size={13} /> Generate access token
+              </Btn>
+            </form>
+          ) : (
+            <p className="text-xs text-slate-500">
+              No Engineering, Operator, or Viewer members yet. Use <strong>Create account / role member</strong> below
+              to add one and generate their first token.
+            </p>
+          )}
+          {access.error ? <ErrorNote message={access.error} /> : null}
+          {(access.data?.devices.length ?? 0) > 0 ? (
+            <ul className="divide-y divide-ink-800/70 pt-1 text-xs text-slate-300">
+              {access.data?.devices.map((d) => (
+                <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-semibold text-slate-100">{displayMemberLabel(d)}</span>
+                    <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-cyan-300">
+                      {d.role}
+                    </span>
+                    <span className="text-slate-400">· {d.label} ·</span>
+                    <span className={cx(d.revokedAt ? "text-red-300" : d.claimedAt ? "text-emerald-300" : "text-amber-300")}>
+                      {d.revokedAt
+                        ? "revoked"
+                        : d.claimedAt
+                          ? `authorized until ${fmtDateTime(d.expiresAt)}`
+                          : `unclaimed (expires ${fmtDateTime(d.invitationExpiresAt)})`}
+                    </span>
+                  </span>
+                  {!d.revokedAt ? (
+                    <Btn
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            "Revoke this token / browser authorization? The member will need a new token from an administrator.",
+                          )
+                        ) {
+                          void revokeAccess(d.id);
+                        }
+                      }}
+                    >
+                      Revoke
+                    </Btn>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+
+      {tab === "users" ? (
+        <div className="grid gap-4 xl:grid-cols-[1fr_23rem]">
           <div className="panel overflow-hidden rounded-2xl">
             <header className="border-b border-ink-700/70 px-5 py-3">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-100">Registered users</h2>
@@ -176,41 +358,60 @@ export default function AdminPage() {
               <table className="w-full min-w-[620px] text-left text-xs">
                 <thead className="bg-ink-900/60 text-[10px] uppercase tracking-wider text-slate-500">
                   <tr>
-                    <th className="px-4 py-2.5">Email</th>
-                    <th className="px-4 py-2.5">Full name</th>
+                    <th className="px-4 py-2.5">Name / Account</th>
+                    <th className="px-4 py-2.5">Sign-in method</th>
                     <th className="px-4 py-2.5">Role</th>
                     <th className="px-4 py-2.5">Created</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-ink-800/70">
-                  {(users.data?.users ?? []).map((u) => (
-                    <tr key={u.id}>
-                      <td className="px-4 py-2.5 font-mono text-slate-200">{u.email}</td>
-                      <td className="px-4 py-2.5 text-slate-400">{u.fullName ?? "—"}</td>
-                      <td className="px-4 py-2.5">
-                        <span className="rounded bg-cyan-500/15 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-cyan-300">{u.role}</span>
-                      </td>
-                      <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">{fmtDateTime(u.createdAt)}</td>
-                    </tr>
-                  ))}
+                  {(users.data?.users ?? []).map((u) => {
+                    const admin = isAdminRole(u.role);
+                    return (
+                      <tr key={u.id}>
+                        <td className="px-4 py-2.5">
+                          {admin ? (
+                            <div>
+                              <span className="font-mono font-medium text-slate-200">{u.email}</span>
+                              {u.fullName ? <span className="ml-2 text-slate-400">({u.fullName})</span> : null}
+                            </div>
+                          ) : (
+                            <div>
+                              <span className="font-medium text-slate-200">{u.fullName ?? displayMemberLabel(u)}</span>
+                              {!isSyntheticTokenEmail(u.email) ? (
+                                <span className="ml-2 font-mono text-[11px] text-slate-400">({u.email})</span>
+                              ) : null}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-[11px] text-slate-400">
+                          {admin ? "Email & password" : "Access token only"}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="rounded bg-cyan-500/15 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-cyan-300">
+                            {u.role}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">{fmtDateTime(u.createdAt)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
-            {users.data?.users.length === 0 ? <div className="p-6"><Empty>No users found.</Empty></div> : null}
+            {users.data?.users.length === 0 ? (
+              <div className="p-6">
+                <Empty>No users found.</Empty>
+              </div>
+            ) : null}
           </div>
 
           <form onSubmit={createUser} className="panel h-max rounded-2xl p-4">
             <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-100">
-              <UserPlus size={14} className="text-cyan-300" /> Create account
+              <UserPlus size={14} className="text-cyan-300" /> Create account / role member
             </h2>
             <div className="mt-3 space-y-3">
-              <Field label="Email">
-                <input type="email" required className={inputClass} value={email} onChange={(e) => setEmail(e.target.value)} />
-              </Field>
-              <Field label="Full name">
-                <input className={inputClass} value={fullName} onChange={(e) => setFullName(e.target.value)} />
-              </Field>
-              <Field label="Role" hint="Admin · Engineering · Operator · Viewer">
+              <Field label="Role" hint="Admin (email/password) · Engineering, Operator, Viewer (token only)">
                 <select className={inputClass} value={role} onChange={(e) => setRole(e.target.value)}>
                   {ROLES.map((r) => (
                     <option key={r} value={r}>
@@ -219,14 +420,72 @@ export default function AdminPage() {
                   ))}
                 </select>
               </Field>
-              <Field label="Temporary password" hint="minimum 8 characters · managed by Supabase Auth">
-                <input type="password" autoComplete="new-password" required minLength={8} className={cx(inputClass, "font-mono")} value={password} onChange={(e) => setPassword(e.target.value)} />
-              </Field>
-              <Btn type="submit" variant="primary" disabled={busy} className="w-full">
-                <Plus size={13} /> Create user
-              </Btn>
+
+              {creatingAdmin ? (
+                <>
+                  <Field label="Admin email">
+                    <input
+                      type="email"
+                      required
+                      className={inputClass}
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Full name">
+                    <input
+                      className={inputClass}
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      placeholder="e.g. System Administrator"
+                    />
+                  </Field>
+                  <Field label="Password" hint="Minimum 8 characters · signs in with email & password only">
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      required
+                      minLength={8}
+                      className={cx(inputClass, "font-mono")}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                  </Field>
+                  <Btn type="submit" variant="primary" disabled={busy} className="w-full">
+                    <Plus size={13} /> Create Admin account
+                  </Btn>
+                </>
+              ) : (
+                <>
+                  <Field label="Member name" hint="Required · no email or password needed for this role">
+                    <input
+                      required
+                      maxLength={120}
+                      className={inputClass}
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      placeholder="e.g. Shift A Operator"
+                    />
+                  </Field>
+                  <Field label="Browser / device label" hint="Optional · defaults to Initial browser">
+                    <input
+                      maxLength={120}
+                      className={inputClass}
+                      value={memberDeviceLabel}
+                      onChange={(e) => setMemberDeviceLabel(e.target.value)}
+                      placeholder="e.g. Control room workstation"
+                    />
+                  </Field>
+                  <Btn type="submit" variant="primary" disabled={busy} className="w-full">
+                    <KeyRound size={13} /> Create member &amp; generate token
+                  </Btn>
+                </>
+              )}
+
               <p className="text-[10px] leading-relaxed text-slate-500">
-                Role changes, password resets and deactivation are out of UI scope by design.
+                {creatingAdmin
+                  ? "Administrators sign in with email and password only (no browser token required)."
+                  : "Non-Admin roles sign in using only a one-time access token issued by an Administrator."}
               </p>
             </div>
           </form>
@@ -279,7 +538,11 @@ export default function AdminPage() {
                 </tbody>
               </table>
             </div>
-            {devices.data?.devices.length === 0 ? <div className="p-6"><Empty>No devices provisioned.</Empty></div> : null}
+            {devices.data?.devices.length === 0 ? (
+              <div className="p-6">
+                <Empty>No devices provisioned.</Empty>
+              </div>
+            ) : null}
           </div>
 
           <div className="space-y-4">
@@ -298,10 +561,19 @@ export default function AdminPage() {
                   </select>
                 </Field>
                 <Field label="Label">
-                  <input className={inputClass} value={devLabel} placeholder="e.g. BMS gateway" onChange={(e) => setDevLabel(e.target.value)} />
+                  <input
+                    className={inputClass}
+                    value={devLabel}
+                    placeholder="e.g. BMS gateway"
+                    onChange={(e) => setDevLabel(e.target.value)}
+                  />
                 </Field>
                 <Field label="Source type" hint="FR-09 source identifier written with every telemetry row">
-                  <select className={inputClass} value={devSource} onChange={(e) => setDevSource(e.target.value as "PHYSICAL" | "SIMULATION")}>
+                  <select
+                    className={inputClass}
+                    value={devSource}
+                    onChange={(e) => setDevSource(e.target.value as "PHYSICAL" | "SIMULATION")}
+                  >
                     <option value="SIMULATION">SIMULATION</option>
                     <option value="PHYSICAL">PHYSICAL</option>
                   </select>
