@@ -6,7 +6,8 @@ import { auditLogs, users } from "@/db/schema";
 import type { Role, UserRow } from "@/db/schema";
 import { type Activity, can } from "@/lib/domain";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { authorizedDevice } from "@/lib/device-access";
+import { getAuthorizedDeviceUser, revokeCurrentDeviceCookie } from "@/lib/device-access";
+import { resolveRoleSession } from "@/lib/role-auth";
 
 export const CSRF_COOKIE = "ahu_csrf";
 
@@ -14,17 +15,29 @@ export interface SessionContext {
   user: UserRow;
 }
 
-/** Verify with Supabase Auth, then load the role from a server-only profile.
- * Never trust client-editable user metadata for authorization. */
+/**
+ * Resolve session by role authentication policy:
+ * - Admin: verified Supabase Auth email/password session (no device token required).
+ * - Engineering, Operator, Viewer: verified Admin-issued browser token cookie (no email/password).
+ * Never trust client-editable user metadata for authorization.
+ */
 export async function getSession(): Promise<SessionContext | null> {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user: authUser },
-    error,
-  } = await supabase.auth.getUser();
-  if (error || !authUser) return null;
-  const [user] = await db.select().from(users).where(eq(users.id, authUser.id)).limit(1);
-  return user && (await authorizedDevice(user.id)) ? { user } : null;
+  const user = await resolveRoleSession<UserRow>({
+    getSupabaseUserId: async () => {
+      const supabase = await createSupabaseServerClient();
+      const {
+        data: { user: authUser },
+        error,
+      } = await supabase.auth.getUser();
+      return error || !authUser ? null : authUser.id;
+    },
+    getUserById: async (id) => {
+      const [row] = await db.select().from(users).where(eq(users.id, id)).limit(1);
+      return row ?? null;
+    },
+    getAuthorizedTokenUser: () => getAuthorizedDeviceUser(),
+  });
+  return user ? { user } : null;
 }
 
 export async function setCsrfCookie() {
@@ -40,9 +53,13 @@ export async function setCsrfCookie() {
 }
 
 export async function destroySession() {
-  const supabase = await createSupabaseServerClient();
-  const { error } = await supabase.auth.signOut();
-  if (error) throw error;
+  await revokeCurrentDeviceCookie();
+  try {
+    const supabase = await createSupabaseServerClient();
+    await supabase.auth.signOut();
+  } catch {
+    /* token-only sessions may not have an active Supabase Auth session */
+  }
   (await cookies()).delete(CSRF_COOKIE);
 }
 
@@ -50,7 +67,8 @@ export async function destroySession() {
 export async function sameOrigin(): Promise<boolean> {
   const h = await headers();
   const origin = h.get("origin");
-  const host = h.get("x-forwarded-host") ?? h.get("host");
+  const rawHost = h.get("x-forwarded-host") ?? h.get("host");
+  const host = rawHost?.split(",")[0].trim();
   if (!origin || !host) return false;
   try {
     if (new URL(origin).host !== host) return false;

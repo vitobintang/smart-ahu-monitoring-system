@@ -1,44 +1,43 @@
 import { cookies } from "next/headers";
 
-import { getDatabasePool, queryDeviceRecords } from "../db/connection";
-import { authorizeRequest } from "./authorized-request";
-import { isBrowserAuthorized } from "./device-verification";
+import { getDatabasePool } from "../db/connection";
+import { USER_ROLES, type UserRole } from "./ahu";
+import { getAuthorizedTokenBrowser } from "./device-verification";
 import type { Permission } from "./permissions";
+import { authorizeRolePermission } from "./role-auth";
 import { createSupabaseServerClient } from "./supabase/server";
 
 export async function authorizeServerRequest(permission: Permission) {
   const cookieStore = await cookies();
   const deviceToken = cookieStore.get("ahu_device")?.value;
 
-  return authorizeRequest(
+  return authorizeRolePermission<{ id: string; role: UserRole }>(
     {
-      getVerifiedUser: async () => {
+      getSupabaseUserId: async () => {
         const supabase = await createSupabaseServerClient();
         const { data, error } = await supabase.auth.getUser();
-
-        if (error || !data.user) {
-          return null;
-        }
-
-        return { id: data.user.id };
+        return error || !data.user ? null : data.user.id;
       },
-
-      getProfile: async (userId) => {
+      getUserById: async (userId) => {
         const result = await getDatabasePool().query<{
           id: string;
           role: string;
-        }>(
-          "SELECT id, role FROM ahu_private.users WHERE id = $1 LIMIT 1",
-          [userId],
-        );
-
-        return result.rows[0] ?? null;
+        }>("SELECT id, role FROM ahu_private.users WHERE id = $1 LIMIT 1", [
+          userId,
+        ]);
+        const row = result.rows[0];
+        if (!row || !USER_ROLES.some((r) => r === row.role)) {
+          return null;
+        }
+        return { id: row.id, role: row.role as UserRole };
       },
-
-      isBrowserAuthorized: (userId, token) =>
-        isBrowserAuthorized(queryDeviceRecords, userId, token),
+      getAuthorizedTokenUser: () =>
+        getAuthorizedTokenBrowser(
+          (text, values) =>
+            getDatabasePool().query<{ id: string; role: string }>(text, values),
+          deviceToken,
+        ),
     },
-    deviceToken,
     permission,
   );
 }

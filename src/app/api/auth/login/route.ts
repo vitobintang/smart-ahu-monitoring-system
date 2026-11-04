@@ -4,24 +4,12 @@ import { loginAttempts, users } from "@/db/schema";
 import { LOGIN_RATE_LIMIT } from "@/lib/domain";
 import { getClientIp, safePublicUser, sameOrigin, setCsrfCookie, writeAudit } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { authorizedDevice, claimDevice, secretHash } from "@/lib/device-access";
+import { claimDeviceByToken, clearDeviceCookie, secretHash } from "@/lib/device-access";
+import { isAdminRole, parseLoginPayload } from "@/lib/role-auth";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(req: Request) {
-  if (!(await sameOrigin())) return Response.json({ error: "Invalid request origin" }, { status: 403 });
-  const ip = await getClientIp();
-  let body: { email?: string; password?: string; deviceToken?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
-  const email = (body.email ?? "").trim().toLowerCase();
-  if (!email || !body.password)
-    return Response.json({ error: "Email and password are required" }, { status: 400 });
-
-  const rateKey = await secretHash(email);
+async function allowLoginAttempt(rateKey: string): Promise<boolean> {
   const now = new Date();
   const cutoff = new Date(now.getTime() - LOGIN_RATE_LIMIT.windowMs);
   const [attempt] = await db
@@ -35,7 +23,72 @@ export async function POST(req: Request) {
       },
     })
     .returning({ count: loginAttempts.count });
-  if (attempt.count > LOGIN_RATE_LIMIT.max) {
+  return attempt.count <= LOGIN_RATE_LIMIT.max;
+}
+
+export async function POST(req: Request) {
+  if (!(await sameOrigin())) return Response.json({ error: "Invalid request origin" }, { status: 403 });
+  const ip = await getClientIp();
+  let rawBody: unknown;
+  try {
+    rawBody = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const parsed = parseLoginPayload(rawBody);
+  if (!parsed.ok) {
+    return Response.json({ error: parsed.error }, { status: 400 });
+  }
+
+  if (parsed.mode === "token") {
+    const rateKey = await secretHash(`token-ip:${ip ?? "unknown"}`);
+    if (!(await allowLoginAttempt(rateKey))) {
+      return Response.json(
+        { error: "Too many login attempts. Please wait before trying again." },
+        { status: 429 },
+      );
+    }
+
+    const user = await claimDeviceByToken(parsed.token, ip);
+    if (!user) {
+      await writeAudit({
+        action: "LOGIN_FAILED",
+        entity: "auth",
+        ipAddress: ip,
+        details: { method: "token" },
+      });
+      return Response.json(
+        {
+          error:
+            "Invalid, expired, or already-used access token. Ask your administrator for a new token.",
+        },
+        { status: 401 },
+      );
+    }
+
+    try {
+      const supabase = await createSupabaseServerClient();
+      await supabase.auth.signOut({ scope: "local" });
+    } catch {
+      /* no active Supabase Auth session */
+    }
+
+    await db.delete(loginAttempts).where(eq(loginAttempts.key, rateKey));
+    const csrfToken = await setCsrfCookie();
+    await writeAudit({
+      userId: user.id,
+      userEmail: user.email,
+      action: "LOGIN_SUCCESS",
+      entity: "auth",
+      ipAddress: ip,
+      details: { role: user.role, method: "token" },
+    });
+    return Response.json({ ok: true, user: safePublicUser(user), csrfToken });
+  }
+
+  const rateKey = await secretHash(parsed.email);
+  if (!(await allowLoginAttempt(rateKey))) {
     return Response.json(
       { error: "Too many login attempts. Please wait before trying again." },
       { status: 429 },
@@ -43,9 +96,18 @@ export async function POST(req: Request) {
   }
 
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password: body.password });
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: parsed.email,
+    password: parsed.password,
+  });
   if (error || !data.user) {
-    await writeAudit({ userEmail: email, action: "LOGIN_FAILED", entity: "auth", ipAddress: ip });
+    await writeAudit({
+      userEmail: parsed.email,
+      action: "LOGIN_FAILED",
+      entity: "auth",
+      ipAddress: ip,
+      details: { method: "password" },
+    });
     return Response.json({ error: "Invalid email or password" }, { status: 401 });
   }
 
@@ -58,29 +120,26 @@ export async function POST(req: Request) {
     );
   }
 
-  const alreadyAuthorized = await authorizedDevice(user.id);
-  const claimed =
-    !alreadyAuthorized && body.deviceToken
-      ? await claimDevice(user.id, body.deviceToken.trim())
-      : false;
-  if (!alreadyAuthorized && !claimed) {
+  if (!isAdminRole(user.role)) {
     await supabase.auth.signOut({ scope: "local" });
     await writeAudit({
       userId: user.id,
       userEmail: user.email,
-      action: "DEVICE_ACCESS_DENIED",
+      action: "LOGIN_FAILED",
       entity: "auth",
       ipAddress: ip,
+      details: { role: user.role, method: "password", reason: "non_admin_password_login_blocked" },
     });
     return Response.json(
       {
         error:
-          "This browser is not authorized. Enter a valid one-time device token from an administrator.",
+          "Email and password sign-in is only for Administrators. Please sign in using an access token from an administrator.",
       },
       { status: 403 },
     );
   }
 
+  await clearDeviceCookie();
   await db.delete(loginAttempts).where(eq(loginAttempts.key, rateKey));
   const csrfToken = await setCsrfCookie();
   await writeAudit({
@@ -89,7 +148,7 @@ export async function POST(req: Request) {
     action: "LOGIN_SUCCESS",
     entity: "auth",
     ipAddress: ip,
-    details: { role: user.role },
+    details: { role: user.role, method: "password" },
   });
   return Response.json({ ok: true, user: safePublicUser(user), csrfToken });
 }

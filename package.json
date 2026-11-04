@@ -12,6 +12,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:bootstrap-admin": "node scripts/bootstrap-admin.mjs",
+    "db:reset-admin": "node scripts/reset-admin.mjs",
     "db:bootstrap-device": "node scripts/bootstrap-device.mjs"
   },
   "repository": {
