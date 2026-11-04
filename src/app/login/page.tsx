@@ -1,105 +1,149 @@
-import Link from "next/link";
+"use client";
 
-import SessionStatusPanel from "../../components/SessionStatusPanel";
+import { useState } from "react";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { Fan, Lock, ShieldCheck, Wifi } from "lucide-react";
+import { api } from "@/lib/client";
+import { BUILD_NOTES, BUILD_STAMP } from "@/lib/build";
+import { Btn, Field, inputClass } from "@/components/ui";
 
 export default function LoginPage() {
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [deviceToken, setDeviceToken] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password, deviceToken }) });
+      router.push("/dashboard");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#f2f6fc] px-5 py-10 text-slate-900">
-      <section
-        className="grid w-full max-w-4xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg lg:grid-cols-2"
-        aria-labelledby="login-heading"
-      >
-        <div className="bg-[#0b1f3f] p-7 text-white sm:p-10">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-200">
-            Smart facilities
-          </p>
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-4">
+      <div className="pointer-events-none absolute inset-0">
+        <Image src="/ahu/sky-hero.jpg" alt="" fill priority sizes="100vw" className="object-cover" />
+        <div className="absolute inset-0 bg-gradient-to-b from-white/35 via-[#eef3fa]/70 to-[#e9eef7]" />
+      </div>
 
-          <h1 className="mt-3 text-2xl font-bold">
-            Smart AHU Monitoring
-          </h1>
+      <div className="panel panel-raised relative grid w-full max-w-5xl overflow-hidden rounded-2xl lg:grid-cols-[1.05fr_1fr]">
+        <div
+          className="relative hidden flex-col justify-between p-8 lg:flex"
+          style={{ backgroundImage: "linear-gradient(160deg,#0c2144 0%,#0a1c38 60%,#081428 100%)" }}
+        >
+          <div>
+            <div className="flex items-center gap-3">
+              <span className="relative h-11 w-11 overflow-hidden rounded-xl shadow-[0_8px_20px_-6px_rgba(47,123,246,0.9)] ring-1 ring-white/25">
+                <Image src="/ahu/logo.png" alt="Smart Monitoring AHU logo" fill sizes="44px" className="object-cover" />
+              </span>
+              <div>
+                <h1 className="text-[17px] font-bold tracking-[-0.01em] text-white">Smart Monitoring AHU</h1>
+                <p className="text-[10.5px] uppercase tracking-[0.14em] text-[#8ea3c0]">
+                  Air Handling Unit Monitoring &amp; Control System
+                </p>
+              </div>
+            </div>
 
-          <p className="mt-4 text-sm leading-6 text-blue-100">
-            Monitoring and control for seven air-handling units.
-          </p>
+            <p className="mt-8 max-w-sm text-[13px] leading-relaxed text-[#b9c8dd]">
+              Continuous supervision of <span className="font-mono font-semibold text-[#7dd3fc]">7 AHU</span> units
+              across 12 process parameters, with threshold &amp; fault alarming, trend proximity estimation,
+              transactional data logging and role-based control.
+            </p>
 
-          <div className="mt-8 rounded-xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm leading-6 text-amber-100">
-            This application is under development. Physical control is
-            not available. A web STOP button is not an emergency stop.
+            <ul className="mt-8 space-y-3 text-[12px] text-[#93a7c4]">
+              <li className="flex items-start gap-2.5">
+                <Fan size={14} className="mt-0.5 text-[#4ade80]" />
+                <span>
+                  <span className="font-semibold text-white">FR-03 … FR-08</span> — live dashboard, equipment
+                  visualisation and 5 / 15 / 30-minute streaming charts
+                </span>
+              </li>
+              <li className="flex items-start gap-2.5">
+                <ShieldCheck size={14} className="mt-0.5 text-[#7dd3fc]" />
+                <span>
+                  <span className="font-semibold text-white">FR-25 … FR-27</span> — START / STOP / AUTO-MANUAL /
+                  setpoint with single active command queue, 60 s TTL and interlocks
+                </span>
+              </li>
+              <li className="flex items-start gap-2.5">
+                <Wifi size={14} className="mt-0.5 text-[#c4b5fd]" />
+                <span>
+                  <span className="font-semibold text-white">FR-24 / NFR-05</span> — Supabase database with 5 s polling
+                </span>
+              </li>
+            </ul>
+          </div>
+
+          <div className="mt-8 rounded-xl border border-amber-400/25 bg-amber-400/10 p-3 text-[11px] leading-relaxed text-amber-100/90">
+            <strong className="font-semibold text-amber-50">NFR-09:</strong> the web STOP command is a normal
+            operational stop and is not an emergency stop (E-STOP). Local hardware interlocks stay active whenever
+            server connectivity is lost.
           </div>
         </div>
 
-        <div className="p-7 sm:p-10">
-          <h2 id="login-heading" className="text-2xl font-bold">
-            Sign in
+        <div className="bg-white p-6 sm:p-8">
+          <h2 className="flex items-center gap-2 text-[16px] font-bold tracking-[-0.01em] text-slate-800">
+            <Lock size={16} className="text-[#1d6ef2]" /> Operator sign-in
           </h2>
-
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            Login is not connected yet. Please do not enter real
-            credentials.
+          <p className="mt-1 text-[11.5px] leading-relaxed text-slate-500">
+            FR-01 Supabase Auth email/password authentication · CSRF-protected mutations · 10 login attempts per IP
+            per 15 minutes (NFR-02).
           </p>
 
-          <div className="mt-6 space-y-4">
-            <div>
-              <label
-                htmlFor="email"
-                className="block text-sm font-semibold"
-              >
-                Email address
-              </label>
-
+          <form onSubmit={submit} className="mt-6 space-y-4">
+            <Field label="Email address">
               <input
-                id="email"
+                className={inputClass}
                 type="email"
-                disabled
-                placeholder="Not available yet"
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-500"
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
               />
-            </div>
-
-            <div>
-              <label
-                htmlFor="password"
-                className="block text-sm font-semibold"
-              >
-                Password
-              </label>
-
+            </Field>
+            <Field label="Password">
               <input
-                id="password"
+                className={inputClass}
                 type="password"
-                disabled
-                placeholder="Not available yet"
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-500"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
               />
-            </div>
+            </Field>
 
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm leading-6 text-slate-700">
-              <strong>Separate browser authorization:</strong> An
-              Admin-issued token is intended to authorize each user’s
-              browser. Browser authorization is not connected yet. The
-              first Admin’s bootstrap is also unfinished. Telemetry
-              device credentials are separate.
-            </div>
+            <Field label="Device token" hint="Required the first time this browser is authorized. Ask your administrator.">
+              <input className={inputClass} type="password" autoComplete="off" value={deviceToken} onChange={(e) => setDeviceToken(e.target.value)} />
+            </Field>
 
-            <button
-              type="button"
-              disabled
-              className="w-full cursor-not-allowed rounded-lg bg-slate-300 px-4 py-3 text-sm font-semibold text-slate-600"
-            >
-              Sign in unavailable
-            </button>
+            {error ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11.5px] text-red-600">{error}</div>
+            ) : null}
+
+            <Btn type="submit" variant="primary" disabled={busy} className="w-full py-2.5">
+              {busy ? "Authenticating…" : "Sign in"}
+            </Btn>
+          </form>
+
+          <div className="mt-7">
+            <p className="mt-4 text-[10px] leading-relaxed text-slate-400">
+              build <span className="font-mono font-semibold text-slate-500">{BUILD_STAMP}</span> — {BUILD_NOTES}
+            </p>
           </div>
-
-          <SessionStatusPanel />
-
-          <Link
-            href="/"
-            className="mt-6 inline-block text-sm font-semibold text-blue-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-          >
-            Back to dashboard preview
-          </Link>
         </div>
-      </section>
-    </main>
+      </div>
+    </div>
   );
 }
