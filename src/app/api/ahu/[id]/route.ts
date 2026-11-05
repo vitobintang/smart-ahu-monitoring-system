@@ -1,9 +1,10 @@
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { ahus, sensorThresholds } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { getAhuDetail, getSeries } from "@/lib/queries";
 import { PARAM_KEYS, PARAM_MAP, type ParamKey } from "@/lib/domain";
+import { normalizeRotation, resolveAhuPlacement, validatePlatformPlacement } from "@/lib/facility-layout";
 import { maybePulseWorkers } from "@/lib/workers";
 
 export const dynamic = "force-dynamic";
@@ -29,20 +30,18 @@ export async function GET(req: Request, ctx: Ctx) {
   }
 }
 
-/** FR-19 configuration management (Admin + Engineering only). */
+/** FR-19 configuration management (Admin + Engineering) + 3D floor-map repositioning. */
 export async function PATCH(req: Request, ctx: Ctx) {
   try {
-    const actor = await requireAuth("configure", { mutating: true });
-    const { id } = await ctx.params;
-    const before = (await db.select().from(ahus).where(eq(ahus.id, id)).limit(1))[0];
-    if (!before) return Response.json({ error: `AHU ${id} not found` }, { status: 404 });
-
     const body = (await req.json()) as {
       name?: string;
       location?: string;
       commTimeoutSec?: number;
       hasHeater?: boolean;
       installedSensors?: string[];
+      mapX?: number;
+      mapZ?: number;
+      mapRotation?: number;
       thresholds?: Array<{
         parameter: string;
         enabled?: boolean;
@@ -54,8 +53,53 @@ export async function PATCH(req: Request, ctx: Ctx) {
       }>;
     };
 
+    const hasConfigFields =
+      body.name !== undefined ||
+      body.location !== undefined ||
+      body.commTimeoutSec !== undefined ||
+      body.hasHeater !== undefined ||
+      body.installedSensors !== undefined ||
+      (Array.isArray(body.thresholds) && body.thresholds.length > 0);
+
+    const actor = await requireAuth(hasConfigFields ? "configure" : "control", { mutating: true });
+    const { id } = await ctx.params;
+    const before = (await db.select().from(ahus).where(eq(ahus.id, id)).limit(1))[0];
+    if (!before) return Response.json({ error: `AHU ${id} not found` }, { status: 404 });
+
     const patch: Record<string, unknown> = {};
     const changes: Record<string, { from: unknown; to: unknown }> = {};
+
+    if (typeof body.mapX === "number" && Number.isFinite(body.mapX) && typeof body.mapZ === "number" && Number.isFinite(body.mapZ)) {
+      const allRows = await db.select().from(ahus).orderBy(asc(ahus.id));
+      const existingPlacements: Array<{ id: string; x: number; z: number; rotation?: number }> = [];
+      for (const r of allRows) {
+        const p = resolveAhuPlacement(r, existingPlacements);
+        existingPlacements.push({ id: r.id, x: p.x, z: p.z, rotation: p.rotation });
+      }
+      const requestedRot =
+        typeof body.mapRotation === "number" && Number.isFinite(body.mapRotation)
+          ? normalizeRotation(body.mapRotation)
+          : undefined;
+      const check = validatePlatformPlacement(body.mapX, body.mapZ, existingPlacements, id, requestedRot);
+      if (!check.valid || !check.zone) {
+        return Response.json(
+          { error: check.reason ?? "Invalid 3D floor platform position." },
+          { status: 400 },
+        );
+      }
+      patch.mapX = check.snappedX;
+      patch.mapZ = check.snappedZ;
+      patch.mapRotation = check.rotation;
+      patch.mapZone = check.zone.label;
+      changes.mapPlacement = {
+        from: { mapX: before.mapX, mapZ: before.mapZ, mapRotation: before.mapRotation, mapZone: before.mapZone },
+        to: { mapX: check.snappedX, mapZ: check.snappedZ, mapRotation: check.rotation, mapZone: check.zone.label },
+      };
+    } else if (typeof body.mapRotation === "number" && Number.isFinite(body.mapRotation)) {
+      const nextRot = normalizeRotation(body.mapRotation);
+      patch.mapRotation = nextRot;
+      changes.mapRotation = { from: before.mapRotation, to: nextRot };
+    }
 
     if (typeof body.name === "string" && body.name.trim()) {
       patch.name = body.name.trim().slice(0, 120);
@@ -90,6 +134,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
     if (Object.keys(patch).length > 0) {
       await db.update(ahus).set(patch).where(eq(ahus.id, id));
+      const g = globalThis as typeof globalThis & { __ahuOverviewCache?: Map<string, unknown> };
+      g.__ahuOverviewCache?.clear();
     }
 
     const thresholdChanges: unknown[] = [];
