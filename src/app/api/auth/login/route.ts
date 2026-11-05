@@ -1,16 +1,16 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { getClientIp, safePublicUser, sameOrigin, setCsrfCookie, writeAudit } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { claimDeviceByToken, clearDeviceCookie } from "@/lib/device-access";
+import { clearDeviceCookie } from "@/lib/device-access";
 import {
   canonicalizeClientIp,
   deriveLoginIpRateKey,
   releaseLoginAttempt,
   reserveLoginAttempt,
 } from "@/lib/login-rate-limiter";
-import { isAdminRole, parseLoginPayload } from "@/lib/role-auth";
+import { isValidUserRole, parseLoginPayload } from "@/lib/role-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -36,12 +36,13 @@ export async function POST(req: Request) {
   const reservation = await reserveLoginAttempt(rateKey);
   if (!reservation.allowed) {
     await writeAudit({
-      userEmail: parsed.mode === "admin" ? parsed.email : null,
+      userEmail: parsed.identifierType === "email" ? parsed.identifier : null,
       action: "LOGIN_RATE_LIMITED",
       entity: "auth",
       ipAddress: ip,
       details: {
-        method: parsed.mode === "admin" ? "password" : "token",
+        identifierType: parsed.identifierType,
+        identifier: parsed.identifier,
         retryAfterSec: reservation.retryAfterSec,
       },
     });
@@ -54,91 +55,54 @@ export async function POST(req: Request) {
     );
   }
 
-  if (parsed.mode === "token") {
-    const user = await claimDeviceByToken(parsed.token, ip);
-    if (!user) {
+  // Resolve username -> email when signing in with a username substitute
+  let loginEmail = parsed.identifier;
+  if (parsed.identifierType === "username") {
+    const [matched] = await db
+      .select({ email: users.email })
+      .from(users)
+      .where(sql`lower(${users.username}) = ${parsed.identifier}`)
+      .limit(1);
+    if (!matched) {
       await writeAudit({
         action: "LOGIN_FAILED",
         entity: "auth",
         ipAddress: ip,
-        details: { method: "token" },
+        details: { identifierType: "username", identifier: parsed.identifier },
       });
-      return Response.json(
-        {
-          error:
-            "Invalid, expired, or already-used access token. Ask your administrator for a new token.",
-        },
-        { status: 401 },
-      );
+      return Response.json({ error: "Invalid email/username or password" }, { status: 401 });
     }
-
-    try {
-      const supabase = await createSupabaseServerClient();
-      await supabase.auth.signOut({ scope: "local" });
-    } catch {
-      /* no active Supabase Auth session */
-    }
-
-    await releaseLoginAttempt(rateKey);
-    const csrfToken = await setCsrfCookie();
-    await writeAudit({
-      userId: user.id,
-      userEmail: user.email,
-      action: "LOGIN_SUCCESS",
-      entity: "auth",
-      ipAddress: ip,
-      details: { role: user.role, method: "token" },
-    });
-    return Response.json({ ok: true, user: safePublicUser(user), csrfToken });
+    loginEmail = matched.email;
   }
 
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.auth.signInWithPassword({
-    email: parsed.email,
+    email: loginEmail,
     password: parsed.password,
   });
   if (error || !data.user) {
     await writeAudit({
-      userEmail: parsed.email,
+      userEmail: loginEmail,
       action: "LOGIN_FAILED",
       entity: "auth",
       ipAddress: ip,
-      details: { method: "password" },
+      details: { identifierType: parsed.identifierType },
     });
-    return Response.json({ error: "Invalid email or password" }, { status: 401 });
+    return Response.json({ error: "Invalid email/username or password" }, { status: 401 });
   }
 
   const [user] = await db.select().from(users).where(eq(users.id, data.user.id)).limit(1);
-  if (!user) {
+  if (!user || !isValidUserRole(user.role)) {
     await supabase.auth.signOut({ scope: "local" });
     await writeAudit({
-      userEmail: parsed.email,
+      userEmail: loginEmail,
       action: "LOGIN_FAILED",
       entity: "auth",
       ipAddress: ip,
-      details: { method: "password", reason: "unassigned_role" },
+      details: { identifierType: parsed.identifierType, reason: "unassigned_role" },
     });
     return Response.json(
       { error: "Account has no assigned role. Contact an administrator." },
-      { status: 403 },
-    );
-  }
-
-  if (!isAdminRole(user.role)) {
-    await supabase.auth.signOut({ scope: "local" });
-    await writeAudit({
-      userId: user.id,
-      userEmail: user.email,
-      action: "LOGIN_FAILED",
-      entity: "auth",
-      ipAddress: ip,
-      details: { role: user.role, method: "password", reason: "non_admin_password_login_blocked" },
-    });
-    return Response.json(
-      {
-        error:
-          "Email and password sign-in is only for Administrators. Please sign in using an access token from an administrator.",
-      },
       { status: 403 },
     );
   }
@@ -152,7 +116,11 @@ export async function POST(req: Request) {
     action: "LOGIN_SUCCESS",
     entity: "auth",
     ipAddress: ip,
-    details: { role: user.role, method: "password" },
+    details: {
+      role: user.role,
+      username: user.username ?? null,
+      identifierType: parsed.identifierType,
+    },
   });
   return Response.json({ ok: true, user: safePublicUser(user), csrfToken });
 }

@@ -93,20 +93,20 @@ export default function TrendsPage() {
         </div>
       </div>
 
-      <div className="panel rounded-2xl border-violet-500/30 bg-violet-500/5 p-4 text-[11px] leading-relaxed text-violet-100/90">
-        <strong className="inline-flex items-center gap-1.5 font-semibold uppercase tracking-wide">
-          <Activity size={13} /> Trend Proximity Estimation
+      <div className="panel rounded-2xl border-violet-200 bg-violet-50/90 p-4 text-[11.5px] leading-relaxed text-violet-950">
+        <strong className="inline-flex items-center gap-1.5 font-semibold uppercase tracking-wide text-violet-900">
+          <Activity size={13} className="text-violet-700" /> Trend Proximity Estimation
         </strong>
         <p className="mt-1">
           This module performs a linear/statistical projection of the recent parameter trajectory and reports how close
           it is to a configured threshold within 15 or 30 minutes. Per constraint 2 it is explicitly{" "}
-          <span className="font-semibold text-violet-200">not</span> a definitive mechanical failure prediction. Every
+          <span className="font-semibold text-violet-900">not</span> a definitive mechanical failure prediction. Every
           result is accompanied by its data-sufficiency indicator and an unreliability flag when variance is too high
           or the sample count is insufficient.
         </p>
       </div>
 
-      {notice ? <p className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-[11px] text-cyan-200">{notice}</p> : null}
+      {notice ? <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11.5px] text-sky-900">{notice}</p> : null}
       <ErrorNote message={error} />
       {loading && !data ? <Spinner label="Running trend analysis…" /> : null}
 

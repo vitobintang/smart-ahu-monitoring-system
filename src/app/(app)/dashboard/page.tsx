@@ -283,7 +283,7 @@ export default function DashboardPage() {
 
       {data ? (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <Tile
               tile={<Box size={22} />}
               grad="from-[#3b82f6] to-[#1d4ed8]"
@@ -358,51 +358,55 @@ export default function DashboardPage() {
 
           <div className="grid gap-5 xl:grid-cols-[1fr_21rem]">
             <div>
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                 <div>
-                  <h2 className="text-[19px] font-bold tracking-[-0.015em] text-[#12294d]">AHU Units</h2>
+                  <h2 className="text-[18px] font-bold tracking-[-0.015em] text-[#12294d] sm:text-[19px]">AHU Units</h2>
                   <p className="text-[11.5px] text-slate-500">Live status of all air handling units</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {(
-                    [
-                      ["ALL", `All (${counts.ALL})`, "bg-[#2563eb] text-white shadow-[0_6px_16px_-6px_rgba(37,99,235,0.9)]"],
-                      ["RUN", `Running (${counts.RUN})`, "bg-emerald-50 text-emerald-600 border border-emerald-200"],
-                      ["STOP", `Stopped (${counts.STOP})`, "bg-slate-100 text-slate-500 border border-slate-200"],
-                      ["FAULT", `Fault (${counts.FAULT})`, "bg-red-50 text-red-500 border border-red-200"],
-                      ["OFFLINE", `Offline (${counts.OFFLINE})`, "bg-slate-100 text-slate-500 border border-slate-200"],
-                    ] as const
-                  ).map(([key, label, cls]) => (
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {(
+                      [
+                        ["ALL", `All (${counts.ALL})`, "bg-[#2563eb] text-white shadow-[0_6px_16px_-6px_rgba(37,99,235,0.9)]"],
+                        ["RUN", `Running (${counts.RUN})`, "bg-emerald-50 text-emerald-600 border border-emerald-200"],
+                        ["STOP", `Stopped (${counts.STOP})`, "bg-slate-100 text-slate-500 border border-slate-200"],
+                        ["FAULT", `Fault (${counts.FAULT})`, "bg-red-50 text-red-500 border border-red-200"],
+                        ["OFFLINE", `Offline (${counts.OFFLINE})`, "bg-slate-100 text-slate-500 border border-slate-200"],
+                      ] as const
+                    ).map(([key, label, cls]) => (
+                      <button
+                        key={key}
+                        onClick={() => setFilter(key as typeof filter)}
+                        className={cx(
+                          "rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition sm:px-3",
+                          filter === key ? cls : "border border-[#e6ecf5] bg-white text-slate-500 hover:border-[#bfdbfe] hover:text-[#2563eb]",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="relative flex-1 sm:ml-1 sm:flex-none">
+                      <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        placeholder="Search AHU units…"
+                        className="w-full rounded-lg border border-[#e6ecf5] bg-white py-1.5 pl-8 pr-2 text-[11px] text-slate-600 outline-none focus:border-[#bfdbfe] sm:w-44"
+                      />
+                    </label>
                     <button
-                      key={key}
-                      onClick={() => setFilter(key as typeof filter)}
+                      onClick={() => setDense((d) => !d)}
+                      title="Toggle grid density"
                       className={cx(
-                        "rounded-lg px-3 py-1.5 text-[11px] font-bold transition",
-                        filter === key ? cls : "border border-[#e6ecf5] bg-white text-slate-500 hover:border-[#bfdbfe] hover:text-[#2563eb]",
+                        "rounded-lg border p-1.5 transition",
+                        dense ? "border-[#bfdbfe] bg-[#e8f0fe] text-[#2563eb]" : "border-[#e6ecf5] bg-white text-slate-400 hover:text-[#2563eb]",
                       )}
                     >
-                      {label}
+                      <LayoutGrid size={14} />
                     </button>
-                  ))}
-                  <label className="relative ml-1">
-                    <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                      placeholder="Search AHU units…"
-                      className="w-40 rounded-lg border border-[#e6ecf5] bg-white py-1.5 pl-8 pr-2 text-[11px] text-slate-600 outline-none focus:border-[#bfdbfe]"
-                    />
-                  </label>
-                  <button
-                    onClick={() => setDense((d) => !d)}
-                    title="Toggle grid density"
-                    className={cx(
-                      "rounded-lg border p-1.5 transition",
-                      dense ? "border-[#bfdbfe] bg-[#e8f0fe] text-[#2563eb]" : "border-[#e6ecf5] bg-white text-slate-400 hover:text-[#2563eb]",
-                    )}
-                  >
-                    <LayoutGrid size={14} />
-                  </button>
+                  </div>
                 </div>
               </div>
 
@@ -488,13 +492,13 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="panel rounded-2xl p-5">
+                <div className="panel rounded-2xl p-4 sm:p-5">
                   <h3 className="mb-4 text-[13.5px] font-bold text-[#12294d]">AHU Status Distribution</h3>
-                  <div className="flex items-center gap-5">
-                    <div className="relative h-40 w-40 flex-none">
+                  <div className="flex flex-col items-center gap-4 sm:flex-row sm:gap-5">
+                    <div className="relative h-36 w-36 flex-none sm:h-40 sm:w-40">
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
-                          <Pie data={pieData} dataKey="value" innerRadius={52} outerRadius={78} paddingAngle={2} strokeWidth={0}>
+                          <Pie data={pieData} dataKey="value" innerRadius={48} outerRadius={72} paddingAngle={2} strokeWidth={0}>
                             {pieData.map((d) => (
                               <Cell key={d.name} fill={d.color} />
                             ))}
@@ -503,12 +507,12 @@ export default function DashboardPage() {
                       </ResponsiveContainer>
                       <div className="pointer-events-none absolute inset-0 grid place-items-center">
                         <span className="text-center">
-                          <span className="num block text-[26px] font-bold text-[#12294d]">{counts.ALL}</span>
+                          <span className="num block text-[24px] font-bold text-[#12294d] sm:text-[26px]">{counts.ALL}</span>
                           <span className="block text-[10px] text-slate-400">Units</span>
                         </span>
                       </div>
                     </div>
-                    <div className="flex-1 space-y-2">
+                    <div className="w-full flex-1 space-y-2">
                       {statusRows.map((d) => (
                         <div key={d.name} className="flex items-center gap-2 text-[11.5px]">
                           <span className="h-2.5 w-2.5 rounded-full" style={{ background: d.color }} />
@@ -748,8 +752,8 @@ function UnitCard({ card }: { card: Card }) {
         <MapPin size={10} className="flex-none" /> {card.ahu.location}
       </p>
 
-      <div className="mt-3 flex items-center gap-3">
-        <div className="relative h-[84px] w-[128px] flex-none">
+      <div className="mt-3 flex items-center gap-2.5 sm:gap-3">
+        <div className="relative h-[76px] w-[104px] flex-none sm:h-[84px] sm:w-[128px]">
           <Image src="/ahu/unit-iso2.png" alt={`${card.ahu.id} unit`} fill sizes="128px" className={cx("object-contain", off && "opacity-40 grayscale")} />
         </div>
         <div className="grid flex-1 gap-1.5">

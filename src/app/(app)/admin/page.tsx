@@ -2,21 +2,33 @@
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Ban, Check, Copy, HardDrive, KeyRound, Plus, ShieldAlert, Trash2, UserPlus, Users } from "lucide-react";
+import {
+  AtSign,
+  Check,
+  Copy,
+  HardDrive,
+  KeyRound,
+  Pencil,
+  Plus,
+  ShieldAlert,
+  Trash2,
+  Users,
+  X,
+} from "lucide-react";
 import { api, fmtDateTime, usePoll } from "@/lib/client";
 import { AHU_IDS, ROLES } from "@/lib/domain";
-import { isAdminRole, isSyntheticTokenEmail } from "@/lib/role-auth";
+import { isAdminRole, suggestUsernameFromEmail } from "@/lib/role-auth";
 import { Btn, Empty, ErrorNote, Field, QualityTag, Spinner, cx, inputClass } from "@/components/ui";
-
-const NON_ADMIN_ROLES = ["Engineering", "Operator", "Viewer"] as const;
 
 interface UserRow {
   id: string;
   email: string;
+  username: string | null;
   fullName: string | null;
   role: string;
   createdAt: string;
 }
+
 interface DeviceRow {
   id: string;
   ahuId: string;
@@ -25,25 +37,10 @@ interface DeviceRow {
   enabled: boolean;
   createdAt: string;
 }
-interface AccessDeviceItem {
-  id: string;
-  userId: string;
-  email: string;
-  fullName: string | null;
-  role: string;
-  label: string;
-  claimedAt: string | null;
-  revokedAt: string | null;
-  invitationExpiresAt: string;
-  expiresAt: string | null;
-}
 
-function displayMemberLabel(u: { email: string; fullName: string | null; role: string }) {
-  if (isAdminRole(u.role)) {
-    return u.fullName ? `${u.fullName} (${u.email})` : u.email;
-  }
-  if (u.fullName) return u.fullName;
-  return isSyntheticTokenEmail(u.email) ? "Token member" : u.email;
+function displayUserLabel(u: UserRow) {
+  const base = u.fullName?.trim() || u.username || u.email;
+  return u.username ? `${base} (@${u.username})` : `${base} (${u.email})`;
 }
 
 export default function AdminPage() {
@@ -56,39 +53,43 @@ export default function AdminPage() {
     30000,
     tab === "devices",
   );
+
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const [email, setEmail] = useState("");
-  const [fullName, setFullName] = useState("");
+  // Create user form (all roles: Admin, Engineering, Operator, Viewer)
   const [role, setRole] = useState<string>("Operator");
+  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
+  const [usernameTouched, setUsernameTouched] = useState(false);
+  const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
-  const [memberDeviceLabel, setMemberDeviceLabel] = useState("");
 
+  // Inline edit user state
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editUsername, setEditUsername] = useState("");
+  const [editFullName, setEditFullName] = useState("");
+
+  // Password reset form (any role)
+  const [resetUserId, setResetUserId] = useState("");
+  const [resetPassword, setResetPassword] = useState("");
+
+  // AHU monitoring module provisioning form
   const [devAhu, setDevAhu] = useState<string>(AHU_IDS[0]);
   const [devLabel, setDevLabel] = useState("");
   const [devSource, setDevSource] = useState<"PHYSICAL" | "SIMULATION">("SIMULATION");
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
-
-  const access = usePoll<{ devices: AccessDeviceItem[] }>("/api/access-devices", 30000, tab === "users");
-  const [accessUser, setAccessUser] = useState("");
-  const [accessLabel, setAccessLabel] = useState("");
-  const [accessToken, setAccessToken] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState(false);
-  const [resetAdminId, setResetAdminId] = useState("");
-  const [resetPassword, setResetPassword] = useState("");
 
   const allUsers = users.data?.users ?? [];
   const currentUserId = users.data?.currentUserId ?? "";
-  const adminUsers = allUsers.filter((u) => isAdminRole(u.role));
-  const nonAdminUsers = allUsers.filter((u) => !isAdminRole(u.role));
-  const creatingAdmin = isAdminRole(role);
+  const adminCount = allUsers.filter((u) => isAdminRole(u.role)).length;
 
-  const activeTokensByUser = new Map<string, number>();
-  for (const d of access.data?.devices ?? []) {
-    if (!d.revokedAt) {
-      activeTokensByUser.set(d.userId, (activeTokensByUser.get(d.userId) ?? 0) + 1);
+  function onEmailChange(nextEmail: string) {
+    setEmail(nextEmail);
+    if (!usernameTouched) {
+      setUsername(nextEmail.includes("@") ? suggestUsernameFromEmail(nextEmail) : "");
     }
   }
 
@@ -102,111 +103,103 @@ export default function AdminPage() {
     }
   }
 
-  async function issueAccess(e: React.FormEvent) {
+  async function createUser(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    setAccessToken(null);
-    setCopiedToken(false);
+    setNotice(null);
     try {
-      const result = await api<{ token: string }>("/api/access-devices", {
+      const res = await api<{ user: UserRow }>("/api/users", {
         method: "POST",
-        body: JSON.stringify({ userId: accessUser, label: accessLabel }),
+        body: JSON.stringify({
+          role,
+          email: email.trim(),
+          username: username.trim() || undefined,
+          fullName: fullName.trim() || undefined,
+          password,
+        }),
       });
-      setAccessToken(result.token);
-      setAccessLabel("");
-      await access.reload();
+      setNotice(
+        `${res.user.role} account created: ${res.user.email}${
+          res.user.username ? ` (@${res.user.username})` : ""
+        }. User can sign in with either email or username + password.`,
+      );
+      setEmail("");
+      setUsername("");
+      setUsernameTouched(false);
+      setFullName("");
+      setPassword("");
+      await users.reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not issue token");
+      setError(err instanceof Error ? err.message : "User creation failed");
     } finally {
       setBusy(false);
     }
   }
 
-  async function revokeAccess(id: string) {
-    setBusy(true);
-    setError(null);
-    try {
-      await api("/api/access-devices", { method: "POST", body: JSON.stringify({ revokeId: id }) });
-      await access.reload();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not revoke device");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function changeMemberRole(u: UserRow, nextRole: string) {
-    if (nextRole === u.role) return;
+  async function changeUserRole(target: UserRow, nextRole: string) {
+    if (nextRole === target.role) return;
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
       await api("/api/users", {
         method: "PATCH",
-        body: JSON.stringify({ userId: u.id, role: nextRole }),
+        body: JSON.stringify({ userId: target.id, role: nextRole }),
       });
-      setNotice(`Updated role for "${displayMemberLabel(u)}" from ${u.role} to ${nextRole} (FR-20).`);
-      await Promise.all([users.reload(), access.reload()]);
+      setNotice(`Updated role for ${displayUserLabel(target)} from ${target.role} to ${nextRole} (FR-20).`);
+      await users.reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update member role");
+      setError(err instanceof Error ? err.message : "Could not update user role");
     } finally {
       setBusy(false);
     }
   }
 
-  async function revokeAllMemberSessions(u: UserRow) {
+  function startEditUser(u: UserRow) {
+    setEditingUserId(u.id);
+    setEditUsername(u.username ?? suggestUsernameFromEmail(u.email));
+    setEditFullName(u.fullName ?? "");
+  }
+
+  async function saveUserIdentity(target: UserRow) {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      const res = await api<{ ok: boolean; revokedCount: number }>("/api/users", {
+      await api("/api/users", {
         method: "PATCH",
-        body: JSON.stringify({ userId: u.id, revokeSessions: true }),
+        body: JSON.stringify({
+          userId: target.id,
+          username: editUsername.trim(),
+          fullName: editFullName,
+        }),
       });
-      setNotice(
-        `Revoked ${res.revokedCount} active token(s) / browser session(s) for "${displayMemberLabel(u)}" (FR-20).`,
-      );
-      await access.reload();
+      setEditingUserId(null);
+      setNotice(`Updated profile details for ${target.email}.`);
+      await users.reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not revoke member sessions");
+      setError(err instanceof Error ? err.message : "Could not update user details");
     } finally {
       setBusy(false);
     }
   }
 
-  async function removeUser(u: UserRow) {
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      await api(`/api/users?userId=${encodeURIComponent(u.id)}`, {
-        method: "DELETE",
-      });
-      if (accessUser === u.id) setAccessUser("");
-      if (resetAdminId === u.id) setResetAdminId("");
-      setNotice(`Removed ${u.role} account "${displayMemberLabel(u)}" (FR-20).`);
-      await Promise.all([users.reload(), access.reload()]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not remove user");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function updateAdminPassword(e: React.FormEvent) {
+  async function updateUserPassword(e: React.FormEvent) {
     e.preventDefault();
-    const targetId = resetAdminId || adminUsers[0]?.id || "";
+    const targetId = resetUserId || allUsers[0]?.id;
     if (!targetId) return;
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      const res = await api<{ ok: boolean; email: string }>("/api/users", {
+      const res = await api<{ ok: boolean; email: string; username: string | null }>("/api/users", {
         method: "PATCH",
         body: JSON.stringify({ userId: targetId, password: resetPassword }),
       });
-      setNotice(`Password updated for Administrator ${res.email}.`);
+      setNotice(
+        `Password updated for ${res.email}${res.username ? ` (@${res.username})` : ""}.`,
+      );
       setResetPassword("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update password");
@@ -215,45 +208,22 @@ export default function AdminPage() {
     }
   }
 
-  async function createUser(e: React.FormEvent) {
-    e.preventDefault();
+  async function removeUserAccount(target: UserRow) {
+    const label = displayUserLabel(target);
+    const confirmed = window.confirm(
+      `Remove ${target.role} account "${label}"?\n\nTheir login credentials will be permanently deleted while historical audit logs, alarms, and command history remain preserved.`,
+    );
+    if (!confirmed) return;
+
     setBusy(true);
     setError(null);
     setNotice(null);
-    setAccessToken(null);
-    setCopiedToken(false);
     try {
-      if (creatingAdmin) {
-        const res = await api<{ user: UserRow }>("/api/users", {
-          method: "POST",
-          body: JSON.stringify({ email, fullName, role, password }),
-        });
-        setNotice(
-          `Admin ${res.user.email} created (FR-20). Administrators sign in with email and password only.`,
-        );
-        setEmail("");
-        setFullName("");
-        setPassword("");
-        await users.reload();
-      } else {
-        const res = await api<{ user: UserRow; token: string }>("/api/users", {
-          method: "POST",
-          body: JSON.stringify({
-            fullName,
-            role,
-            label: memberDeviceLabel || undefined,
-          }),
-        });
-        setAccessToken(res.token);
-        setNotice(
-          `${res.user.role} member "${res.user.fullName ?? "Member"}" created and one-time access token generated. Copy and share the token below.`,
-        );
-        setFullName("");
-        setMemberDeviceLabel("");
-        await Promise.all([users.reload(), access.reload()]);
-      }
+      await api(`/api/users?userId=${encodeURIComponent(target.id)}`, { method: "DELETE" });
+      setNotice(`Removed ${target.role} account "${label}" (FR-20).`);
+      await users.reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "User creation failed");
+      setError(err instanceof Error ? err.message : "Could not remove user account");
     } finally {
       setBusy(false);
     }
@@ -264,17 +234,18 @@ export default function AdminPage() {
     setBusy(true);
     setError(null);
     setNotice(null);
+    setCopiedToken(false);
     try {
       const res = await api<{ device: DeviceRow & { token: string } }>("/api/devices", {
         method: "POST",
         body: JSON.stringify({ ahuId: devAhu, label: devLabel || undefined, sourceType: devSource }),
       });
       setIssuedToken(res.device.token);
-      setNotice(`Device provisioned for ${devAhu}. A new authentication token was issued (FR-21).`);
+      setNotice(`AHU monitoring module provisioned for ${devAhu}. Copy the bearer token below (FR-21).`);
       setDevLabel("");
       await devices.reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Device provisioning failed");
+      setError(err instanceof Error ? err.message : "Module provisioning failed");
     } finally {
       setBusy(false);
     }
@@ -287,7 +258,7 @@ export default function AdminPage() {
       await api("/api/devices", { method: "POST", body: JSON.stringify({ deviceId: d.id, enabled: !d.enabled }) });
       await devices.reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Device update failed");
+      setError(err instanceof Error ? err.message : "Module update failed");
     } finally {
       setBusy(false);
     }
@@ -298,269 +269,286 @@ export default function AdminPage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="flex items-center gap-2 text-xl font-bold tracking-tight text-slate-50 sm:text-2xl">
-          <Users size={20} className="text-cyan-300" /> User &amp; Device Administration
-        </h1>
-        <p className="text-xs text-slate-500">
-          FR-20 user administration and FR-21 device provisioning — Admin only. Administrators sign in with email &amp;
-          password; Engineering, Operator, and Viewer roles sign in using one-time access tokens issued below.
-        </p>
-      </div>
-
-      <div className="no-print flex gap-2">
-        {(["users", "devices"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => router.replace(`/admin?tab=${t}`)}
-            className={cx(
-              "rounded-lg border px-3 py-1.5 font-mono text-[11px] font-semibold uppercase tracking-wide",
-              tab === t ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-100" : "border-ink-600 bg-ink-900/60 text-slate-400",
-            )}
-          >
-            {t === "users" ? "Users & role tokens" : "AHU telemetry devices"}
-          </button>
-        ))}
-      </div>
-
-      {notice ? (
-        <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-200">
-          {notice}
-        </p>
-      ) : null}
-      <ErrorNote message={error ?? users.error ?? devices.error} />
-
-      {tab === "users" && accessToken ? (
-        <div className="panel rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-amber-200">
-              One-time role access token (shown once — copy and share privately)
-            </p>
-            <Btn size="sm" variant="default" onClick={() => void copyTokenToClipboard(accessToken)}>
-              {copiedToken ? <Check size={13} /> : <Copy size={13} />}
-              {copiedToken ? "Copied" : "Copy token"}
-            </Btn>
-          </div>
-          <code className="block break-all rounded-lg border border-ink-600 bg-ink-950/80 px-3 py-2 font-mono text-xs text-slate-100">
-            {accessToken}
-          </code>
-          <p className="text-[11px] text-slate-400">
-            The recipient signs in at <span className="font-mono">/login</span> under{" "}
-            <strong>Other Roles (Token)</strong> using only this token (no email or password). Unclaimed tokens expire
-            in 24 hours; claimed browsers remain authorized for 90 days until sign-out or revocation.
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="flex items-center gap-2 text-[20px] font-bold tracking-tight text-[#12294d] sm:text-[22px]">
+            <Users size={20} className="text-[#1d6ef2]" /> Users &amp; AHU Monitoring Modules
+          </h1>
+          <p className="text-xs text-[#475569]">
+            FR-20 user accounts (Email or Username + Password across all roles) · FR-21 AHU monitoring module tokens
           </p>
         </div>
-      ) : null}
 
-      {tab === "users" ? (
-        <div className="panel rounded-2xl p-4 space-y-3">
-          <div>
-            <h2 className="text-sm font-semibold uppercase text-slate-100">
-              Issue token for existing non-Admin member
-            </h2>
-            <p className="mt-0.5 text-xs text-slate-400">
-              Issue a fresh one-time token for an Engineering, Operator, or Viewer member (for example, after they sign
-              out or for another browser). Administrators sign in with email &amp; password and do not use tokens.
-            </p>
-          </div>
-          {nonAdminUsers.length > 0 ? (
-            <form onSubmit={issueAccess} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-              <select
-                required
-                className={inputClass}
-                value={accessUser}
-                onChange={(e) => setAccessUser(e.target.value)}
-              >
-                <option value="">Select non-Admin member…</option>
-                {nonAdminUsers.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {displayMemberLabel(u)} — {u.role}
-                  </option>
-                ))}
-              </select>
-              <input
-                required
-                maxLength={120}
-                className={inputClass}
-                value={accessLabel}
-                onChange={(e) => setAccessLabel(e.target.value)}
-                placeholder="Browser label, e.g. Control room PC"
-              />
-              <Btn type="submit" variant="primary" disabled={busy}>
-                <KeyRound size={13} /> Generate access token
-              </Btn>
-            </form>
-          ) : (
-            <p className="text-xs text-slate-500">
-              No Engineering, Operator, or Viewer members yet. Use <strong>Create account / role member</strong> below
-              to add one and generate their first token.
-            </p>
-          )}
-          {access.error ? <ErrorNote message={access.error} /> : null}
-          {(access.data?.devices.length ?? 0) > 0 ? (
-            <ul className="divide-y divide-ink-800/70 pt-1 text-xs text-slate-300">
-              {access.data?.devices.map((d) => (
-                <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-                  <span className="flex flex-wrap items-center gap-1.5">
-                    <span className="font-semibold text-slate-100">{displayMemberLabel(d)}</span>
-                    <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-cyan-300">
-                      {d.role}
-                    </span>
-                    <span className="text-slate-400">· {d.label} ·</span>
-                    <span className={cx(d.revokedAt ? "text-red-300" : d.claimedAt ? "text-emerald-300" : "text-amber-300")}>
-                      {d.revokedAt
-                        ? "revoked"
-                        : d.claimedAt
-                          ? `authorized until ${fmtDateTime(d.expiresAt)}`
-                          : `unclaimed (expires ${fmtDateTime(d.invitationExpiresAt)})`}
-                    </span>
-                  </span>
-                  {!d.revokedAt ? (
-                    <Btn
-                      size="sm"
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => {
-                        if (
-                          window.confirm(
-                            "Revoke this token / browser authorization? The member will need a new token from an administrator.",
-                          )
-                        ) {
-                          void revokeAccess(d.id);
-                        }
-                      }}
-                    >
-                      Revoke
-                    </Btn>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          ) : null}
+        <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-[#d8e2ef] bg-white/90 p-1 shadow-xs sm:flex">
+          <Btn
+            size="sm"
+            variant={tab === "users" ? "primary" : "ghost"}
+            onClick={() => router.replace("/admin?tab=users")}
+            className="justify-center"
+          >
+            <Users size={13} /> Users ({allUsers.length})
+          </Btn>
+          <Btn
+            size="sm"
+            variant={tab === "devices" ? "primary" : "ghost"}
+            onClick={() => router.replace("/admin?tab=devices")}
+            className="justify-center"
+          >
+            <HardDrive size={13} /> AHU Modules ({devices.data?.devices.length ?? "…"})
+          </Btn>
+        </div>
+      </div>
+
+      <ErrorNote message={error || users.error || devices.error} />
+      {notice ? (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-medium text-emerald-900">
+          {notice}
         </div>
       ) : null}
 
       {tab === "users" ? (
-        <div className="grid gap-4 xl:grid-cols-[1fr_23rem]">
+        <div className="grid gap-5 xl:grid-cols-[1fr_22rem]">
+          {/* Registered Users list (responsive cards on < md, table on >= md) */}
           <div className="panel overflow-hidden rounded-2xl">
-            <header className="border-b border-ink-700/70 px-5 py-3">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-100">Registered users</h2>
-              <p className="text-[11px] text-slate-500">{users.data?.users.length ?? 0} accounts · roles per FR-02</p>
-            </header>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[740px] text-left text-xs">
-                <thead className="bg-ink-900/60 text-[10px] uppercase tracking-wider text-slate-500">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e4eaf3] bg-[#f8fafd] px-4 py-3">
+              <div>
+                <h2 className="text-xs font-bold uppercase tracking-wider text-[#12294d]">
+                  Registered User Accounts ({allUsers.length})
+                </h2>
+                <p className="text-[11px] text-[#475569]">
+                  All roles sign in with Email or Username + Password · no user tokens required
+                </p>
+              </div>
+            </div>
+
+            {/* Mobile / small-tablet stacked cards */}
+            <div className="divide-y divide-[#eef2f7] md:hidden">
+              {allUsers.map((u) => {
+                const isSelf = u.id === currentUserId;
+                const isLastAdmin = isAdminRole(u.role) && adminCount <= 1;
+                const removeDisabled = busy || isSelf || isLastAdmin;
+                const roleLocked = busy || (isAdminRole(u.role) && (isSelf || isLastAdmin));
+                const isEditing = editingUserId === u.id;
+
+                return (
+                  <div key={u.id} className="space-y-2.5 p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-[#12294d]">
+                          {u.fullName || u.username || u.email}
+                          {isSelf ? (
+                            <span className="ml-1.5 rounded bg-[#dbeafe] px-1.5 py-0.5 font-mono text-[9.5px] font-bold uppercase text-[#1d6ef2]">
+                              you
+                            </span>
+                          ) : null}
+                        </p>
+                        <p className="truncate font-mono text-xs font-semibold text-[#1d6ef2]">
+                          {u.username ? `@${u.username}` : "no username"}
+                        </p>
+                        <p className="truncate font-mono text-[11px] text-[#475569]">{u.email}</p>
+                      </div>
+                      <select
+                        aria-label={`Role for ${displayUserLabel(u)}`}
+                        className={cx(
+                          "rounded-lg border px-2.5 py-1.5 font-mono text-xs font-bold uppercase outline-none transition",
+                          roleLocked
+                            ? "border-[#dbe7fb] bg-[#f4f8ff] text-[#1d6ef2]"
+                            : "border-[#cbd5e1] bg-white text-[#12294d] focus:border-[#2563eb]",
+                        )}
+                        value={u.role}
+                        disabled={roleLocked}
+                        onChange={(e) => void changeUserRole(u, e.target.value)}
+                      >
+                        {ROLES.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {isEditing ? (
+                      <div className="space-y-2 rounded-xl border border-[#e4eaf3] bg-[#f8fafd] p-3">
+                        <Field label="Display name">
+                          <input
+                            className={inputClass}
+                            value={editFullName}
+                            onChange={(e) => setEditFullName(e.target.value)}
+                            placeholder="Display name"
+                          />
+                        </Field>
+                        <Field label="Username">
+                          <input
+                            className={cx(inputClass, "font-mono")}
+                            value={editUsername}
+                            onChange={(e) => setEditUsername(e.target.value)}
+                            placeholder="username"
+                          />
+                        </Field>
+                        <div className="flex justify-end gap-2">
+                          <Btn size="sm" variant="default" onClick={() => setEditingUserId(null)}>
+                            <X size={12} /> Cancel
+                          </Btn>
+                          <Btn size="sm" variant="primary" disabled={busy} onClick={() => void saveUserIdentity(u)}>
+                            <Check size={12} /> Save
+                          </Btn>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                        <span className="font-mono text-[10.5px] text-[#475569]">
+                          Joined {fmtDateTime(u.createdAt).split(",")[0]}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <Btn size="sm" variant="default" disabled={busy} onClick={() => startEditUser(u)}>
+                            <Pencil size={12} /> Edit
+                          </Btn>
+                          <Btn
+                            size="sm"
+                            variant="danger"
+                            disabled={removeDisabled}
+                            onClick={() => void removeUserAccount(u)}
+                          >
+                            <Trash2 size={12} /> Remove
+                          </Btn>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {allUsers.length === 0 ? (
+                <div className="p-6">
+                  <Empty>No users registered yet.</Empty>
+                </div>
+              ) : null}
+            </div>
+
+            {/* Tablet / Desktop table */}
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full text-left text-xs">
+                <thead className="border-b border-[#e4eaf3] bg-[#f8fafd] text-[10px] font-bold uppercase tracking-wider text-[#475569]">
                   <tr>
-                    <th className="px-4 py-2.5">Name / Account</th>
-                    <th className="px-4 py-2.5">Sign-in method</th>
+                    <th className="px-4 py-2.5">User</th>
+                    <th className="px-4 py-2.5">Username</th>
+                    <th className="px-4 py-2.5">Email</th>
                     <th className="px-4 py-2.5">Role</th>
                     <th className="px-4 py-2.5">Created</th>
                     <th className="px-4 py-2.5 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-ink-800/70">
-                  {(users.data?.users ?? []).map((u) => {
-                    const admin = isAdminRole(u.role);
+                <tbody className="divide-y divide-[#eef2f7]">
+                  {allUsers.map((u) => {
                     const isSelf = u.id === currentUserId;
-                    const isSoleAdmin = admin && adminUsers.length <= 1;
-                    const activeTokenCount = activeTokensByUser.get(u.id) ?? 0;
+                    const isLastAdmin = isAdminRole(u.role) && adminCount <= 1;
+                    const removeDisabled = busy || isSelf || isLastAdmin;
+                    const roleLocked = busy || (isAdminRole(u.role) && (isSelf || isLastAdmin));
+                    const isEditing = editingUserId === u.id;
+
                     return (
-                      <tr key={u.id}>
-                        <td className="px-4 py-2.5">
-                          {admin ? (
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="font-mono font-medium text-slate-200">{u.email}</span>
-                              {u.fullName ? <span className="text-slate-400">({u.fullName})</span> : null}
+                      <tr key={u.id} className="hover:bg-[#f6f9fd]">
+                        <td className="px-4 py-2.5 font-semibold text-[#12294d]">
+                          {isEditing ? (
+                            <input
+                              className={cx(inputClass, "py-1 text-xs")}
+                              value={editFullName}
+                              onChange={(e) => setEditFullName(e.target.value)}
+                              placeholder="Display name"
+                            />
+                          ) : (
+                            <>
+                              {u.fullName || "—"}
                               {isSelf ? (
-                                <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-emerald-300">
-                                  Active session
+                                <span className="ml-1.5 rounded bg-[#dbeafe] px-1.5 py-0.5 font-mono text-[9.5px] font-bold uppercase text-[#1d6ef2]">
+                                  you
                                 </span>
                               ) : null}
-                            </div>
-                          ) : (
-                            <div>
-                              <span className="font-medium text-slate-200">{u.fullName ?? displayMemberLabel(u)}</span>
-                              {!isSyntheticTokenEmail(u.email) ? (
-                                <span className="ml-2 font-mono text-[11px] text-slate-400">({u.email})</span>
-                              ) : null}
-                            </div>
+                            </>
                           )}
                         </td>
-                        <td className="px-4 py-2.5 text-[11px] text-slate-400">
-                          {admin ? (
-                            "Email & password"
+                        <td className="px-4 py-2.5 font-mono text-[11.5px] font-semibold text-[#1d6ef2]">
+                          {isEditing ? (
+                            <input
+                              className={cx(inputClass, "py-1 font-mono text-xs")}
+                              value={editUsername}
+                              onChange={(e) => setEditUsername(e.target.value)}
+                              placeholder="username"
+                            />
+                          ) : u.username ? (
+                            `@${u.username}`
                           ) : (
-                            <span>
-                              Access token only{" "}
-                              <span className="font-mono text-[10px] text-slate-500">
-                                ({activeTokenCount} active)
-                              </span>
-                            </span>
+                            <span className="text-[#64748b]">—</span>
                           )}
                         </td>
+                        <td className="px-4 py-2.5 font-mono text-[11.5px] text-[#334155]">{u.email}</td>
                         <td className="px-4 py-2.5">
-                          {admin ? (
-                            <span className="rounded bg-cyan-500/15 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-cyan-300">
-                              {u.role}
-                            </span>
-                          ) : (
-                            <select
-                              aria-label={`Role for ${displayMemberLabel(u)}`}
-                              disabled={busy}
-                              value={u.role}
-                              onChange={(e) => void changeMemberRole(u, e.target.value)}
-                              className="rounded-lg border border-ink-600 bg-ink-900/90 px-2 py-1 font-mono text-[11px] font-semibold text-cyan-200 outline-none focus:border-cyan-500/60 disabled:opacity-50"
-                            >
-                              {NON_ADMIN_ROLES.map((r) => (
-                                <option key={r} value={r}>
-                                  {r}
-                                </option>
-                              ))}
-                            </select>
-                          )}
+                          <select
+                            aria-label={`Role for ${displayUserLabel(u)}`}
+                            className={cx(
+                              "rounded-md border px-2 py-1 font-mono text-[11px] font-bold uppercase outline-none transition",
+                              roleLocked
+                                ? "border-[#dbe7fb] bg-[#f4f8ff] text-[#1d6ef2]"
+                                : "border-[#cbd5e1] bg-white text-[#12294d] focus:border-[#2563eb]",
+                            )}
+                            value={u.role}
+                            disabled={roleLocked}
+                            title={
+                              isSelf && isAdminRole(u.role)
+                                ? "Cannot demote your own active Admin account"
+                                : isLastAdmin
+                                  ? "Cannot demote the last remaining Admin account"
+                                  : "Change user role"
+                            }
+                            onChange={(e) => void changeUserRole(u, e.target.value)}
+                          >
+                            {ROLES.map((r) => (
+                              <option key={r} value={r}>
+                                {r}
+                              </option>
+                            ))}
+                          </select>
                         </td>
-                        <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">{fmtDateTime(u.createdAt)}</td>
+                        <td className="px-4 py-2.5 font-mono text-[11px] text-[#475569]">
+                          {fmtDateTime(u.createdAt)}
+                        </td>
                         <td className="px-4 py-2.5 text-right">
-                          <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
-                            {!admin && activeTokenCount > 0 ? (
-                              <Btn
-                                size="sm"
-                                variant="ghost"
-                                disabled={busy}
-                                onClick={() => {
-                                  if (
-                                    window.confirm(
-                                      `Revoke all ${activeTokenCount} active token(s) / browser session(s) for "${displayMemberLabel(u)}"?`,
-                                    )
-                                  ) {
-                                    void revokeAllMemberSessions(u);
-                                  }
-                                }}
-                              >
-                                <Ban size={12} /> Deactivate
-                              </Btn>
-                            ) : null}
-                            {isSelf || isSoleAdmin ? (
-                              <span className="font-mono text-[10px] uppercase text-slate-600">
-                                {isSelf ? "Protected (self)" : "Protected (last Admin)"}
-                              </span>
+                          <div className="inline-flex items-center justify-end gap-1.5">
+                            {isEditing ? (
+                              <>
+                                <Btn size="sm" variant="default" onClick={() => setEditingUserId(null)}>
+                                  Cancel
+                                </Btn>
+                                <Btn size="sm" variant="primary" disabled={busy} onClick={() => void saveUserIdentity(u)}>
+                                  Save
+                                </Btn>
+                              </>
                             ) : (
-                              <Btn
-                                size="sm"
-                                variant="ghost"
-                                disabled={busy}
-                                onClick={() => {
-                                  if (
-                                    window.confirm(
-                                      `Remove ${u.role} account "${displayMemberLabel(u)}"? Active browser sessions and tokens for this user will be revoked immediately.`,
-                                    )
-                                  ) {
-                                    void removeUser(u);
+                              <>
+                                <Btn
+                                  size="sm"
+                                  variant="default"
+                                  disabled={busy}
+                                  onClick={() => startEditUser(u)}
+                                  title="Edit display name or username"
+                                >
+                                  <Pencil size={12} /> Edit
+                                </Btn>
+                                <Btn
+                                  size="sm"
+                                  variant="danger"
+                                  disabled={removeDisabled}
+                                  title={
+                                    isSelf
+                                      ? "You cannot remove your own currently signed-in account"
+                                      : isLastAdmin
+                                        ? "Cannot remove the last remaining Administrator account"
+                                        : `Remove ${displayUserLabel(u)}`
                                   }
-                                }}
-                              >
-                                <Trash2 size={12} /> Remove
-                              </Btn>
+                                  onClick={() => void removeUserAccount(u)}
+                                >
+                                  <Trash2 size={12} /> Remove
+                                </Btn>
+                              </>
                             )}
                           </div>
                         </td>
@@ -569,178 +557,223 @@ export default function AdminPage() {
                   })}
                 </tbody>
               </table>
+              {allUsers.length === 0 ? (
+                <div className="p-6">
+                  <Empty>No users registered yet.</Empty>
+                </div>
+              ) : null}
             </div>
-            {users.data?.users.length === 0 ? (
-              <div className="p-6">
-                <Empty>No users found.</Empty>
-              </div>
-            ) : null}
           </div>
 
+          {/* Right column: Create User + Reset Password */}
           <div className="space-y-4">
             <form onSubmit={createUser} className="panel h-max rounded-2xl p-4">
-            <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-100">
-              <UserPlus size={14} className="text-cyan-300" /> Create account / role member
-            </h2>
-            <div className="mt-3 space-y-3">
-              <Field label="Role" hint="Admin (email/password) · Engineering, Operator, Viewer (token only)">
-                <select className={inputClass} value={role} onChange={(e) => setRole(e.target.value)}>
-                  {ROLES.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              {creatingAdmin ? (
-                <>
-                  <Field label="Admin email">
-                    <input
-                      type="email"
-                      required
-                      className={inputClass}
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                    />
-                  </Field>
-                  <Field label="Full name">
-                    <input
-                      className={inputClass}
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      placeholder="e.g. System Administrator"
-                    />
-                  </Field>
-                  <Field label="Password" hint="Minimum 8 characters · signs in with email & password only">
-                    <input
-                      type="password"
-                      autoComplete="new-password"
-                      required
-                      minLength={8}
-                      className={cx(inputClass, "font-mono")}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                    />
-                  </Field>
-                  <Btn type="submit" variant="primary" disabled={busy} className="w-full">
-                    <Plus size={13} /> Create Admin account
-                  </Btn>
-                </>
-              ) : (
-                <>
-                  <Field label="Member name" hint="Required · no email or password needed for this role">
-                    <input
-                      required
-                      maxLength={120}
-                      className={inputClass}
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      placeholder="e.g. Shift A Operator"
-                    />
-                  </Field>
-                  <Field label="Browser / device label" hint="Optional · defaults to Initial browser">
-                    <input
-                      maxLength={120}
-                      className={inputClass}
-                      value={memberDeviceLabel}
-                      onChange={(e) => setMemberDeviceLabel(e.target.value)}
-                      placeholder="e.g. Control room workstation"
-                    />
-                  </Field>
-                  <Btn type="submit" variant="primary" disabled={busy} className="w-full">
-                    <KeyRound size={13} /> Create member &amp; generate token
-                  </Btn>
-                </>
-              )}
-
-              <p className="text-[10px] leading-relaxed text-slate-500">
-                {creatingAdmin
-                  ? "Administrators sign in with email and password only (no browser token required)."
-                  : "Non-Admin roles sign in using only a one-time access token issued by an Administrator."}
-              </p>
-            </div>
-          </form>
-
-          {adminUsers.length > 0 ? (
-            <form onSubmit={updateAdminPassword} className="panel h-max rounded-2xl p-4">
-              <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-100">
-                <KeyRound size={14} className="text-cyan-300" /> Change Admin password
+              <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#12294d]">
+                <Plus size={14} className="text-[#1d6ef2]" /> Create User Account
               </h2>
-              <div className="mt-3 space-y-3">
-                <Field label="Administrator">
-                  <select
-                    className={inputClass}
-                    value={resetAdminId || adminUsers[0]?.id || ""}
-                    onChange={(e) => setResetAdminId(e.target.value)}
-                  >
-                    {adminUsers.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {displayMemberLabel(u)}
+              <p className="mt-1 text-[11px] leading-relaxed text-[#475569]">
+                Creates an Email + Username + Password login for any role (Admin, Engineering, Operator, or Viewer).
+              </p>
+
+              <div className="mt-3.5 space-y-3">
+                <Field label="Role">
+                  <select className={inputClass} value={role} onChange={(e) => setRole(e.target.value)}>
+                    {ROLES.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
                       </option>
                     ))}
                   </select>
                 </Field>
-                <Field label="New password" hint="Minimum 8 characters">
+
+                <Field label="Email address">
+                  <input
+                    type="email"
+                    required
+                    className={inputClass}
+                    placeholder="e.g. operator@ahu.local"
+                    value={email}
+                    onChange={(e) => onEmailChange(e.target.value)}
+                  />
+                </Field>
+
+                <Field
+                  label="Username"
+                  hint="Substitute for email on sign-in · 3–32 chars (letters, numbers, ., _, -)"
+                >
+                  <div className="relative">
+                    <AtSign size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b]" />
+                    <input
+                      required
+                      maxLength={32}
+                      className={cx(inputClass, "pl-8 font-mono")}
+                      placeholder="e.g. shift.operator"
+                      value={username}
+                      onChange={(e) => {
+                        setUsernameTouched(true);
+                        setUsername(e.target.value);
+                      }}
+                    />
+                  </div>
+                </Field>
+
+                <Field label="Full name" hint="Optional display name">
+                  <input
+                    maxLength={120}
+                    className={inputClass}
+                    placeholder="e.g. Shift A Operator"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                  />
+                </Field>
+
+                <Field label="Password" hint="Minimum 8 characters">
                   <input
                     type="password"
                     autoComplete="new-password"
                     required
                     minLength={8}
                     className={cx(inputClass, "font-mono")}
-                    value={resetPassword}
-                    onChange={(e) => setResetPassword(e.target.value)}
-                    placeholder="Enter new password"
+                    placeholder="Minimum 8 characters"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
                   />
                 </Field>
-                <Btn type="submit" variant="primary" disabled={busy || resetPassword.length < 8} className="w-full">
-                  <KeyRound size={13} /> Update Admin password
+
+                <Btn type="submit" variant="primary" disabled={busy} className="w-full py-2">
+                  <Plus size={13} /> Create {role} account
                 </Btn>
               </div>
             </form>
-          ) : null}
+
+            {allUsers.length > 0 ? (
+              <form onSubmit={updateUserPassword} className="panel h-max rounded-2xl p-4">
+                <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#12294d]">
+                  <KeyRound size={14} className="text-[#1d6ef2]" /> Reset User Password
+                </h2>
+                <div className="mt-3 space-y-3">
+                  <Field label="User account">
+                    <select
+                      className={inputClass}
+                      value={resetUserId || allUsers[0]?.id || ""}
+                      onChange={(e) => setResetUserId(e.target.value)}
+                    >
+                      {allUsers.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {displayUserLabel(u)} · {u.role}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="New password" hint="Minimum 8 characters">
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      required
+                      minLength={8}
+                      className={cx(inputClass, "font-mono")}
+                      value={resetPassword}
+                      onChange={(e) => setResetPassword(e.target.value)}
+                    />
+                  </Field>
+                  <Btn type="submit" variant="default" disabled={busy} className="w-full">
+                    <KeyRound size={13} /> Update password
+                  </Btn>
+                </div>
+              </form>
+            ) : null}
           </div>
         </div>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-[1fr_22rem]">
+        <div className="grid gap-5 xl:grid-cols-[1fr_22rem]">
+          {/* Provisioned AHU Monitoring Modules */}
           <div className="panel overflow-hidden rounded-2xl">
-            <header className="border-b border-ink-700/70 px-5 py-3">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-100">Provisioned devices</h2>
-              <p className="text-[11px] text-slate-500">
-                FR-21 device identity, source type (PHYSICAL / SIMULATION) and bearer token issuance
+            <div className="border-b border-[#e4eaf3] bg-[#f8fafd] px-4 py-3">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-[#12294d]">
+                Provisioned AHU Monitoring Modules ({devices.data?.devices.length ?? 0})
+              </h2>
+              <p className="text-[11px] text-[#475569]">
+                Bearer tokens are dedicated exclusively to AHU telemetry ingestion gateways (FR-21)
               </p>
-            </header>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] text-left text-xs">
-                <thead className="bg-ink-900/60 text-[10px] uppercase tracking-wider text-slate-500">
+            </div>
+
+            {/* Mobile stacked module cards */}
+            <div className="divide-y divide-[#eef2f7] md:hidden">
+              {(devices.data?.devices ?? []).map((d) => (
+                <div key={d.id} className="space-y-2 p-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-mono text-sm font-bold text-[#12294d]">{d.ahuId}</p>
+                      <p className="text-xs font-medium text-[#334155]">{d.label}</p>
+                    </div>
+                    <span
+                      className={cx(
+                        "rounded-md px-2 py-0.5 font-mono text-[10px] font-bold uppercase ring-1 ring-inset",
+                        d.enabled
+                          ? "bg-emerald-50 text-emerald-700 ring-emerald-300"
+                          : "bg-slate-100 text-slate-600 ring-slate-300",
+                      )}
+                    >
+                      {d.enabled ? "enabled" : "disabled"}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                    <div className="flex items-center gap-1.5">
+                      <QualityTag quality={d.sourceType === "SIMULATION" ? "SIMULATED" : "OK"} title={d.sourceType} />
+                      <span className="font-mono text-[10.5px] font-semibold text-[#475569]">{d.sourceType}</span>
+                    </div>
+                    <Btn size="sm" variant="default" onClick={() => void toggleDevice(d)} disabled={busy}>
+                      {d.enabled ? "Disable" : "Enable"}
+                    </Btn>
+                  </div>
+                </div>
+              ))}
+              {devices.data?.devices.length === 0 ? (
+                <div className="p-6">
+                  <Empty>No AHU monitoring modules provisioned yet.</Empty>
+                </div>
+              ) : null}
+            </div>
+
+            {/* Desktop / Tablet module table */}
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full text-left text-xs">
+                <thead className="border-b border-[#e4eaf3] bg-[#f8fafd] text-[10px] font-bold uppercase tracking-wider text-[#475569]">
                   <tr>
                     <th className="px-4 py-2.5">AHU</th>
-                    <th className="px-4 py-2.5">Label</th>
-                    <th className="px-4 py-2.5">Source</th>
+                    <th className="px-4 py-2.5">Module Label</th>
+                    <th className="px-4 py-2.5">Source (FR-09)</th>
                     <th className="px-4 py-2.5">Token</th>
                     <th className="px-4 py-2.5">State</th>
-                    <th className="px-4 py-2.5">Provisioned</th>
-                    <th className="px-4 py-2.5 text-right">Action</th>
+                    <th className="px-4 py-2.5">Created</th>
+                    <th className="px-4 py-2.5 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-ink-800/70">
+                <tbody className="divide-y divide-[#eef2f7]">
                   {(devices.data?.devices ?? []).map((d) => (
-                    <tr key={d.id}>
-                      <td className="px-4 py-2.5 font-mono text-cyan-300">{d.ahuId}</td>
-                      <td className="px-4 py-2.5 text-slate-300">{d.label}</td>
+                    <tr key={d.id} className="hover:bg-[#f6f9fd]">
+                      <td className="px-4 py-2.5 font-mono font-bold text-[#12294d]">{d.ahuId}</td>
+                      <td className="px-4 py-2.5 font-medium text-[#334155]">{d.label}</td>
                       <td className="px-4 py-2.5">
                         <QualityTag quality={d.sourceType === "SIMULATION" ? "SIMULATED" : "OK"} title={d.sourceType} />
-                        <span className="ml-1.5 font-mono text-[10px] text-slate-400">{d.sourceType}</span>
+                        <span className="ml-1.5 font-mono text-[10.5px] font-semibold text-[#475569]">{d.sourceType}</span>
                       </td>
-                      <td className="px-4 py-2.5 text-slate-500">Hidden after issuance</td>
+                      <td className="px-4 py-2.5 text-[#475569]">Hidden after issuance</td>
                       <td className="px-4 py-2.5">
-                        <span className={cx("font-mono text-[10px] uppercase", d.enabled ? "text-emerald-400" : "text-slate-500")}>
+                        <span
+                          className={cx(
+                            "rounded px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ring-1 ring-inset",
+                            d.enabled
+                              ? "bg-emerald-50 text-emerald-700 ring-emerald-300"
+                              : "bg-slate-100 text-slate-600 ring-slate-300",
+                          )}
+                        >
                           {d.enabled ? "enabled" : "disabled"}
                         </span>
                       </td>
-                      <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">{fmtDateTime(d.createdAt)}</td>
+                      <td className="px-4 py-2.5 font-mono text-[11px] text-[#475569]">{fmtDateTime(d.createdAt)}</td>
                       <td className="px-4 py-2.5 text-right">
-                        <Btn variant="ghost" onClick={() => void toggleDevice(d)} disabled={busy}>
+                        <Btn size="sm" variant="default" onClick={() => void toggleDevice(d)} disabled={busy}>
                           {d.enabled ? "Disable" : "Enable"}
                         </Btn>
                       </td>
@@ -748,19 +781,22 @@ export default function AdminPage() {
                   ))}
                 </tbody>
               </table>
+              {devices.data?.devices.length === 0 ? (
+                <div className="p-6">
+                  <Empty>No AHU monitoring modules provisioned yet.</Empty>
+                </div>
+              ) : null}
             </div>
-            {devices.data?.devices.length === 0 ? (
-              <div className="p-6">
-                <Empty>No devices provisioned.</Empty>
-              </div>
-            ) : null}
           </div>
 
           <div className="space-y-4">
             <form onSubmit={provisionDevice} className="panel h-max rounded-2xl p-4">
-              <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-100">
-                <KeyRound size={14} className="text-cyan-300" /> Register device
+              <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#12294d]">
+                <KeyRound size={14} className="text-[#1d6ef2]" /> Register AHU Module
               </h2>
+              <p className="mt-1 text-[11px] leading-relaxed text-[#475569]">
+                Issues a dedicated bearer token for an AHU monitoring module to push live telemetry.
+              </p>
               <div className="mt-3 space-y-3">
                 <Field label="AHU identity">
                   <select className={inputClass} value={devAhu} onChange={(e) => setDevAhu(e.target.value)}>
@@ -771,11 +807,11 @@ export default function AdminPage() {
                     ))}
                   </select>
                 </Field>
-                <Field label="Label">
+                <Field label="Module label">
                   <input
                     className={inputClass}
                     value={devLabel}
-                    placeholder="e.g. BMS gateway"
+                    placeholder="e.g. Rooftop ESP32 / BMS gateway"
                     onChange={(e) => setDevLabel(e.target.value)}
                   />
                 </Field>
@@ -789,31 +825,44 @@ export default function AdminPage() {
                     <option value="PHYSICAL">PHYSICAL</option>
                   </select>
                 </Field>
-                <Btn type="submit" variant="primary" disabled={busy} className="w-full">
-                  <HardDrive size={13} /> Provision &amp; issue token
+                <Btn type="submit" variant="primary" disabled={busy} className="w-full py-2">
+                  <HardDrive size={13} /> Provision &amp; issue module token
                 </Btn>
               </div>
             </form>
 
-            <div className="panel rounded-2xl border-amber-500/30 p-4 text-[11px] leading-relaxed text-amber-200/90">
-              <p className="flex items-center gap-2 font-semibold uppercase tracking-wide">
-                <ShieldAlert size={13} /> Physical control {devices.data?.physicalControlUnlocked ? "unlocked" : "locked"}
-              </p>
-              <p className="mt-1">
-                Physical commands are disabled: no commissioned physical control integration exists. Local hardware safety interlocks must be independently installed and verified; the web interface is not an emergency stop.
-              </p>
-            </div>
-
             {issuedToken ? (
-              <div className="panel rounded-2xl p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Last issued token</p>
-                <code className="mt-1 block break-all font-mono text-[11px] text-emerald-300">{issuedToken}</code>
-                <p className="mt-2 text-[10px] text-slate-500">
-                  Use as <span className="font-mono">Authorization: Bearer &lt;token&gt;</span> on{" "}
-                  <span className="font-mono">POST /api/telemetry</span>.
+              <div className="panel rounded-2xl border-emerald-200 bg-emerald-50/70 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+                    Issued AHU Module Token
+                  </p>
+                  <Btn size="sm" variant="default" onClick={() => void copyTokenToClipboard(issuedToken)}>
+                    {copiedToken ? <Check size={12} /> : <Copy size={12} />}
+                    {copiedToken ? "Copied" : "Copy"}
+                  </Btn>
+                </div>
+                <code className="mt-2 block break-all rounded-lg border border-emerald-200 bg-white p-2 font-mono text-[11px] font-semibold text-emerald-900">
+                  {issuedToken}
+                </code>
+                <p className="mt-2 text-[10.5px] leading-relaxed text-[#334155]">
+                  Save this token now (shown once). Send as{" "}
+                  <span className="font-mono font-semibold text-[#0f172a]">Authorization: Bearer &lt;token&gt;</span> on{" "}
+                  <span className="font-mono font-semibold text-[#0f172a]">POST /api/telemetry</span>.
                 </p>
               </div>
             ) : null}
+
+            <div className="panel rounded-2xl border-amber-200 bg-amber-50/90 p-4 text-[11px] leading-relaxed text-amber-950">
+              <p className="flex items-center gap-2 font-bold uppercase tracking-wide text-amber-900">
+                <ShieldAlert size={13} className="text-amber-600" /> Physical control{" "}
+                {devices.data?.physicalControlUnlocked ? "unlocked" : "locked"}
+              </p>
+              <p className="mt-1">
+                Physical commands are disabled until a commissioned physical controller integration is verified. Local
+                hardware safety interlocks must remain active; the web interface is not an emergency stop.
+              </p>
+            </div>
           </div>
         </div>
       )}

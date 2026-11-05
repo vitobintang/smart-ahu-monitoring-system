@@ -64,8 +64,8 @@ export default function AuditPage() {
         </Btn>
       </div>
 
-      <div className="panel no-print flex flex-wrap items-end gap-3 rounded-2xl p-3">
-        <label className="min-w-[16rem] flex-1">
+      <div className="panel no-print flex flex-col gap-3 rounded-2xl p-3 sm:flex-row sm:flex-wrap sm:items-end">
+        <label className="w-full sm:min-w-[15rem] sm:flex-1">
           <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Filter by action</span>
           <select className={inputClass} value={action} onChange={(e) => setAction(e.target.value)}>
             <option value="">All actions</option>
@@ -76,18 +76,55 @@ export default function AuditPage() {
             ))}
           </select>
         </label>
-        <Btn variant="default" onClick={() => void reload()}>
-          Refresh
-        </Btn>
-        <p className="text-[11px] text-slate-500">
-          Visible to Admin and Engineering only (RBAC · NFR-03).
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-start">
+          <Btn variant="default" onClick={() => void reload()}>
+            Refresh
+          </Btn>
+          <p className="text-[11px] text-slate-500">
+            Visible to Admin and Engineering only (RBAC · NFR-03).
+          </p>
+        </div>
       </div>
 
       <ErrorNote message={error} />
 
       <div className="panel overflow-hidden rounded-2xl">
-        <div className="overflow-x-auto">
+        {/* Mobile stacked audit entries */}
+        <div className="divide-y divide-ink-800/70 md:hidden">
+          {(data?.logs ?? []).length === 0 ? (
+            <div className="p-6">
+              <Empty>No audit entries recorded yet.</Empty>
+            </div>
+          ) : null}
+          {(data?.logs ?? []).map((l) => (
+            <div key={l.id} className="space-y-1.5 p-3.5">
+              <div className="flex items-start justify-between gap-2">
+                <span className={cx("font-mono text-[11.5px] font-bold", ACTION_TONE[l.action] ?? "text-slate-300")}>
+                  {l.action}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setOpen(open === l.id ? null : l.id)}
+                  className="inline-flex items-center gap-1 rounded-md border border-ink-700 px-2 py-0.5 text-[10px] font-semibold text-slate-400"
+                >
+                  Details {open === l.id ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                </button>
+              </div>
+              <p className="break-all font-mono text-[11px] text-slate-400">{l.entity}</p>
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[10.5px] text-slate-500">
+                <span>{l.userEmail ?? "system"}</span>
+                <span className="font-mono">{timeAgo(l.createdAt)}</span>
+              </div>
+              {open === l.id ? (
+                <pre className="mt-2 max-h-56 overflow-auto rounded-lg bg-ink-950/60 p-2.5 whitespace-pre-wrap font-mono text-[10.5px] text-slate-400">
+                  {JSON.stringify(l.details, null, 2)}
+                </pre>
+              ) : null}
+            </div>
+          ))}
+        </div>
+
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[980px] text-left text-xs">
             <thead className="bg-ink-900/60 text-[10px] uppercase tracking-wider text-slate-500">
               <tr>

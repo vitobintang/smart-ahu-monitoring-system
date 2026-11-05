@@ -29,14 +29,14 @@ export interface ChartPoint {
 }
 
 const tooltipStyle = {
-  backgroundColor: "rgba(5,11,20,0.96)",
-  border: "1px solid rgba(30,58,85,0.9)",
+  backgroundColor: "#ffffff",
+  border: "1px solid #cbd5e1",
   borderRadius: 10,
   fontSize: 11,
-  color: "#e2e8f0",
+  color: "#0f172a",
 } as const;
 
-const axis = { stroke: "#334155", fontSize: 10, tickLine: false } as const;
+const axis = { stroke: "#64748b", fontSize: 10, tickLine: false } as const;
 const tickFmt = (t: number) =>
   new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
@@ -89,14 +89,14 @@ export default function LiveCharts({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex overflow-hidden rounded-lg border border-ink-600">
+        <div className="flex overflow-hidden rounded-lg border border-[#cbd5e1] bg-[#eef3fb] p-0.5">
           {[5, 15, 30].map((m) => (
             <button
               key={m}
               onClick={() => onWindow(m)}
               className={cx(
-                "px-3 py-1.5 font-mono text-[11px] font-semibold uppercase tracking-wide transition",
-                windowMin === m ? "bg-cyan-500/25 text-cyan-100" : "bg-ink-900/60 text-slate-400 hover:text-slate-200",
+                "rounded-[6px] px-3 py-1 font-mono text-[11px] font-semibold uppercase tracking-wide transition",
+                windowMin === m ? "bg-[#1d6ef2] text-white shadow-xs" : "text-[#334155] hover:text-[#0f172a]",
               )}
             >
               {m} min
@@ -109,18 +109,18 @@ export default function LiveCharts({
           className={cx(
             "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-mono text-[11px] font-semibold uppercase tracking-wide transition",
             paused
-              ? "border-amber-500/50 bg-amber-500/15 text-amber-200"
-              : "border-emerald-500/50 bg-emerald-500/15 text-emerald-200",
+              ? "border-amber-300 bg-amber-50 text-amber-800"
+              : "border-emerald-300 bg-emerald-50 text-emerald-800",
           )}
         >
           {paused ? <Play size={13} /> : <Pause size={13} />}
           {paused ? "Resume stream" : "Pause stream"}
         </button>
 
-        <span className="ml-auto inline-flex items-center gap-2 rounded-lg border border-ink-700 bg-ink-900/60 px-3 py-1.5 font-mono text-[11px] text-slate-300">
+        <span className="inline-flex items-center gap-2 rounded-lg border border-[#e4eaf3] bg-white px-3 py-1.5 font-mono text-[11px] text-[#334155] sm:ml-auto">
           RUN proportion
-          <span className="text-base font-semibold text-emerald-300">{(runProportion * 100).toFixed(1)} %</span>
-          <span className="text-slate-500">({points.length} samples)</span>
+          <span className="text-base font-bold text-emerald-700">{(runProportion * 100).toFixed(1)} %</span>
+          <span className="text-[#475569]">({points.length} samples)</span>
         </span>
       </div>
 

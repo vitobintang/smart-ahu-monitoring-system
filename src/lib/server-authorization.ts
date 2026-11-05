@@ -1,16 +1,10 @@
-import { cookies } from "next/headers";
-
 import { getDatabasePool } from "../db/connection";
 import { USER_ROLES, type UserRole } from "./ahu";
-import { getAuthorizedTokenBrowser } from "./device-verification";
 import type { Permission } from "./permissions";
 import { authorizeRolePermission } from "./role-auth";
 import { createSupabaseServerClient } from "./supabase/server";
 
 export async function authorizeServerRequest(permission: Permission) {
-  const cookieStore = await cookies();
-  const deviceToken = cookieStore.get("ahu_device")?.value;
-
   return authorizeRolePermission<{ id: string; role: UserRole }>(
     {
       getSupabaseUserId: async () => {
@@ -31,12 +25,6 @@ export async function authorizeServerRequest(permission: Permission) {
         }
         return { id: row.id, role: row.role as UserRole };
       },
-      getAuthorizedTokenUser: () =>
-        getAuthorizedTokenBrowser(
-          (text, values) =>
-            getDatabasePool().query<{ id: string; role: string }>(text, values),
-          deviceToken,
-        ),
     },
     permission,
   );

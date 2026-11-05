@@ -30,18 +30,17 @@ export function invalidateSessionCache() {
 
 /**
  * Resolve session by role authentication policy:
- * - Admin: verified Supabase Auth email/password session (no device token required).
- * - Engineering, Operator, Viewer: verified Admin-issued browser token cookie (no email/password).
+ * All roles (Admin, Engineering, Operator, Viewer) authenticate via verified
+ * Supabase Auth credentials (email or username + password).
  * Never trust client-editable user metadata for authorization.
  */
 export async function getSession(): Promise<SessionContext | null> {
   const store = await cookies();
   const allCookies = store.getAll();
   const sbCookies = allCookies.filter((c) => c.name.startsWith("sb-"));
-  const deviceCookie = store.get(DEVICE_COOKIE)?.value ?? "";
-  if (sbCookies.length === 0 && !deviceCookie) return null;
+  if (sbCookies.length === 0) return null;
 
-  const rawKey = `${sbCookies.map((c) => `${c.name}=${c.value}`).join(";")}|${deviceCookie}`;
+  const rawKey = sbCookies.map((c) => `${c.name}=${c.value}`).join(";");
   const cacheKey = await secretHash(rawKey);
   const now = Date.now();
   const cached = sessionCache.get(cacheKey);
@@ -53,7 +52,6 @@ export async function getSession(): Promise<SessionContext | null> {
   if (!pending) {
     pending = resolveRoleSession<UserRow>({
       getSupabaseUserId: async () => {
-        if (sbCookies.length === 0) return null;
         const supabase = await createSupabaseServerClient();
         const {
           data: { user: authUser },
@@ -65,7 +63,6 @@ export async function getSession(): Promise<SessionContext | null> {
         const [row] = await db.select().from(users).where(eq(users.id, id)).limit(1);
         return row ?? null;
       },
-      getAuthorizedTokenUser: () => (deviceCookie ? getAuthorizedDeviceUser() : Promise.resolve(null)),
     }).finally(() => {
       sessionInFlight.delete(cacheKey);
     });
@@ -239,6 +236,7 @@ export function safePublicUser(u: UserRow) {
   return {
     id: u.id,
     email: u.email,
+    username: u.username ?? null,
     fullName: u.fullName,
     role: u.role,
     createdAt: u.createdAt,
