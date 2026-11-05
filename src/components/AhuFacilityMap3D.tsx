@@ -976,7 +976,8 @@ export default function AhuFacilityMap3D({
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(initW, initH, false);
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // PCFSoftShadowMap was removed in three r187 — PCF is the engine's actual fallback.
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.06;
     container.innerHTML = "";
@@ -1809,12 +1810,17 @@ export default function AhuFacilityMap3D({
 
     let rafId = 0;
     const projVec = new THREE.Vector3();
-    const clock = new THREE.Clock();
+    // Manual frame timing (THREE.Clock is deprecated in three r187): clamped delta keeps
+    // physics stable after tab pauses, and the accumulator drives pulsing animations.
+    let lastFrameTime = performance.now();
+    let elapsed = 0;
 
     const animate = () => {
       rafId = requestAnimationFrame(animate);
-      const dt = Math.min(0.05, clock.getDelta());
-      const elapsed = clock.elapsedTime;
+      const now = performance.now();
+      const dt = Math.min(0.05, (now - lastFrameTime) / 1000);
+      lastFrameTime = now;
+      elapsed += dt;
 
       const c = camStateRef.current;
       if (autoRotateRef.current && !isDragging) {
