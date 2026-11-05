@@ -8,7 +8,7 @@ import {
 } from "../src/db/monitoring";
 import { buildMonitoringResponse } from "../src/lib/monitoring-response";
 
-const user = { id: "user-1", role: "Viewer" as const };
+const user = { id: "user-1", role: "Operator" as const };
 
 const units: MonitoringUnit[] = [
   { id: "AHU-01", name: "Unit 1", location: "Example" },

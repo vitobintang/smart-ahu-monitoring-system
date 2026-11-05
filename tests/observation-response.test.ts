@@ -4,7 +4,7 @@ import { deepStrictEqual, equal } from "node:assert/strict";
 import type { LatestObservation } from "../src/db/latest-observations";
 import { buildObservationResponse } from "../src/lib/observation-response";
 
-const user = { id: "user-1", role: "Viewer" as const };
+const user = { id: "user-1", role: "Operator" as const };
 const now = () => Date.parse("2026-01-01T12:00:00Z");
 
 const row: LatestObservation = {

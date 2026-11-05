@@ -24,7 +24,6 @@ test("roles and the unique email index are defined", () => {
     "Admin",
     "Engineering",
     "Operator",
-    "Viewer",
   ]);
 
   const indexes = getTableConfig(users).indexes;

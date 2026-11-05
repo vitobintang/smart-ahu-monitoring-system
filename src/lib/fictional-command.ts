@@ -3,8 +3,7 @@ import { hasPermission } from "./permissions";
 export type ExampleRole =
   | "Admin"
   | "Engineering"
-  | "Operator"
-  | "Viewer";
+  | "Operator";
 
 export type ExampleStatus = "RUN" | "STOP" | "FAULT" | "OFFLINE";
 

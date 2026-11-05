@@ -47,7 +47,7 @@ test("monitoring checks work together in a local database", async (t) => {
       );
 
       INSERT INTO ahu_private.users (id, role)
-        VALUES ('u1', 'Viewer'), ('u2', 'Viewer');
+        VALUES ('u1', 'Operator'), ('u2', 'Operator');
 
       INSERT INTO ahu_private.ahus (id, name, location)
         VALUES

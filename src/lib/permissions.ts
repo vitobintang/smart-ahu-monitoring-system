@@ -17,14 +17,10 @@ export const PERMISSIONS = [
 
 export type Permission = (typeof PERMISSIONS)[number];
 
-const viewerPermissions: Permission[] = [
+const operatorPermissions: Permission[] = [
   "monitoring:read",
   "alarms:read",
   "reports:read",
-];
-
-const operatorPermissions: Permission[] = [
-  ...viewerPermissions,
   "alarms:acknowledge",
   "warnings:acknowledge",
   "commands:request",
@@ -45,7 +41,6 @@ const adminPermissions: Permission[] = [
 ];
 
 const permissionsByRole: Record<UserRole, readonly Permission[]> = {
-  Viewer: viewerPermissions,
   Operator: operatorPermissions,
   Engineering: engineeringPermissions,
   Admin: adminPermissions,

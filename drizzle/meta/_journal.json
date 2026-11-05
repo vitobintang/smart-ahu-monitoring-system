@@ -36,6 +36,20 @@
       "when": 1793863200000,
       "tag": "0004_add_ahu_map_placement",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793949600000,
+      "tag": "0005_add_facility_floorplan",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793949600001,
+      "tag": "0006_remove_viewer_role",
+      "breakpoints": true
     }
   ]
 }

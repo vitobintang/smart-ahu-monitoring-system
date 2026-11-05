@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { can, classifyQuality, computeAhuStatus, commandFeedbackMatches } from "../src/lib/domain";
 import { randomHex, safeEqual } from "../src/lib/ids";
 
-test("role permissions reject viewer control and only admins manage users", () => {
-  assert.equal(can("Viewer", "control"), false);
+test("role permissions reject unknown-role control and only admins manage users", () => {
+  assert.equal(can("Superuser", "control"), false);
   assert.equal(can("Engineering", "manageUsers"), false);
   assert.equal(can("Admin", "manageUsers"), true);
 });

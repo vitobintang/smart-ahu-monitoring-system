@@ -16,7 +16,7 @@ function fixture() {
     async stagePassword(input) { calls.push("password"); assert.equal(input.password, "private");
       return { verifiedUserId: "user-1", takeSession() { calls.push("take"); return session; },
         async discard() { calls.push("discard"); } }; },
-    async getProfile(id) { calls.push("profile"); return { id, role: "Viewer" }; },
+    async getProfile(id) { calls.push("profile"); return { id, role: "Operator" }; },
     async isBrowserAuthorized(id, browser) { calls.push("browser"); return id === "user-1" && browser === token; },
   };
   return { deps, calls, session };
@@ -29,7 +29,7 @@ test("releases a staged session only after profile and browser authorization", a
   assert.deepEqual(calls, ["gate", "password", "profile", "browser"]);
   assert.equal(JSON.stringify(result).includes(session.secret), false);
   if (result.ok) {
-    assert.deepEqual(result.user, { id: "user-1", role: "Viewer" });
+    assert.deepEqual(result.user, { id: "user-1", role: "Operator" });
     assert.equal(result.takeSession(), session);
     assert.throws(() => result.takeSession());
   }

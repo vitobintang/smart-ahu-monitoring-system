@@ -14,13 +14,13 @@ test("unauthorized sessions receive a generic response", async () => {
 test("authorized sessions return user identity and role", async () => {
   const response = await buildSessionResponse(async () => ({
     id: "user-1",
-    role: "Viewer",
+    role: "Operator",
   }));
 
   equal(response.status, 200);
   equal(response.headers.get("cache-control"), "no-store");
   deepStrictEqual(await response.json(), {
-    user: { id: "user-1", role: "Viewer" },
+    user: { id: "user-1", role: "Operator" },
   });
 });
 

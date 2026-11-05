@@ -57,8 +57,8 @@ test("unknown roles and disallowed permissions are denied", async () => {
   deps.getProfile = async (id) => ({ id, role: "Unknown" });
   equal(await authorizeRequest(deps, "example-token", "monitoring:read"), null);
 
-  deps.getProfile = async (id) => ({ id, role: "Viewer" });
-  equal(await authorizeRequest(deps, "example-token", "commands:request"), null);
+  deps.getProfile = async (id) => ({ id, role: "Operator" });
+  equal(await authorizeRequest(deps, "example-token", "configuration:edit"), null);
   equal(await authorizeRequest(deps, "example-token", "unknown:permission"), null);
 });
 

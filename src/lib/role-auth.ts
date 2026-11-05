@@ -59,7 +59,7 @@ export function suggestUsernameFromEmail(email: string): string {
 }
 
 /**
- * Parses credential sign-in payloads for ALL roles (Admin, Engineering, Operator, Viewer).
+ * Parses credential sign-in payloads for ALL roles (Admin, Engineering, Operator).
  * Accepts `identifier` (email or username), `email`, or `username` + `password`.
  * User accounts never sign in with tokens; tokens are reserved strictly for AHU
  * telemetry monitoring modules (`POST /api/devices` / `POST /api/telemetry`).
@@ -137,7 +137,7 @@ export type RoleSessionDependencies<TUser extends { id: string; role: UserRole }
 };
 
 /**
- * Resolves the active session for ALL roles (Admin, Engineering, Operator, Viewer)
+ * Resolves the active session for ALL roles (Admin, Engineering, Operator)
  * exclusively from a verified Supabase Auth session matched against `ahu_private.users`.
  */
 export async function resolveRoleSession<TUser extends { id: string; role: UserRole }>(

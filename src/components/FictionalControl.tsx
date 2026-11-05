@@ -18,7 +18,6 @@ const roles: ExampleRole[] = [
   "Admin",
   "Engineering",
   "Operator",
-  "Viewer",
 ];
 
 const statuses: ExampleStatus[] = [

@@ -9,7 +9,7 @@ function fixture() {
   const deps: EnrollmentDependencies<string> = {
     async checkGateway() { calls.push("gate"); return { ok: true }; },
     async stagePassword(value) { calls.push("password"); assert.deepEqual(value, { email: input.email, password: input.password }); return { verifiedUserId: "u1", takeSession: () => "sensitive-session", async discard() { calls.push("discard"); } }; },
-    async getProfile(id) { calls.push("profile"); return { id, role: "Viewer" }; },
+    async getProfile(id) { calls.push("profile"); return { id, role: "Operator" }; },
     async claimQuery(_sql, values) { calls.push("claim"); assert.equal(values[0], "u1"); return { rows: [{ id: "d1" }] }; },
   }; return { calls, deps };
 }
@@ -27,7 +27,7 @@ test("verified matching profile and claimed invitation release credentials once"
   const { deps, calls } = fixture(); const result = await evaluateBrowserEnrollment(request(), deps);
   assert.equal(result.ok, true); assert.deepEqual(calls, ["gate", "password", "profile", "claim"]);
   assert.equal(JSON.stringify(result).includes(invitation), false); assert.equal(JSON.stringify(result).includes("sensitive-session"), false);
-  if (result.ok) { assert.deepEqual(result.user, { id: "u1", role: "Viewer" }); const secrets = result.takeCredentials();
+  if (result.ok) { assert.deepEqual(result.user, { id: "u1", role: "Operator" }); const secrets = result.takeCredentials();
     assert.equal(secrets.session, "sensitive-session"); assert.match(secrets.deviceToken, /^[a-f0-9]{64}$/); assert.notEqual(secrets.deviceToken, invitation); assert.throws(() => result.takeCredentials()); }
 });
 test("password, profile, invitation and database failures deny and discard", async () => {

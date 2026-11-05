@@ -22,7 +22,7 @@ const pgEnum = ahuSchema.enum.bind(ahuSchema);
 /* Enums                                                              */
 /* ------------------------------------------------------------------ */
 
-export const roleEnum = pgEnum("role", ["Admin", "Engineering", "Operator", "Viewer"]);
+export const roleEnum = pgEnum("role", ["Admin", "Engineering", "Operator"]);
 export const ahuStatusEnum = pgEnum("ahu_status", ["RUN", "STOP", "FAULT", "OFFLINE"]);
 export const dataSourceEnum = pgEnum("data_source", ["PHYSICAL", "SIMULATION"]);
 export const commandStatusEnum = pgEnum("command_status", [
@@ -47,7 +47,7 @@ export const users = pgTable(
     email: text("email").notNull(),
     username: text("username"),
     fullName: text("full_name"),
-    role: roleEnum("role").notNull().default("Viewer"),
+    role: roleEnum("role").notNull().default("Operator"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

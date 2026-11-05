@@ -236,10 +236,10 @@ export type Activity =
   | "viewAudit"
   | "manageUsers";
 
-export const ROLES = ["Admin", "Engineering", "Operator", "Viewer"] as const;
+export const ROLES = ["Admin", "Engineering", "Operator"] as const;
 
 export const RBAC: Record<Activity, ReadonlyArray<(typeof ROLES)[number]>> = {
-  view: ["Admin", "Engineering", "Operator", "Viewer"],
+  view: ["Admin", "Engineering", "Operator"],
   ack: ["Admin", "Engineering", "Operator"],
   control: ["Admin", "Engineering", "Operator"],
   configure: ["Admin", "Engineering"],

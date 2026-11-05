@@ -5,18 +5,18 @@ import { join } from "node:path";
 
 import { PGlite } from "@electric-sql/pglite";
 
-test("initial migration works in an in-memory database", async () => {
+test("all migrations bootstrap a fresh database with the Operator default", async () => {
   const files = (await readdir("drizzle")).filter((name) =>
-    /^0000_.*\.sql$/.test(name),
+    /^\d{4}_.*\.sql$/.test(name),
   );
 
-  equal(files.length, 1);
-
-  const sql = await readFile(join("drizzle", files[0]), "utf8");
   const db = new PGlite();
 
   try {
-    await db.exec(sql);
+    for (const file of files) {
+      const sql = await readFile(join("drizzle", file), "utf8");
+      await db.exec(sql);
+    }
 
     await db.query(
       "INSERT INTO ahu_private.users (id, email) VALUES ($1, $2)",
@@ -28,7 +28,7 @@ test("initial migration works in an in-memory database", async () => {
       ["user-1"],
     );
 
-    equal(result.rows[0]?.role, "Viewer");
+    equal(result.rows[0]?.role, "Operator");
 
     await rejects(
       db.query(
