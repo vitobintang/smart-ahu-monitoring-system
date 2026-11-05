@@ -43,6 +43,7 @@ export async function POST(req: Request) {
       ahuId?: string;
       forcedFault?: string | null;
       commLoss?: boolean;
+      rejectCommands?: boolean;
       rapidFilterFouling?: boolean;
       humiditySpike?: boolean;
       currentOverload?: boolean;
@@ -58,6 +59,7 @@ export async function POST(req: Request) {
         setOverride(id, {
           forcedFault: null,
           commLoss: false,
+          rejectCommands: false,
           rapidFilterFouling: false,
           humiditySpike: false,
           currentOverload: false,
@@ -119,6 +121,7 @@ export async function POST(req: Request) {
     const patch: Record<string, unknown> = {};
     if (body.forcedFault !== undefined) patch.forcedFault = body.forcedFault ? String(body.forcedFault).slice(0, 60) : null;
     if (body.commLoss !== undefined) patch.commLoss = Boolean(body.commLoss);
+    if (body.rejectCommands !== undefined) patch.rejectCommands = Boolean(body.rejectCommands);
     if (body.rapidFilterFouling !== undefined) patch.rapidFilterFouling = Boolean(body.rapidFilterFouling);
     if (body.humiditySpike !== undefined) patch.humiditySpike = Boolean(body.humiditySpike);
     if (body.currentOverload !== undefined) patch.currentOverload = Boolean(body.currentOverload);

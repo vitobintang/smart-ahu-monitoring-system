@@ -278,16 +278,256 @@ export async function refreshAhuStatus(ahuId: string, now = new Date()) {
     await db.update(ahus).set({ currentStatus: status }).where(eq(ahus.id, ahuId));
     await publishRealtime("status", ahuId, { ahuId, status, at: now.toISOString() });
   }
+  if (status === "FAULT") {
+    await failActiveCommands(db, ahuId, {
+      nonStopOnly: true,
+      reason: row?.faultCode
+        ? `Aborted: controller entered FAULT (${row.faultCode}) during command execution (FR-27)`
+        : "Aborted: critical alarm put unit into FAULT during command execution (FR-27)",
+      now,
+    });
+  }
   await evaluateCommunicationAlarm(ahu, ageSec);
   return { status, ageSec, lastSeenAt: row?.timestamp ?? null };
+}
+
+/* ------------------------------------------------------------------ */
+/* Source transition hygiene & FR-26 FAILED command transitions       */
+/* ------------------------------------------------------------------ */
+
+export async function readAuthoritativeSource(
+  client: Client,
+  ahuId: string,
+): Promise<"PHYSICAL" | "SIMULATION" | null> {
+  const enabledRows = await client
+    .select({ sourceType: devices.sourceType })
+    .from(devices)
+    .where(and(eq(devices.ahuId, ahuId), eq(devices.enabled, true)));
+  if (enabledRows.some((d) => d.sourceType === "PHYSICAL")) return "PHYSICAL";
+  if (enabledRows.some((d) => d.sourceType === "SIMULATION")) return "SIMULATION";
+  return null;
+}
+
+/**
+ * FR-26 / FR-27 / FR-29: Transition active (REQUESTED / ACCEPTED, non-expired)
+ * commands on an AHU to FAILED, reverting unconfirmed desired state when needed
+ * and recording an immutable audit entry for every transition.
+ */
+export async function failActiveCommands(
+  client: Client,
+  ahuId: string,
+  opts: {
+    reason: string;
+    nonStopOnly?: boolean;
+    revertDesiredState?: boolean;
+    userId?: string | null;
+    userEmail?: string | null;
+    ipAddress?: string | null;
+    now?: Date;
+  },
+) {
+  const now = opts.now ?? new Date();
+  const conds = [
+    eq(ahuCommands.ahuId, ahuId),
+    inArray(ahuCommands.status, ["REQUESTED", "ACCEPTED"]),
+    gt(ahuCommands.expiresAt, now),
+  ];
+  if (opts.nonStopOnly) {
+    conds.push(sql`${ahuCommands.commandType} <> 'STOP'`);
+  }
+
+  const candidates = await client.select().from(ahuCommands).where(and(...conds));
+  if (candidates.length === 0) return [];
+
+  const [latestReading] = opts.revertDesiredState
+    ? await client
+        .select({
+          runState: telemetry.runState,
+          fanSpeed: telemetry.fanSpeed,
+          rawPayload: telemetry.rawPayload,
+        })
+        .from(telemetry)
+        .where(and(eq(telemetry.ahuId, ahuId), authoritativeTelemetry()))
+        .orderBy(desc(telemetry.timestamp))
+        .limit(1)
+    : [];
+
+  const failedIds: string[] = [];
+  for (const cmd of candidates) {
+    const [updated] = await client
+      .update(ahuCommands)
+      .set({
+        status: "FAILED",
+        rejectionReason: opts.reason,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(ahuCommands.id, cmd.id),
+          inArray(ahuCommands.status, ["REQUESTED", "ACCEPTED"]),
+          gt(ahuCommands.expiresAt, now),
+        ),
+      )
+      .returning({ id: ahuCommands.id });
+    if (!updated) continue;
+    failedIds.push(updated.id);
+
+    if (cmd.commandType === "START") {
+      const fallbackRun: "RUN" | "STOP" =
+        opts.revertDesiredState &&
+        (latestReading?.runState === "RUN" || (latestReading?.fanSpeed ?? 0) > 2)
+          ? "RUN"
+          : "STOP";
+      await client.update(ahus).set({ desiredRunState: fallbackRun }).where(eq(ahus.id, ahuId));
+    } else if (opts.revertDesiredState) {
+      const raw = (latestReading?.rawPayload ?? {}) as {
+        controlMode?: string | null;
+        setpoint?: number | null;
+      };
+      if (cmd.commandType === "STOP") {
+        const wasRunning = latestReading?.runState === "RUN" || (latestReading?.fanSpeed ?? 0) > 2;
+        await client
+          .update(ahus)
+          .set({ desiredRunState: wasRunning ? "RUN" : "STOP" })
+          .where(eq(ahus.id, ahuId));
+      } else if (
+        (cmd.commandType === "MODE_AUTO" || cmd.commandType === "MODE_MANUAL") &&
+        (raw.controlMode === "AUTO" || raw.controlMode === "MANUAL")
+      ) {
+        await client.update(ahus).set({ controlMode: raw.controlMode }).where(eq(ahus.id, ahuId));
+      } else if (cmd.commandType === "SETPOINT" && typeof raw.setpoint === "number") {
+        await client.update(ahus).set({ setpoint: raw.setpoint }).where(eq(ahus.id, ahuId));
+      }
+    }
+
+    await writeAudit(
+      {
+        userId: opts.userId ?? null,
+        userEmail: opts.userEmail ?? null,
+        ipAddress: opts.ipAddress ?? null,
+        action: "COMMAND_FAILED",
+        entity: `command:${cmd.id}`,
+        details: {
+          ahuId,
+          commandType: cmd.commandType,
+          transition: `${cmd.status} -> FAILED`,
+          reason: opts.reason,
+        },
+      },
+      client,
+    );
+    await publishRealtime("command", ahuId, {
+      type: "COMMAND_FAILED",
+      commandId: cmd.id,
+      ahuId,
+      commandType: cmd.commandType,
+      status: "FAILED",
+      rejectionReason: opts.reason,
+    });
+  }
+  return failedIds;
+}
+
+/**
+ * Cleanly resets pending breach timers, stale controller fault codes, active
+ * non-communication alarms, and incompatible in-flight commands whenever an
+ * AHU's authoritative telemetry source changes (e.g. SIMULATION <-> PHYSICAL
+ * or all devices disabled). Resolved alarms remain in history with full audit logs.
+ */
+export async function reconcileAhuSourceTransition(
+  client: Client,
+  input: {
+    ahuId: string;
+    prevSource: "PHYSICAL" | "SIMULATION" | null;
+    nextSource: "PHYSICAL" | "SIMULATION" | null;
+    userId?: string | null;
+    userEmail?: string | null;
+    ipAddress?: string | null;
+    now?: Date;
+  },
+) {
+  if (input.prevSource === input.nextSource) {
+    return { timersCleared: 0, alarmsResolved: 0, commandsFailed: 0 };
+  }
+  const now = input.now ?? new Date();
+
+  const deletedTimers = await client
+    .delete(alarmBreachTimers)
+    .where(sql`${alarmBreachTimers.id} like ${`${input.ahuId}:%`}`)
+    .returning({ id: alarmBreachTimers.id });
+
+  await client.update(ahus).set({ faultCode: null }).where(eq(ahus.id, input.ahuId));
+
+  const staleAlarms = await client
+    .select({
+      id: alarms.id,
+      parameter: alarms.parameter,
+      breachDirection: alarms.breachDirection,
+    })
+    .from(alarms)
+    .where(
+      and(
+        eq(alarms.ahuId, input.ahuId),
+        eq(alarms.isActive, true),
+        sql`${alarms.parameter} <> 'COMMUNICATION'`,
+      ),
+    );
+
+  if (staleAlarms.length > 0) {
+    await client
+      .update(alarms)
+      .set({ isActive: false, resolvedAt: now })
+      .where(inArray(alarms.id, staleAlarms.map((a) => a.id)));
+    for (const alarm of staleAlarms) {
+      await writeAudit(
+        {
+          userId: input.userId ?? null,
+          userEmail: input.userEmail ?? null,
+          ipAddress: input.ipAddress ?? null,
+          action: "ALARM_RESOLVED",
+          entity: `alarm:${alarm.id}`,
+          details: {
+            ahuId: input.ahuId,
+            parameter: alarm.parameter,
+            breachDirection: alarm.breachDirection ?? null,
+            reason: "authoritative_source_changed",
+            fromSource: input.prevSource,
+            toSource: input.nextSource,
+          },
+        },
+        client,
+      );
+    }
+  }
+
+  let commandsFailed = 0;
+  if (input.nextSource === null || input.nextSource === "PHYSICAL") {
+    const failed = await failActiveCommands(client, input.ahuId, {
+      reason:
+        input.nextSource === "PHYSICAL"
+          ? "Aborted: physical telemetry source became authoritative (physical control is locked)"
+          : "Aborted: all telemetry devices for this AHU were disabled",
+      revertDesiredState: true,
+      userId: input.userId,
+      userEmail: input.userEmail,
+      ipAddress: input.ipAddress,
+      now,
+    });
+    commandsFailed = failed.length;
+  }
+
+  return {
+    timersCleared: deletedTimers.length,
+    alarmsResolved: staleAlarms.length,
+    commandsFailed,
+  };
 }
 
 /* ------------------------------------------------------------------ */
 /* FR-26 / FR-27: command lifecycle engine                            */
 /* ------------------------------------------------------------------ */
 
-export async function expireStaleCommands() {
-  const now = new Date();
+export async function expireStaleCommands(now = new Date()) {
   return db.transaction(async (tx) => {
     const stale = await tx
       .update(ahuCommands)
@@ -780,6 +1020,16 @@ export async function ingestTelemetry(token: string, payload: TelemetryPayload):
     });
     newStatus = computed.status;
     await tx.update(ahus).set({ currentStatus: newStatus }).where(eq(ahus.id, ahuId));
+
+    if (newStatus === "FAULT") {
+      await failActiveCommands(tx, ahuId, {
+        nonStopOnly: true,
+        reason: faultCode
+          ? `Aborted: controller entered FAULT (${faultCode}) during command execution (FR-27)`
+          : "Aborted: critical alarm put unit into FAULT during command execution (FR-27)",
+        now: ts as Date,
+      });
+    }
 
     if (device.sourceType === "SIMULATION") {
       await confirmCommandsFromReading(

@@ -3,7 +3,7 @@ import { randomId } from "@/lib/ids";
 import { db } from "@/db";
 import { ahus, devices, sensorThresholds, syncOutbox, telemetry } from "@/db/schema";
 import type { AhuRow, DeviceRow } from "@/db/schema";
-import { acceptPendingCommands, expireStaleCommands, ingestTelemetry, refreshAhuStatus, runTrendDetection } from "@/lib/engine";
+import { acceptPendingCommands, expireStaleCommands, failActiveCommands, ingestTelemetry, refreshAhuStatus, runTrendDetection } from "@/lib/engine";
 import { drainSyncOutbox } from "@/lib/realtime";
 import { PARAM_MAP, type ParamKey } from "@/lib/domain";
 
@@ -14,6 +14,7 @@ import { PARAM_MAP, type ParamKey } from "@/lib/domain";
 export interface SimOverride {
   forcedFault: string | null;
   commLoss: boolean;
+  rejectCommands: boolean;
   rapidFilterFouling: boolean;
   humiditySpike: boolean;
   currentOverload: boolean;
@@ -50,6 +51,7 @@ export function getOverride(ahuId: string): SimOverride {
   const fresh: SimOverride = {
     forcedFault: null,
     commLoss: false,
+    rejectCommands: false,
     rapidFilterFouling: false,
     humiditySpike: false,
     currentOverload: false,
@@ -63,6 +65,11 @@ export function setOverride(ahuId: string, patch: Partial<SimOverride>): SimOver
   const next = { ...cur, ...patch };
   simOverrides.set(ahuId, next);
   return next;
+}
+
+export function resetSimulatorUnit(ahuId: string): void {
+  simOverrides.delete(ahuId);
+  simStates.delete(ahuId);
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -199,16 +206,29 @@ export async function simulationTick() {
     const physical = await db.select({ ahuId: devices.ahuId }).from(devices)
       .where(and(eq(devices.sourceType, "PHYSICAL"), eq(devices.enabled, true)));
     const physicalIds = new Set(physical.map((d) => d.ahuId));
-    for (const ahu of allAhus) {
+    for (let ahu of allAhus) {
       if (physicalIds.has(ahu.id)) continue;
       const device = devs.find((d) => d.ahuId === ahu.id);
       if (!device) continue;
       // A failure on one unit must never abort the remaining units' telemetry.
       try {
+        const ov = getOverride(ahu.id);
+        if (ov.rejectCommands && !ov.commLoss) {
+          const rejected = await failActiveCommands(db, ahu.id, {
+            reason: "Rejected by controller: local selector switch / actuator NACK (FR-26)",
+            revertDesiredState: true,
+          });
+          if (rejected.length > 0) {
+            const [reloaded] = await db.select().from(ahus).where(eq(ahus.id, ahu.id)).limit(1);
+            if (reloaded) ahu = reloaded;
+          }
+        }
         // 1) frame first -> confirms commands ACCEPTED on the previous tick (FR-27)
         await simulateAhu(ahu, device, tickSec);
-        // 2) then accept newly requested commands (FR-26 lifecycle)
-        await acceptPendingCommands(ahu.id);
+        // 2) then accept newly requested commands (FR-26 lifecycle) unless controller is rejecting commands
+        if (!ov.rejectCommands) {
+          await acceptPendingCommands(ahu.id);
+        }
       } catch (err) {
         console.error(`[simulator] ${ahu.id} tick failed:`, err instanceof Error ? err.message : err);
       }
