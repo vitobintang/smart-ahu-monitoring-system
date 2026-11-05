@@ -74,8 +74,12 @@ export default function AdminPage() {
   const [accessLabel, setAccessLabel] = useState("");
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState(false);
+  const [resetAdminId, setResetAdminId] = useState("");
+  const [resetPassword, setResetPassword] = useState("");
 
-  const nonAdminUsers = (users.data?.users ?? []).filter((u) => !isAdminRole(u.role));
+  const allUsers = users.data?.users ?? [];
+  const adminUsers = allUsers.filter((u) => isAdminRole(u.role));
+  const nonAdminUsers = allUsers.filter((u) => !isAdminRole(u.role));
   const creatingAdmin = isAdminRole(role);
 
   async function copyTokenToClipboard(value: string) {
@@ -117,6 +121,27 @@ export default function AdminPage() {
       await access.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not revoke device");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateAdminPassword(e: React.FormEvent) {
+    e.preventDefault();
+    const targetId = resetAdminId || adminUsers[0]?.id || "";
+    if (!targetId) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await api<{ ok: boolean; email: string }>("/api/users", {
+        method: "PATCH",
+        body: JSON.stringify({ userId: targetId, password: resetPassword }),
+      });
+      setNotice(`Password updated for Administrator ${res.email}.`);
+      setResetPassword("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update password");
     } finally {
       setBusy(false);
     }
@@ -406,7 +431,8 @@ export default function AdminPage() {
             ) : null}
           </div>
 
-          <form onSubmit={createUser} className="panel h-max rounded-2xl p-4">
+          <div className="space-y-4">
+            <form onSubmit={createUser} className="panel h-max rounded-2xl p-4">
             <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-100">
               <UserPlus size={14} className="text-cyan-300" /> Create account / role member
             </h2>
@@ -489,6 +515,45 @@ export default function AdminPage() {
               </p>
             </div>
           </form>
+
+          {adminUsers.length > 0 ? (
+            <form onSubmit={updateAdminPassword} className="panel h-max rounded-2xl p-4">
+              <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-100">
+                <KeyRound size={14} className="text-cyan-300" /> Change Admin password
+              </h2>
+              <div className="mt-3 space-y-3">
+                <Field label="Administrator">
+                  <select
+                    className={inputClass}
+                    value={resetAdminId || adminUsers[0]?.id || ""}
+                    onChange={(e) => setResetAdminId(e.target.value)}
+                  >
+                    {adminUsers.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {displayMemberLabel(u)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="New password" hint="Minimum 8 characters">
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={8}
+                    className={cx(inputClass, "font-mono")}
+                    value={resetPassword}
+                    onChange={(e) => setResetPassword(e.target.value)}
+                    placeholder="Enter new password"
+                  />
+                </Field>
+                <Btn type="submit" variant="primary" disabled={busy || resetPassword.length < 8} className="w-full">
+                  <KeyRound size={13} /> Update Admin password
+                </Btn>
+              </div>
+            </form>
+          ) : null}
+          </div>
         </div>
       ) : (
         <div className="grid gap-4 xl:grid-cols-[1fr_22rem]">

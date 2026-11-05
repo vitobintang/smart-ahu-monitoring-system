@@ -173,3 +173,55 @@ export async function POST(req: Request) {
     return jsonError(err);
   }
 }
+
+export async function PATCH(req: Request) {
+  try {
+    const actor = await requireAuth("manageUsers", { mutating: true });
+    const body = (await req.json()) as {
+      userId?: string;
+      password?: string;
+    };
+    const userId = (body.userId ?? actor.user.id).trim();
+    const password = body.password ?? "";
+    if (!userId) {
+      return Response.json({ error: "Target userId is required" }, { status: 400 });
+    }
+    if (password.length < 8) {
+      return Response.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+    }
+
+    const [target] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+    if (!target) {
+      return Response.json({ error: "Administrator account not found" }, { status: 404 });
+    }
+    if (!isAdminRole(target.role)) {
+      return Response.json(
+        { error: "Non-Admin roles sign in with one-time tokens and do not use passwords" },
+        { status: 400 },
+      );
+    }
+
+    const supabase = createSupabaseAdminClient();
+    const { error } = await supabase.auth.admin.updateUserById(target.id, {
+      password,
+      email_confirm: true,
+    });
+    if (error) {
+      return Response.json({ error: `Could not update password: ${error.message}` }, { status: 400 });
+    }
+
+    const ip = await getClientIp();
+    await writeAudit({
+      userId: actor.user.id,
+      userEmail: actor.user.email,
+      action: "ADMIN_PASSWORD_CHANGED",
+      entity: `user:${target.id}`,
+      ipAddress: ip,
+      details: { email: target.email, selfChange: actor.user.id === target.id },
+    });
+
+    return Response.json({ ok: true, email: target.email });
+  } catch (err) {
+    return jsonError(err);
+  }
+}

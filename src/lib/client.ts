@@ -27,11 +27,12 @@ export function csrfToken(): string {
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase();
   const res = await fetch(path, {
     ...init,
     headers: {
       "content-type": "application/json",
-      ...(init?.method && init.method !== "GET" ? { "x-csrf-token": csrfToken() } : {}),
+      ...(method !== "GET" ? { "x-csrf-token": csrfToken() } : {}),
       ...(init?.headers ?? {}),
     },
     cache: "no-store",
@@ -50,18 +51,35 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
         : `Request failed (${res.status})`;
     throw new Error(message);
   }
+  if (method !== "GET") {
+    clearPollCache();
+  }
   return data as T;
 }
 
 export const LOCAL_POLL_MS = 5000; // FR-24 local-mode fallback polling interval
 
-/** FR-24: polls the API every ~5 s (local mode) unless paused. */
+const POLL_CACHE_MAX = 64;
+const pollCache = new Map<string, { data: unknown; ts: number }>();
+const inFlightGets = new Map<string, Promise<unknown>>();
+
+export function clearPollCache() {
+  pollCache.clear();
+  inFlightGets.clear();
+}
+
+/**
+ * FR-24: polls the API every ~5 s (local mode) unless paused.
+ * Uses stale-while-revalidate caching so navigating back to a previously visited
+ * page renders instantly while refreshing fresh data in the background.
+ */
 export function usePoll<T>(path: string | null, intervalMs = LOCAL_POLL_MS, enabled = true) {
-  const [data, setData] = useState<T | null>(null);
+  const cachedEntry = path ? (pollCache.get(path) as { data: T; ts: number } | undefined) : undefined;
+  const [data, setData] = useState<T | null>(() => cachedEntry?.data ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !cachedEntry);
   const [paused, setPaused] = useState(false);
-  const [lastSync, setLastSync] = useState<number | null>(null);
+  const [lastSync, setLastSync] = useState<number | null>(() => cachedEntry?.ts ?? null);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -71,14 +89,39 @@ export function usePoll<T>(path: string | null, intervalMs = LOCAL_POLL_MS, enab
     };
   }, []);
 
+  useEffect(() => {
+    if (!path) return;
+    const hit = pollCache.get(path) as { data: T; ts: number } | undefined;
+    if (hit) {
+      setData(hit.data);
+      setLastSync(hit.ts);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+  }, [path]);
+
   const reload = useCallback(async () => {
     if (!path) return;
     try {
-      const json = await api<T>(path);
+      let req = inFlightGets.get(path) as Promise<T> | undefined;
+      if (!req) {
+        req = api<T>(path).finally(() => {
+          inFlightGets.delete(path);
+        });
+        inFlightGets.set(path, req);
+      }
+      const json = await req;
+      const now = Date.now();
+      if (pollCache.size >= POLL_CACHE_MAX && !pollCache.has(path)) {
+        const oldest = pollCache.keys().next().value;
+        if (oldest !== undefined) pollCache.delete(oldest);
+      }
+      pollCache.set(path, { data: json, ts: now });
       if (!mounted.current) return;
       setData(json);
       setError(null);
-      setLastSync(Date.now());
+      setLastSync(now);
     } catch (err) {
       if (!mounted.current) return;
       setError(err instanceof Error ? err.message : "Request failed");
@@ -91,8 +134,22 @@ export function usePoll<T>(path: string | null, intervalMs = LOCAL_POLL_MS, enab
     if (!enabled || !path) return;
     void reload();
     if (paused) return;
-    const id = setInterval(() => void reload(), intervalMs);
-    return () => clearInterval(id);
+    const id = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void reload();
+    }, intervalMs);
+    const onVisible = () => {
+      if (typeof document !== "undefined" && !document.hidden) void reload();
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisible);
+    }
+    return () => {
+      clearInterval(id);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisible);
+      }
+    };
   }, [reload, intervalMs, paused, enabled, path]);
 
   return { data, error, loading, reload, paused, setPaused, lastSync };

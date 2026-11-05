@@ -1,11 +1,40 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { syncState } from "@/db/schema";
+import { syncState, telemetry } from "@/db/schema";
 
-/** The Supabase database is the only data store. Browser clients poll the
- * application API; telemetry has already been committed before publication. */
-export type SyncMode = "LOCAL";
+/**
+ * Supabase PostgreSQL is the authoritative data store (replacing the
+ * specification's MySQL + Firebase Realtime Database combination).
+ * Browser clients poll the application API every ~5 s (FR-24).
+ */
+export type SyncMode = "CLOUD" | "LOCAL";
 export type SyncChannel = "telemetry" | "status" | "alarm" | "trend" | "command" | "notification";
+
+function detectDatabaseSyncMode(): SyncMode {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
+  const dbUrl = process.env.DATABASE_URL?.trim() ?? "";
+  try {
+    if (supabaseUrl) {
+      const { hostname } = new URL(supabaseUrl);
+      if (hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1") {
+        return "CLOUD";
+      }
+    }
+  } catch {
+    /* ignore malformed URL here */
+  }
+  try {
+    if (dbUrl) {
+      const { hostname } = new URL(dbUrl);
+      if (hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1") {
+        return "CLOUD";
+      }
+    }
+  } catch {
+    /* ignore malformed URL here */
+  }
+  return "LOCAL";
+}
 
 export async function publishRealtime(
   _channel: SyncChannel,
@@ -21,12 +50,18 @@ export async function drainSyncOutbox(): Promise<{ retried: number; sent: number
 }
 
 export async function getSyncStatus() {
-  const [state] = await db.select().from(syncState).where(eq(syncState.id, 1)).limit(1);
+  const [stateRows, latestTelemetry] = await Promise.all([
+    db.select().from(syncState).where(eq(syncState.id, 1)).limit(1),
+    db.select({ latestAt: sql<Date | null>`max(${telemetry.timestamp})` }).from(telemetry),
+  ]);
+  const state = stateRows[0];
+  const mode = detectDatabaseSyncMode();
+  const latestAt = latestTelemetry[0]?.latestAt ? new Date(latestTelemetry[0].latestAt) : null;
   return {
-    mode: "LOCAL" as const,
+    mode,
     firebaseConfigured: false,
     pollingIntervalSec: state?.pollingIntervalSec ?? 5,
-    lastSuccessAt: state?.lastSuccessAt ?? null,
+    lastSuccessAt: latestAt ?? state?.lastSuccessAt ?? new Date(),
     lastError: null,
     queuedItems: 0,
   };

@@ -5,6 +5,12 @@ import { NextResponse, type NextRequest } from "next/server";
  * Server Components and the browser. getUser validates the token with Auth. */
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
+  // API routes validate/refresh sessions directly in their handlers; skip
+  // proxy round-trips there and whenever no Supabase auth cookie is present.
+  if (request.nextUrl.pathname.startsWith("/api/")) return response;
+  const allCookies = request.cookies.getAll();
+  if (!allCookies.some((c) => c.name.startsWith("sb-"))) return response;
+
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   if (!url || !key) return response;
@@ -27,5 +33,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|ahu/).*)"],
+  matcher: ["/((?!api/|_next/static|_next/image|favicon.ico|ahu/).*)"],
 };

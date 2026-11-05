@@ -32,6 +32,11 @@ test("live query never selects simulation when a physical device is enabled", as
       (await db.select({ source: telemetry.source }).from(telemetry).where(authoritativeTelemetry())).map((r) => r.source),
       ["SIMULATION"],
     );
+    await db.update(devices).set({ enabled: false }).where(eq(devices.id, "s"));
+    assert.deepEqual(
+      (await db.select({ source: telemetry.source }).from(telemetry).where(authoritativeTelemetry())).map((r) => r.source),
+      [],
+    );
     const now = new Date();
     const cutoff = new Date(now.getTime() - 60000);
     const incr = () =>

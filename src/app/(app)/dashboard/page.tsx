@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import {
   CartesianGrid,
@@ -42,7 +42,8 @@ import {
   Wifi,
 } from "lucide-react";
 import type { AhuStatus } from "@/db/schema";
-import { api, LOCAL_POLL_MS, timeAgo, usePoll } from "@/lib/client";
+import { LOCAL_POLL_MS, timeAgo, usePoll } from "@/lib/client";
+import { useSessionUser } from "@/components/AppShell";
 import { PARAM_MAP, type ParamKey } from "@/lib/domain";
 import { Empty, ErrorNote, Spinner, cx } from "@/components/ui";
 
@@ -88,32 +89,42 @@ const PILL: Record<AhuStatus, { label: string; cls: string }> = {
 
 const SERIES_COLORS = ["#2563eb", "#0ea5e9", "#f59e0b", "#22c55e", "#ef4444", "#475569", "#a855f7"];
 
-export default function DashboardPage() {
-  const [win, setWin] = useState(15);
-  const [filter, setFilter] = useState<"ALL" | AhuStatus>("ALL");
-  const [query, setQuery] = useState("");
-  const [dense, setDense] = useState(false);
+const HeroClock = memo(function HeroClock() {
   const [now, setNow] = useState(() => new Date());
-  const [name, setName] = useState<string>("Operator");
-  const { data, error, loading, paused, setPaused } = usePoll<Overview>(`/api/overview?window=${win}`, LOCAL_POLL_MS);
-  const feed = usePoll<Feed>("/api/notifications", 10000);
-  const health = usePoll<{ ok: boolean; database: string; memPct?: number }>("/api/health", 15000);
-
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
+  return (
+    <span className="text-center">
+      <span className="block text-[11px] font-medium text-slate-500">
+        {now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "2-digit", year: "numeric" })}
+      </span>
+      <span className="num block text-[17px] font-bold leading-tight text-[#12294d]">
+        {now.toLocaleTimeString("en-GB", { hour12: false })}
+      </span>
+      <span className="block text-[9.5px] text-slate-400">(GMT+7)</span>
+    </span>
+  );
+});
 
-  useEffect(() => {
-    api<{ user: { fullName: string | null; email: string } | null }>("/api/auth/session")
-      .then((d) => {
-        const raw = (d.user?.email.split("@")[0] ?? "operator").replace(/^system$/, "admin");
-        setName(raw.charAt(0).toUpperCase() + raw.slice(1));
-      })
-      .catch(() => undefined);
-  }, []);
+export default function DashboardPage() {
+  const sessionUser = useSessionUser();
+  const [win, setWin] = useState(15);
+  const [filter, setFilter] = useState<"ALL" | AhuStatus>("ALL");
+  const [query, setQuery] = useState("");
+  const [dense, setDense] = useState(false);
+  const { data, error, loading, paused, setPaused } = usePoll<Overview>(`/api/overview?window=${win}`, LOCAL_POLL_MS);
+  const health = usePoll<{ ok: boolean; database: string; memPct?: number }>("/api/health", 20000);
 
-  const hour = now.getHours();
+  const name = useMemo(() => {
+    const base =
+      sessionUser?.fullName?.trim() ||
+      (sessionUser?.email.split("@")[0] ?? "operator").replace(/^system$/, "admin");
+    return base.charAt(0).toUpperCase() + base.slice(1);
+  }, [sessionUser]);
+
+  const hour = new Date().getHours();
   const greet = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
 
   const cards = data?.cards ?? [];
@@ -162,7 +173,7 @@ export default function DashboardPage() {
       sub: "active session",
       at: new Date().toISOString(),
     });
-    for (const a of feed.data?.alarms ?? [])
+    for (const a of data?.recentAlarms ?? [])
       items.push({
         id: `al-${a.id}`,
         icon: <TriangleAlert size={15} />,
@@ -171,15 +182,17 @@ export default function DashboardPage() {
         sub: `${a.ahuId} · ${a.parameter}`,
         at: a.triggeredAt,
       });
-    for (const c of feed.data?.commands ?? [])
+    for (const card of cards) {
+      if (!card.activeCommand) continue;
       items.push({
-        id: `cm-${c.id}`,
+        id: `cm-${card.activeCommand.id}`,
         icon: <Send size={15} />,
         tint: "bg-emerald-50 text-emerald-600",
         title: "Control command sent",
-        sub: `${c.ahuId} · ${c.commandType}`,
-        at: c.expiresAt,
+        sub: `${card.ahu.id} · ${card.activeCommand.commandType}`,
+        at: card.activeCommand.expiresAt,
       });
+    }
     if (cards[0]?.lastSeenAt)
       items.push({
         id: "telemetry",
@@ -189,7 +202,7 @@ export default function DashboardPage() {
         sub: `${cards[0].ahu.id} (${cards[0].source ?? "SIMULATION"})`,
         at: cards[0].lastSeenAt,
       });
-    for (const t of feed.data?.trends ?? [])
+    for (const t of data?.recentTrends ?? [])
       items.push({
         id: `tr-${t.id}`,
         icon: <Activity size={15} />,
@@ -199,7 +212,7 @@ export default function DashboardPage() {
         at: t.createdAt,
       });
     return items.sort((a, b) => +new Date(b.at) - +new Date(a.at)).slice(0, 5);
-  }, [feed.data, cards]);
+  }, [data?.recentAlarms, data?.recentTrends, cards]);
 
   const simFresh = cards[0]?.lastSeenAt ? Date.now() - +new Date(cards[0].lastSeenAt) < 20000 : false;
   const activeCmds = cards.filter((c) => c.activeCommand).length;
@@ -233,15 +246,7 @@ export default function DashboardPage() {
               </span>
             </div>
             <span className="h-8 w-px bg-slate-300/70" />
-            <span className="text-center">
-              <span className="block text-[11px] font-medium text-slate-500">
-                {now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "2-digit", year: "numeric" })}
-              </span>
-              <span className="num block text-[17px] font-bold leading-tight text-[#12294d]">
-                {now.toLocaleTimeString("en-GB", { hour12: false })}
-              </span>
-              <span className="block text-[9.5px] text-slate-400">(GMT+7)</span>
-            </span>
+            <HeroClock />
             <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-600">
               <span className={cx("h-1.5 w-1.5 rounded-full bg-emerald-500", !paused && "animate-pulse")} />
               {paused ? "Paused" : "Live Data"}
@@ -333,13 +338,13 @@ export default function DashboardPage() {
               tile={<Cloud size={22} />}
               grad="from-[#38bdf8] to-[#2563eb]"
               glow="rgba(37,99,235,0.6)"
-              value={data.sync.mode === "CLOUD" ? "Cloud Mode" : "Local Mode"}
+              value={data.sync.mode === "LOCAL" ? "Local Mode" : "Supabase Cloud"}
               valueClass="block text-[15px] font-bold leading-snug tracking-[-0.01em] text-[#12294d]"
-              label="Realtime sync · FR-24"
+              label="Database sync · FR-24"
               viz={
                 <span className="flex w-full items-center gap-1.5 text-[11.5px] font-medium text-slate-600">
                   <span className="h-2 w-2 flex-none rounded-full bg-[#22c55e] shadow-[0_0_8px_rgba(34,197,94,0.9)]" />
-                  {`Supabase Polling · ${data.sync.pollingIntervalSec}s`}
+                  {`HTTP Polling · ${data.sync.pollingIntervalSec}s`}
                 </span>
               }
               caption={

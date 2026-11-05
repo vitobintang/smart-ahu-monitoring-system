@@ -1,18 +1,19 @@
-import { redirect } from "next/navigation";
-import { getSession } from "@/lib/auth";
+"use client";
+
+import { useParams } from "next/navigation";
 import { can } from "@/lib/domain";
+import { useSessionUser } from "@/components/AppShell";
 import AhuDetailView from "@/components/AhuDetailView";
 
-export const dynamic = "force-dynamic";
+export default function AhuDetailPage() {
+  const params = useParams<{ id: string }>();
+  const user = useSessionUser();
+  const id = typeof params?.id === "string" ? params.id : "";
 
-export default async function AhuDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const ctx = await getSession();
-  if (!ctx) redirect("/login");
   return (
     <AhuDetailView
       ahuId={id}
-      canControl={can(ctx.user.role, "control")}
+      canControl={user ? can(user.role, "control") : false}
       physicalUnlocked={false}
     />
   );

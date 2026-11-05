@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import {
   Activity,
@@ -28,6 +28,12 @@ import { api, timeAgo, type SessionUser, type SyncInfo } from "@/lib/client";
 import { can } from "@/lib/domain";
 import { BUILD_STAMP } from "@/lib/build";
 import { cx } from "@/components/ui";
+
+const SessionUserContext = createContext<SessionUser | null>(null);
+
+export function useSessionUser(): SessionUser | null {
+  return useContext(SessionUserContext);
+}
 
 type Activity2 = Parameters<typeof can>[1];
 
@@ -119,15 +125,19 @@ export default function AppShell({
       }
     };
     void load();
-    const id = setInterval(load, 5000);
+    const id = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void load();
+    }, 5000);
     const syncId = setInterval(async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
         const s = await api<SyncInfo>("/api/sync");
         if (alive) setLiveSync(s);
       } catch {
         /* ignore */
       }
-    }, 10000);
+    }, 20000);
     return () => {
       alive = false;
       clearInterval(id);
@@ -239,7 +249,7 @@ export default function AppShell({
             <p className="text-[12.5px] font-bold text-white">System Status</p>
             <p className="mt-2 flex items-center gap-2 text-[12px] font-semibold text-white">
               <span className="h-2.5 w-2.5 rounded-full bg-[#22c55e] shadow-[0_0_10px_rgba(34,197,94,0.9)]" />
-              {liveSync?.mode === "CLOUD" ? "Connected to Cloud" : "Local Polling Active"}
+              {liveSync?.mode === "LOCAL" ? "Local PostgreSQL Active" : "Supabase Cloud Connected"}
             </p>
             <div className="mt-2.5 space-y-1.5 text-[10.5px] text-[#9db1d0]">
               <p className="flex items-center gap-2">
@@ -376,7 +386,9 @@ export default function AppShell({
           </div>
         </header>
 
-        <main className="relative min-w-0 px-4 py-6 sm:px-6 lg:px-7">{children}</main>
+        <main className="relative min-w-0 px-4 py-6 sm:px-6 lg:px-7">
+          <SessionUserContext.Provider value={user}>{children}</SessionUserContext.Provider>
+        </main>
 
         <footer className="no-print relative flex flex-wrap items-center justify-between gap-2 px-6 pb-6 pt-2 text-[11px] text-slate-400">
           <span>© 2025 Smart Monitoring AHU. All rights reserved.</span>

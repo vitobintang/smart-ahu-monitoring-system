@@ -3,7 +3,6 @@ import { db } from "@/db";
 import { alarms } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { publishRealtime } from "@/lib/realtime";
-import { expireStaleCommands } from "@/lib/engine";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +10,6 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   try {
     await requireAuth("view");
-    await expireStaleCommands();
     const url = new URL(req.url);
     const state = url.searchParams.get("state") ?? "active";
     const ahuId = url.searchParams.get("ahuId");
@@ -19,15 +17,17 @@ export async function GET(req: Request) {
     if (state === "active") conds.push(eq(alarms.isActive, true));
     if (state === "resolved") conds.push(eq(alarms.isActive, false));
     if (ahuId) conds.push(eq(alarms.ahuId, ahuId));
-    const rows = await db
-      .select()
-      .from(alarms)
-      .where(conds.length ? and(...conds) : undefined)
-      .orderBy(desc(alarms.triggeredAt))
-      .limit(400);
-    const counts = await db
-      .select({ active: sql<number>`count(*) filter (where ${alarms.isActive})::int` })
-      .from(alarms);
+    const [rows, counts] = await Promise.all([
+      db
+        .select()
+        .from(alarms)
+        .where(conds.length ? and(...conds) : undefined)
+        .orderBy(desc(alarms.triggeredAt))
+        .limit(400),
+      db
+        .select({ active: sql<number>`count(*) filter (where ${alarms.isActive})::int` })
+        .from(alarms),
+    ]);
     return Response.json({ alarms: rows, activeCount: counts[0]?.active ?? 0, state });
   } catch (err) {
     return jsonError(err);

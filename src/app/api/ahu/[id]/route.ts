@@ -4,7 +4,6 @@ import { ahus, sensorThresholds } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { getAhuDetail, getSeries } from "@/lib/queries";
 import { PARAM_KEYS, PARAM_MAP, type ParamKey } from "@/lib/domain";
-import { refreshAhuStatus } from "@/lib/engine";
 
 export const dynamic = "force-dynamic";
 
@@ -20,10 +19,8 @@ export async function GET(req: Request, ctx: Ctx) {
     const url = new URL(req.url);
     const windowMin = Number(url.searchParams.get("window") ?? 15);
     const win = [5, 15, 30].includes(windowMin) ? windowMin : 15;
-    const detail = await getAhuDetail(id);
+    const [detail, series] = await Promise.all([getAhuDetail(id), getSeries(id, win)]);
     if (!detail) return Response.json({ error: `AHU ${id} not found` }, { status: 404 });
-    await refreshAhuStatus(id);
-    const series = await getSeries(id, win);
     return Response.json({ ...detail, windowMin: win, series, serverTime: new Date().toISOString() });
   } catch (err) {
     return jsonError(err);

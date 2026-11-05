@@ -861,37 +861,19 @@ const MIN_SAMPLES = 8;
 const MIN_SPAN_MIN = 5;
 const MIN_R2 = 0.35;
 
-export async function analyseTrends(ahuId: string, now = new Date()): Promise<TrendAnalysis[]> {
-  const ahuRows = await db.select().from(ahus).where(eq(ahus.id, ahuId)).limit(1);
-  const ahu = ahuRows[0];
-  if (!ahu) return [];
-  const thresholds = await db
-    .select()
-    .from(sensorThresholds)
-    .where(and(eq(sensorThresholds.ahuId, ahuId), eq(sensorThresholds.trendEnabled, true)));
-  if (thresholds.length === 0) return [];
-
-  const since = new Date(now.getTime() - 45 * 60 * 1000);
-  const wanted = new Set(thresholds.map((t) => t.parameter));
-  const projection: Record<string, unknown> = { timestamp: telemetry.timestamp };
-  for (const key of PARAM_KEYS) {
-    if (wanted.has(key)) {
-      projection[key] =
-        key === "current"
-          ? sql`case when ${telemetry.isCurrentFallback} then null else ${telemetry.current} end`.as("current")
-          : key === "voltage"
-            ? sql`case when ${telemetry.isVoltageFallback} then null else ${telemetry.voltage} end`.as("voltage")
-            : telemetry[key];
-    }
-  }
-  const rows = (await db
-    .select(projection as never)
-    .from(telemetry)
-    .where(and(eq(telemetry.ahuId, ahuId), gt(telemetry.timestamp, since), authoritativeTelemetry()))
-    .orderBy(telemetry.timestamp)) as unknown as Array<Record<string, unknown>>;
-
+export function computeTrendAnalyses(
+  thresholds: Array<{
+    parameter: string;
+    trendEnabled: boolean;
+    highLimit: number | null;
+    lowLimit: number | null;
+  }>,
+  rows: Array<Record<string, unknown>>,
+  now = new Date(),
+): TrendAnalysis[] {
   const out: TrendAnalysis[] = [];
   for (const th of thresholds) {
+    if (!th.trendEnabled) continue;
     const key = th.parameter as ParamKey;
     if (!PARAM_KEYS.includes(key)) continue;
     const meta = PARAM_MAP[key];
@@ -1004,6 +986,104 @@ export async function analyseTrends(ahuId: string, now = new Date()): Promise<Tr
             ]
           : [],
     });
+  }
+  return out;
+}
+
+export async function analyseTrends(ahuId: string, now = new Date()): Promise<TrendAnalysis[]> {
+  const [ahuRows, thresholds] = await Promise.all([
+    db.select().from(ahus).where(eq(ahus.id, ahuId)).limit(1),
+    db
+      .select()
+      .from(sensorThresholds)
+      .where(and(eq(sensorThresholds.ahuId, ahuId), eq(sensorThresholds.trendEnabled, true))),
+  ]);
+  if (!ahuRows[0] || thresholds.length === 0) return [];
+
+  const since = new Date(now.getTime() - 45 * 60 * 1000);
+  const wanted = new Set(thresholds.map((t) => t.parameter));
+  const projection: Record<string, unknown> = { timestamp: telemetry.timestamp };
+  for (const key of PARAM_KEYS) {
+    if (wanted.has(key)) {
+      projection[key] =
+        key === "current"
+          ? sql`case when ${telemetry.isCurrentFallback} then null else ${telemetry.current} end`.as("current")
+          : key === "voltage"
+            ? sql`case when ${telemetry.isVoltageFallback} then null else ${telemetry.voltage} end`.as("voltage")
+            : telemetry[key];
+    }
+  }
+  const rows = (await db
+    .select(projection as never)
+    .from(telemetry)
+    .where(and(eq(telemetry.ahuId, ahuId), gt(telemetry.timestamp, since), authoritativeTelemetry()))
+    .orderBy(telemetry.timestamp)) as unknown as Array<Record<string, unknown>>;
+
+  return computeTrendAnalyses(thresholds, rows, now);
+}
+
+/** Batched fleet trend analysis in a single parallel DB round-trip. */
+export async function analyseTrendsBatch(
+  ahuIds?: string[],
+  now = new Date(),
+): Promise<Record<string, TrendAnalysis[]>> {
+  const [ahuRows, allThresholds] = await Promise.all([
+    ahuIds && ahuIds.length > 0
+      ? db.select({ id: ahus.id }).from(ahus).where(inArray(ahus.id, ahuIds)).orderBy(ahus.id)
+      : db.select({ id: ahus.id }).from(ahus).orderBy(ahus.id),
+    ahuIds && ahuIds.length > 0
+      ? db
+          .select()
+          .from(sensorThresholds)
+          .where(and(inArray(sensorThresholds.ahuId, ahuIds), eq(sensorThresholds.trendEnabled, true)))
+      : db.select().from(sensorThresholds).where(eq(sensorThresholds.trendEnabled, true)),
+  ]);
+
+  const ids = ahuRows.map((a) => a.id);
+  const out: Record<string, TrendAnalysis[]> = {};
+  for (const id of ids) out[id] = [];
+  if (ids.length === 0 || allThresholds.length === 0) return out;
+
+  const since = new Date(now.getTime() - 45 * 60 * 1000);
+  const wanted = new Set(allThresholds.map((t) => t.parameter));
+  const projection: Record<string, unknown> = {
+    ahuId: telemetry.ahuId,
+    timestamp: telemetry.timestamp,
+  };
+  for (const key of PARAM_KEYS) {
+    if (wanted.has(key)) {
+      projection[key] =
+        key === "current"
+          ? sql`case when ${telemetry.isCurrentFallback} then null else ${telemetry.current} end`.as("current")
+          : key === "voltage"
+            ? sql`case when ${telemetry.isVoltageFallback} then null else ${telemetry.voltage} end`.as("voltage")
+            : telemetry[key];
+    }
+  }
+
+  const allRows = (await db
+    .select(projection as never)
+    .from(telemetry)
+    .where(and(inArray(telemetry.ahuId, ids), gt(telemetry.timestamp, since), authoritativeTelemetry()))
+    .orderBy(telemetry.timestamp)) as unknown as Array<Record<string, unknown>>;
+
+  const rowsByAhu = new Map<string, Array<Record<string, unknown>>>();
+  for (const r of allRows) {
+    const id = String(r.ahuId);
+    const list = rowsByAhu.get(id) ?? [];
+    list.push(r);
+    rowsByAhu.set(id, list);
+  }
+
+  const thByAhu = new Map<string, typeof allThresholds>();
+  for (const th of allThresholds) {
+    const list = thByAhu.get(th.ahuId) ?? [];
+    list.push(th);
+    thByAhu.set(th.ahuId, list);
+  }
+
+  for (const id of ids) {
+    out[id] = computeTrendAnalyses(thByAhu.get(id) ?? [], rowsByAhu.get(id) ?? [], now);
   }
   return out;
 }

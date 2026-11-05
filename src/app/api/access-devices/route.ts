@@ -1,7 +1,7 @@
 import { eq, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { accessDevices, users } from "@/db/schema";
-import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
+import { getClientIp, invalidateSessionCache, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { secretHash } from "@/lib/device-access";
 import { randomHex, randomId } from "@/lib/ids";
 import { isAdminRole } from "@/lib/role-auth";
@@ -62,6 +62,7 @@ export async function POST(req: Request) {
         return row;
       });
       if (!updated) return Response.json({ error: "Authorization not found" }, { status: 404 });
+      invalidateSessionCache();
       return Response.json({ ok: true });
     }
 

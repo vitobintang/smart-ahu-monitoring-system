@@ -44,22 +44,27 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const win = Number(url.searchParams.get("window") ?? 15);
     const windowMin = [5, 15, 30].includes(win) ? win : 15;
+    const lite = url.searchParams.get("lite") === "1";
     const [dash, sync, recentAlarms, recentTrends, series] = await Promise.all([
       getDashboard(),
       getSyncStatus(),
-      db
-        .select()
-        .from(alarms)
-        .where(eq(alarms.isActive, true))
-        .orderBy(sql`case ${alarms.priority} when 'CRITICAL' then 0 when 'HIGH' then 1 when 'MEDIUM' then 2 else 3 end`, desc(alarms.triggeredAt))
-        .limit(12),
-      db
-        .select()
-        .from(trendAlerts)
-        .where(eq(trendAlerts.acknowledged, false))
-        .orderBy(desc(trendAlerts.createdAt))
-        .limit(8),
-      fleetSeries(windowMin),
+      lite
+        ? Promise.resolve([])
+        : db
+            .select()
+            .from(alarms)
+            .where(eq(alarms.isActive, true))
+            .orderBy(sql`case ${alarms.priority} when 'CRITICAL' then 0 when 'HIGH' then 1 when 'MEDIUM' then 2 else 3 end`, desc(alarms.triggeredAt))
+            .limit(12),
+      lite
+        ? Promise.resolve([])
+        : db
+            .select()
+            .from(trendAlerts)
+            .where(eq(trendAlerts.acknowledged, false))
+            .orderBy(desc(trendAlerts.createdAt))
+            .limit(8),
+      lite ? Promise.resolve({}) : fleetSeries(windowMin),
     ]);
     return Response.json({
       ...dash,

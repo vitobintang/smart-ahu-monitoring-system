@@ -6,13 +6,26 @@ import { auditLogs, users } from "@/db/schema";
 import type { Role, UserRow } from "@/db/schema";
 import { type Activity, can } from "@/lib/domain";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getAuthorizedDeviceUser, revokeCurrentDeviceCookie } from "@/lib/device-access";
+import { DEVICE_COOKIE, getAuthorizedDeviceUser, revokeCurrentDeviceCookie, secretHash } from "@/lib/device-access";
 import { resolveRoleSession } from "@/lib/role-auth";
 
 export const CSRF_COOKIE = "ahu_csrf";
 
 export interface SessionContext {
   user: UserRow;
+}
+
+const SESSION_CACHE_TTL_MS = 20_000;
+const globalForSessionCache = globalThis as typeof globalThis & {
+  __ahuSessionCache?: Map<string, { user: UserRow; expiresAt: number }>;
+  __ahuSessionInFlight?: Map<string, Promise<UserRow | null>>;
+};
+const sessionCache = (globalForSessionCache.__ahuSessionCache ??= new Map());
+const sessionInFlight = (globalForSessionCache.__ahuSessionInFlight ??= new Map());
+
+export function invalidateSessionCache() {
+  sessionCache.clear();
+  sessionInFlight.clear();
 }
 
 /**
@@ -22,21 +35,55 @@ export interface SessionContext {
  * Never trust client-editable user metadata for authorization.
  */
 export async function getSession(): Promise<SessionContext | null> {
-  const user = await resolveRoleSession<UserRow>({
-    getSupabaseUserId: async () => {
-      const supabase = await createSupabaseServerClient();
-      const {
-        data: { user: authUser },
-        error,
-      } = await supabase.auth.getUser();
-      return error || !authUser ? null : authUser.id;
-    },
-    getUserById: async (id) => {
-      const [row] = await db.select().from(users).where(eq(users.id, id)).limit(1);
-      return row ?? null;
-    },
-    getAuthorizedTokenUser: () => getAuthorizedDeviceUser(),
-  });
+  const store = await cookies();
+  const allCookies = store.getAll();
+  const sbCookies = allCookies.filter((c) => c.name.startsWith("sb-"));
+  const deviceCookie = store.get(DEVICE_COOKIE)?.value ?? "";
+  if (sbCookies.length === 0 && !deviceCookie) return null;
+
+  const rawKey = `${sbCookies.map((c) => `${c.name}=${c.value}`).join(";")}|${deviceCookie}`;
+  const cacheKey = await secretHash(rawKey);
+  const now = Date.now();
+  const cached = sessionCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return { user: cached.user };
+  }
+
+  let pending = sessionInFlight.get(cacheKey);
+  if (!pending) {
+    pending = resolveRoleSession<UserRow>({
+      getSupabaseUserId: async () => {
+        if (sbCookies.length === 0) return null;
+        const supabase = await createSupabaseServerClient();
+        const {
+          data: { user: authUser },
+          error,
+        } = await supabase.auth.getUser();
+        return error || !authUser ? null : authUser.id;
+      },
+      getUserById: async (id) => {
+        const [row] = await db.select().from(users).where(eq(users.id, id)).limit(1);
+        return row ?? null;
+      },
+      getAuthorizedTokenUser: () => (deviceCookie ? getAuthorizedDeviceUser() : Promise.resolve(null)),
+    }).finally(() => {
+      sessionInFlight.delete(cacheKey);
+    });
+    sessionInFlight.set(cacheKey, pending);
+  }
+
+  const user = await pending;
+  if (user) {
+    if (sessionCache.size > 128) {
+      for (const [k, v] of sessionCache.entries()) {
+        if (v.expiresAt <= now) sessionCache.delete(k);
+      }
+      if (sessionCache.size > 128) sessionCache.clear();
+    }
+    sessionCache.set(cacheKey, { user, expiresAt: Date.now() + SESSION_CACHE_TTL_MS });
+  } else {
+    sessionCache.delete(cacheKey);
+  }
   return user ? { user } : null;
 }
 
@@ -53,6 +100,7 @@ export async function setCsrfCookie() {
 }
 
 export async function destroySession() {
+  invalidateSessionCache();
   await revokeCurrentDeviceCookie();
   try {
     const supabase = await createSupabaseServerClient();
