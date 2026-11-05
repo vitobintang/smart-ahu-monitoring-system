@@ -18,7 +18,7 @@ import {
 import { commandFeedbackMatches, computeAhuStatus } from "../src/lib/domain";
 import AhuSchematic from "../src/components/AhuSchematic";
 
-test("facility room is non-rectangular multi-branch with 5 indoor AHUs and 2 outdoor wall-mounted AHUs", () => {
+test("facility room is non-rectangular multi-branch with 5 indoor AHUs and 2 outdoor AHUs", () => {
   const walls = computeExteriorWallSegments();
   ok(walls.length >= 12, `expected >= 12 outer wall segments, got ${walls.length}`);
 
@@ -30,20 +30,16 @@ test("facility room is non-rectangular multi-branch with 5 indoor AHUs and 2 out
   const indoor = placements.filter((p) => p.indoor);
   const outdoor = placements.filter((p) => !p.indoor);
   equal(indoor.length, 5, "5 AHUs should sit inside the multi-branch room");
-  equal(outdoor.length, 2, "2 AHUs should sit outside on outdoor concrete pads");
+  equal(outdoor.length, 2, "2 AHUs should sit outside on the exterior grounds");
 
   for (const p of placements) {
     const fp = isFootprintOnPlatform(p.x, p.z, p.rotation);
-    equal(fp.ok, true, `${p.id} at (${p.x}, ${p.z}, ${p.rotation}deg) must sit cleanly on a floor platform`);
+    equal(fp.ok, true, `${p.id} at (${p.x}, ${p.z}, ${p.rotation}deg) must sit cleanly on floor/grounds`);
     equal(collidesWithAnyWall(p.x, p.z, p.rotation), false, `${p.id} must never overlap a wall`);
   }
-
-  // Outdoor AHU-06 sits flush against East exterior wall (x = 14) and AHU-07 flush against North wall (z = -12)
-  ok(Math.abs(DEFAULT_AHU_PLACEMENTS["AHU-06"].x - 14) <= 1.2, "AHU-06 should sit flush against x=14 exterior wall");
-  ok(Math.abs(DEFAULT_AHU_PLACEMENTS["AHU-07"].z - -12) <= 1.2, "AHU-07 should sit flush against z=-12 exterior wall");
 });
 
-test("solid wall physics blocks passing through walls and magnetically snaps flush to walls", () => {
+test("unrestricted outdoor campus allows placing or moving AHUs anywhere outside while solid walls snap & block clipping", () => {
   const existing = Object.entries(DEFAULT_AHU_PLACEMENTS).map(([id, pos]) => ({
     id,
     x: pos.x,
@@ -54,42 +50,43 @@ test("solid wall physics blocks passing through walls and magnetically snaps flu
   // Attempting to place directly inside a wall thickness triggers wall collision
   equal(collidesWithAnyWall(-10, -18, 0), true);
 
-  // Dragging cursor past the North Cleanroom wall (-8, -24) with clampVoidToWall keeps AHU inside & snapped flush
-  const draggedAgainstNorthWall = resolveWallPhysicsAndSnap(-8, -24, existing, {
-    clampVoidToWall: true,
+  // Indoor wall snap: near inside of North Cleanroom wall (-8, -16.5) snaps flush inside facing South (0deg)
+  const indoorSnap = resolveWallPhysicsAndSnap(-8, -16.5, existing, {
     enableWallSnap: true,
     autoAlignRotation: true,
   });
-  equal(draggedAgainstNorthWall.valid, true);
-  equal(draggedAgainstNorthWall.indoor, true);
-  equal(draggedAgainstNorthWall.snappedToWall, true);
-  equal(draggedAgainstNorthWall.rotation, 0);
-  equal(
-    collidesWithAnyWall(
-      draggedAgainstNorthWall.snappedX,
-      draggedAgainstNorthWall.snappedZ,
-      draggedAgainstNorthWall.rotation,
-    ),
-    false,
-  );
+  equal(indoorSnap.valid, true);
+  equal(indoorSnap.indoor, true);
+  equal(indoorSnap.snappedToWall, true);
+  equal(indoorSnap.rotation, 0);
+  equal(collidesWithAnyWall(indoorSnap.snappedX, indoorSnap.snappedZ, indoorSnap.rotation), false);
 
-  // Bringing an AHU near the outdoor side of the East wall (15.6, 10.5) snaps it flush against x=14 facing East (270deg)
-  const outdoorSnap = resolveWallPhysicsAndSnap(15.6, 10.2, existing, {
-    clampVoidToWall: true,
+  // Outdoor wall snap: near outside of East wall (15.6, 10.2) snaps flush outside facing East (270deg)
+  const outdoorWallSnap = resolveWallPhysicsAndSnap(15.6, 10.2, existing, {
     enableWallSnap: true,
     autoAlignRotation: true,
   });
-  equal(outdoorSnap.valid, true);
-  equal(outdoorSnap.indoor, false);
-  equal(outdoorSnap.snappedToWall, true);
-  equal(outdoorSnap.rotation, 270);
-  equal(
-    collidesWithAnyWall(outdoorSnap.snappedX, outdoorSnap.snappedZ, outdoorSnap.rotation),
-    false,
-  );
+  equal(outdoorWallSnap.valid, true);
+  equal(outdoorWallSnap.indoor, false);
+  equal(outdoorWallSnap.snappedToWall, true);
+  equal(outdoorWallSnap.rotation, 270);
+  equal(collidesWithAnyWall(outdoorWallSnap.snappedX, outdoorWallSnap.snappedZ, outdoorWallSnap.rotation), false);
+
+  // Unrestricted open outdoor placement anywhere around the building (no yellow pad limitation!)
+  for (const [ox, oz] of [
+    [-30, -26],
+    [28, 24],
+    [-28, 22],
+    [0, -26],
+  ]) {
+    const res = validatePlatformPlacement(ox, oz, existing);
+    equal(res.valid, true, `Outdoor placement at (${ox}, ${oz}) should be allowed anywhere outside`);
+    equal(res.indoor, false);
+    equal(collidesWithAnyWall(res.snappedX, res.snappedZ, res.rotation), false);
+  }
 });
 
-test("floor platform placement rejects off-platform and overlapping positions and suggests clean slots", () => {
+test("floor platform placement rejects off-site and overlapping positions and suggests clean slots", () => {
   const existing = Object.entries(DEFAULT_AHU_PLACEMENTS).map(([id, pos]) => ({
     id,
     x: pos.x,
@@ -97,8 +94,8 @@ test("floor platform placement rejects off-platform and overlapping positions an
     rotation: pos.rotation,
   }));
 
-  // Far outside any slab
-  const offMap = validatePlatformPlacement(-45, -45, existing);
+  // Far beyond site boundaries
+  const offMap = validatePlatformPlacement(-60, -60, existing);
   equal(offMap.valid, false);
 
   // Directly on top of AHU-01 (-12, -13)

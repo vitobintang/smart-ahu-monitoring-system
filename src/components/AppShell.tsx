@@ -289,7 +289,7 @@ export default function AppShell({
   }
 
   const items = NAV.filter((n) => can(currentUser.role, n.activity));
-  const isImmersive3dPage = pathname === "/ahu" && search?.get("view") !== "list";
+  const isImmersive3dPage = pathname === "/ahu";
   const unackedAlarms = (feed?.alarms ?? []).filter((a) => !a.acknowledged).length;
   const displayName =
     currentUser.fullName?.trim() ||
@@ -417,7 +417,12 @@ export default function AppShell({
         </div>
       </aside>
 
-      <div className="relative flex min-h-dvh flex-col overflow-x-clip lg:pl-[280px]">
+      <div
+        className={cx(
+          "relative flex flex-col overflow-x-clip lg:pl-[280px]",
+          isImmersive3dPage ? "h-dvh overflow-hidden" : "min-h-dvh",
+        )}
+      >
         <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 z-0 h-[440px]">
           <Image
             src="/ahu/mountains.jpg"
@@ -434,9 +439,9 @@ export default function AppShell({
 
         <header
           className={cx(
-            "no-print sticky top-0 z-30 transition-all duration-200",
-            scrolled
-              ? "border-b border-[#e6ecf5] bg-white/90 shadow-[0_4px_18px_-12px_rgba(16,24,40,0.25)] backdrop-blur-xl"
+            "no-print sticky top-0 z-30 flex-none transition-all duration-200",
+            scrolled || isImmersive3dPage
+              ? "border-b border-[#e2eaf4] bg-white/90 shadow-[0_4px_18px_-12px_rgba(16,24,40,0.2)] backdrop-blur-xl"
               : "border-b border-transparent bg-white/55 backdrop-blur-md lg:bg-transparent lg:backdrop-blur-none",
           )}
         >
@@ -660,10 +665,10 @@ export default function AppShell({
 
         <main
           className={cx(
-            "relative min-w-0 flex-1",
+            "relative min-w-0",
             isImmersive3dPage
-              ? "flex h-[calc(100dvh-60px)] min-h-0 flex-col overflow-hidden p-0 sm:h-[calc(100dvh-64px)]"
-              : "px-3.5 py-4 sm:px-6 sm:py-6 lg:px-7",
+              ? "h-[calc(100dvh-60px)] w-full flex-none overflow-hidden p-0 sm:h-[calc(100dvh-64px)]"
+              : "flex-1 px-3.5 py-4 sm:px-6 sm:py-6 lg:px-7",
           )}
         >
           <SessionUserContext.Provider value={currentUser}>{children}</SessionUserContext.Provider>

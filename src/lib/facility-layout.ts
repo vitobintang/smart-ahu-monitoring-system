@@ -1,6 +1,7 @@
 /**
- * Multi-branch 3D facility geometry, floor platforms, exterior wall extraction,
- * solid wall collision physics, and magnetic flush-to-wall AHU snapping.
+ * Multi-branch 3D facility geometry, open outdoor campus grounds,
+ * exterior wall extraction, solid wall collision physics, and magnetic
+ * flush-to-wall AHU snapping (both indoor & anywhere outdoor).
  */
 
 export interface WingZone {
@@ -41,10 +42,17 @@ export const WALL_SNAP_RANGE = 1.65; // magnetic snap engagement distance from w
 export const WALL_CLEARANCE = AHU_HALF_DEPTH + WALL_HALF_THICK + WALL_FLUSH_GAP;
 export const MIN_AHU_SPACING = 3.6;
 
+/** Full 3D architectural site bounds where outdoor AHUs can be freely placed anywhere outside the building. */
+export const OUTDOOR_CAMPUS_BOUNDS = {
+  xMin: -42,
+  xMax: 42,
+  zMin: -40,
+  zMax: 40,
+} as const;
+
 /**
  * Six interconnected indoor branches forming one asymmetric open facility hall
- * (never a plain rectangle), plus two outdoor concrete equipment pads built
- * flush against the exterior building walls.
+ * (never a plain rectangle), surrounded by open unrestricted outdoor campus grounds.
  */
 export const FACILITY_ZONES: WingZone[] = [
   {
@@ -56,7 +64,7 @@ export const FACILITY_ZONES: WingZone[] = [
     zMin: -8,
     zMax: 8,
     indoor: true,
-    accent: "#38bdf8",
+    accent: "#2563eb",
   },
   {
     id: "northwest-cleanroom",
@@ -67,7 +75,7 @@ export const FACILITY_ZONES: WingZone[] = [
     zMin: -18,
     zMax: -8,
     indoor: true,
-    accent: "#22d3ee",
+    accent: "#0284c7",
   },
   {
     id: "north-utility",
@@ -78,7 +86,7 @@ export const FACILITY_ZONES: WingZone[] = [
     zMin: -14,
     zMax: -8,
     indoor: true,
-    accent: "#60a5fa",
+    accent: "#3b82f6",
   },
   {
     id: "east-lab",
@@ -89,7 +97,7 @@ export const FACILITY_ZONES: WingZone[] = [
     zMin: -12,
     zMax: 2,
     indoor: true,
-    accent: "#34d399",
+    accent: "#0d9488",
   },
   {
     id: "west-packing",
@@ -100,7 +108,7 @@ export const FACILITY_ZONES: WingZone[] = [
     zMin: 0,
     zMax: 12,
     indoor: true,
-    accent: "#818cf8",
+    accent: "#4f46e5",
   },
   {
     id: "southeast-warehouse",
@@ -111,38 +119,45 @@ export const FACILITY_ZONES: WingZone[] = [
     zMin: 8,
     zMax: 20,
     indoor: true,
-    accent: "#2dd4bf",
+    accent: "#059669",
   },
   {
-    // Flush against the East exterior wall (x = 14) of South-East Warehouse Wing
-    id: "outdoor-east-yard",
-    label: "Outdoor East Mechanical Pad",
-    shortLabel: "Outdoor East Wall",
-    xMin: 14,
-    xMax: 23,
-    zMin: 8,
-    zMax: 20,
+    id: "outdoor-campus",
+    label: "Outdoor Facility Grounds",
+    shortLabel: "Outdoor Grounds",
+    xMin: OUTDOOR_CAMPUS_BOUNDS.xMin,
+    xMax: OUTDOOR_CAMPUS_BOUNDS.xMax,
+    zMin: OUTDOOR_CAMPUS_BOUNDS.zMin,
+    zMax: OUTDOOR_CAMPUS_BOUNDS.zMax,
     indoor: false,
-    accent: "#f59e0b",
-  },
-  {
-    // Flush against the North exterior wall (z = -12) of East Laboratory Branch
-    id: "outdoor-north-pad",
-    label: "Outdoor North Chiller Pad",
-    shortLabel: "Outdoor North Wall",
-    xMin: 10,
-    xMax: 22,
-    zMin: -20,
-    zMax: -12,
-    indoor: false,
-    accent: "#fb923c",
+    accent: "#0284c7",
   },
 ];
+
+export function describeOutdoorSector(x: number, z: number): WingZone {
+  let dir = "Perimeter";
+  if (Math.abs(x) >= Math.abs(z)) {
+    dir = x >= 0 ? "East" : "West";
+  } else {
+    dir = z < 0 ? "North" : "South";
+  }
+  return {
+    id: "outdoor-campus",
+    label: `Outdoor ${dir} Exterior`,
+    shortLabel: `Outdoor ${dir}`,
+    xMin: OUTDOOR_CAMPUS_BOUNDS.xMin,
+    xMax: OUTDOOR_CAMPUS_BOUNDS.xMax,
+    zMin: OUTDOOR_CAMPUS_BOUNDS.zMin,
+    zMax: OUTDOOR_CAMPUS_BOUNDS.zMax,
+    indoor: false,
+    accent: "#0284c7",
+  };
+}
 
 /**
  * Default coordinates for the 7 baseline AHU units:
  * - 5 inside the multi-branch facility hall
- * - 2 outside on outdoor concrete pads mounted flush against the exterior walls
+ * - 2 outside mounted flush against the exterior building walls (movable anywhere outdoors)
  */
 export const DEFAULT_AHU_PLACEMENTS: Record<
   string,
@@ -153,10 +168,8 @@ export const DEFAULT_AHU_PLACEMENTS: Record<
   "AHU-03": { x: 15, z: -6, rotation: 180, zone: "East Laboratory Branch (Indoor)" },
   "AHU-04": { x: -15, z: 6, rotation: 0, zone: "West Packing Branch (Indoor)" },
   "AHU-05": { x: 6, z: 14, rotation: 270, zone: "South-East Warehouse Wing (Indoor)" },
-  // Mounted flush against East exterior wall (x = 14) with back facing West (-X -> rot 270)
-  "AHU-06": { x: 15.1, z: 14, rotation: 270, zone: "Outdoor East Mechanical Pad" },
-  // Mounted flush against North exterior wall (z = -12) with back facing South (+Z -> rot 180)
-  "AHU-07": { x: 16, z: -13.1, rotation: 180, zone: "Outdoor North Chiller Pad" },
+  "AHU-06": { x: 15.1, z: 14, rotation: 270, zone: "Outdoor East Exterior" },
+  "AHU-07": { x: 16, z: -13.1, rotation: 180, zone: "Outdoor North Exterior" },
 };
 
 export function snapToPlatformGrid(v: number, step = 0.5): number {
@@ -183,22 +196,28 @@ export function isPointInsideIndoorRoom(x: number, z: number): boolean {
   );
 }
 
-export function isPointInsideOutdoorPad(x: number, z: number): boolean {
-  return FACILITY_ZONES.some(
-    (w) => !w.indoor && x >= w.xMin && x <= w.xMax && z >= w.zMin && z <= w.zMax,
+export function isPointWithinCampusBounds(x: number, z: number): boolean {
+  return (
+    x >= OUTDOOR_CAMPUS_BOUNDS.xMin &&
+    x <= OUTDOOR_CAMPUS_BOUNDS.xMax &&
+    z >= OUTDOOR_CAMPUS_BOUNDS.zMin &&
+    z <= OUTDOOR_CAMPUS_BOUNDS.zMax
   );
 }
 
+export function isPointInsideOutdoorPad(x: number, z: number): boolean {
+  return isPointWithinCampusBounds(x, z) && !isPointInsideIndoorRoom(x, z);
+}
+
 export function findZoneAt(x: number, z: number): WingZone | null {
-  // Prefer indoor zone if right on a shared wall boundary unless strictly in outdoor interior
   for (const w of FACILITY_ZONES) {
     if (w.indoor && x > w.xMin && x < w.xMax && z > w.zMin && z < w.zMax) return w;
   }
   for (const w of FACILITY_ZONES) {
-    if (!w.indoor && x >= w.xMin && x <= w.xMax && z >= w.zMin && z <= w.zMax) return w;
+    if (w.indoor && x >= w.xMin && x <= w.xMax && z >= w.zMin && z <= w.zMax) return w;
   }
-  for (const w of FACILITY_ZONES) {
-    if (x >= w.xMin && x <= w.xMax && z >= w.zMin && z <= w.zMax) return w;
+  if (isPointWithinCampusBounds(x, z)) {
+    return describeOutdoorSector(x, z);
   }
   return null;
 }
@@ -321,8 +340,10 @@ export function collidesWithAnyWall(x: number, z: number, rotationDeg = 0): bool
 }
 
 /**
- * Checks that the entire oriented AHU mounting plinth sits cleanly on a continuous
- * indoor floor slab or outdoor equipment pad without colliding with any wall.
+ * Checks that the entire oriented AHU mounting plinth sits cleanly either:
+ * - wholly inside the multi-branch indoor facility floor, OR
+ * - wholly outside on the open outdoor campus grounds,
+ * with zero wall overlap.
  */
 export function isFootprintOnPlatform(
   x: number,
@@ -363,42 +384,22 @@ export function isFootprintOnPlatform(
     return { ok: allIndoor, indoor: true, zone: allIndoor ? centerZone : null };
   }
 
-  const allOnSameOutdoorPad = sampleOffsets.every(
-    ([dx, dz]) =>
-      x + dx >= centerZone.xMin - 0.02 &&
-      x + dx <= centerZone.xMax + 0.02 &&
-      z + dz >= centerZone.zMin - 0.02 &&
-      z + dz <= centerZone.zMax + 0.02,
-  );
+  // Unrestricted outdoor placement anywhere within campus site bounds and outside building walls
+  const allValidOutdoor = sampleOffsets.every(([dx, dz]) => {
+    const sx = x + dx;
+    const sz = z + dz;
+    if (!isPointWithinCampusBounds(sx, sz)) return false;
+    const insideBuilding = FACILITY_ZONES.some(
+      (w) => w.indoor && sx > w.xMin + 0.02 && sx < w.xMax - 0.02 && sz > w.zMin + 0.02 && sz < w.zMax - 0.02,
+    );
+    return !insideBuilding;
+  });
+
   return {
-    ok: allOnSameOutdoorPad,
+    ok: allValidOutdoor,
     indoor: false,
-    zone: allOnSameOutdoorPad ? centerZone : null,
+    zone: allValidOutdoor ? describeOutdoorSector(x, z) : null,
   };
-}
-
-/** Projects an out-of-bounds void point onto the nearest floor platform so units never cross through walls into empty space. */
-function projectOntoNearestPlatform(rawX: number, rawZ: number): { x: number; z: number; zone: WingZone } {
-  const inside = findZoneAt(rawX, rawZ);
-  if (inside) return { x: rawX, z: rawZ, zone: inside };
-
-  let bestZone = FACILITY_ZONES[0];
-  let bestX = rawX;
-  let bestZ = rawZ;
-  let bestDistSq = Infinity;
-
-  for (const wz of FACILITY_ZONES) {
-    const cx = Math.min(wz.xMax - 0.5, Math.max(wz.xMin + 0.5, rawX));
-    const cz = Math.min(wz.zMax - 0.5, Math.max(wz.zMin + 0.5, rawZ));
-    const d2 = (cx - rawX) ** 2 + (cz - rawZ) ** 2;
-    if (d2 < bestDistSq) {
-      bestDistSq = d2;
-      bestZone = wz;
-      bestX = cx;
-      bestZ = cz;
-    }
-  }
-  return { x: bestX, z: bestZ, zone: bestZone };
 }
 
 export interface PlacementValidation {
@@ -415,10 +416,10 @@ export interface PlacementValidation {
 
 /**
  * Core solid-wall physics & magnetic flush-to-wall snap solver:
- * 1. Clamps cursor positions that wander outside floor slabs back against the inside/pad wall face
- *    so the 3D AHU model can never pass through a wall.
- * 2. Magnetically snaps the AHU flush against any nearby wall segment (indoor or outdoor) within
- *    WALL_SNAP_RANGE, optionally aligning the AHU's flat back panel against that wall.
+ * 1. Allows placing or moving AHUs anywhere inside the multi-wing building OR anywhere
+ *    outside on the open outdoor campus grounds (no yellow-pad restriction).
+ * 2. Magnetically snaps the AHU flush against any nearby wall segment (from either the
+ *    indoor side OR the outdoor side!) within WALL_SNAP_RANGE.
  * 3. Iteratively resolves AABB wall & corner collisions so 0.00m wall overlap is guaranteed.
  * 4. Checks safe clearance from all other AHU units.
  */
@@ -441,38 +442,29 @@ export function resolveWallPhysicsAndSnap(
 
   let rotation = normalizeRotation(options?.rotation ?? 0);
 
-  // If not clamping void (e.g. direct validation of far-off coordinate), reject far off-map points cleanly
-  const directZone = findZoneAt(rawX, rawZ);
-  let workX = rawX;
-  let workZ = rawZ;
-  let targetZone = directZone;
-
-  if (!directZone) {
-    if (!clampVoidToWall) {
-      return {
-        valid: false,
-        snappedX: snapToPlatformGrid(rawX, 0.5),
-        snappedZ: snapToPlatformGrid(rawZ, 0.5),
-        rotation,
-        indoor: false,
-        zone: null,
-        snappedToWall: false,
-        snappedWall: null,
-        reason: "Place the unit on an indoor room wing or outdoor concrete pad.",
-      };
-    }
-    const projected = projectOntoNearestPlatform(rawX, rawZ);
-    workX = projected.x;
-    workZ = projected.z;
-    targetZone = projected.zone;
+  if (!isPointWithinCampusBounds(rawX, rawZ) && !clampVoidToWall) {
+    return {
+      valid: false,
+      snappedX: snapToPlatformGrid(rawX, 0.5),
+      snappedZ: snapToPlatformGrid(rawZ, 0.5),
+      rotation,
+      indoor: false,
+      zone: null,
+      snappedToWall: false,
+      snappedWall: null,
+      reason: "Position is outside the facility site boundaries.",
+    };
   }
+
+  let workX = Math.min(OUTDOOR_CAMPUS_BOUNDS.xMax - 1.8, Math.max(OUTDOOR_CAMPUS_BOUNDS.xMin + 1.8, rawX));
+  let workZ = Math.min(OUTDOOR_CAMPUS_BOUNDS.zMax - 1.8, Math.max(OUTDOOR_CAMPUS_BOUNDS.zMin + 1.8, rawZ));
 
   const walls = computeExteriorWallSegments();
   let snappedToWall = false;
   let snappedWall: WallSegment | null = null;
 
-  // Step 1: Magnetic Wall Snap check against all exterior wall segments
-  if (enableWallSnap && targetZone) {
+  // Step 1: Magnetic Wall Snap check against all exterior wall segments (works on BOTH indoor & outdoor faces!)
+  if (enableWallSnap) {
     let bestGap = WALL_SNAP_RANGE;
     let bestCandidate: {
       seg: WallSegment;
@@ -486,19 +478,7 @@ export function resolveWallPhysicsAndSnap(
         const maxX = Math.max(seg.x1, seg.x2);
         if (workX < minX + 0.6 || workX > maxX - 0.6) continue;
         const dz = workZ - seg.z1;
-        // Determine which side of the wall targetZone lies on
-        const probeSide: 1 | -1 =
-          Math.abs(dz) > 0.01
-            ? dz > 0
-              ? 1
-              : -1
-            : (targetZone.zMin + targetZone.zMax) / 2 > seg.z1
-              ? 1
-              : -1;
-        // Verify that a point 1.1m on probeSide belongs to the same indoor/outdoor domain
-        const testZone = findZoneAt(workX, seg.z1 + probeSide * 1.15);
-        if (!testZone || testZone.indoor !== targetZone.indoor) continue;
-
+        const probeSide: 1 | -1 = dz >= 0 ? 1 : -1;
         const candRot = autoAlignRotation ? (probeSide === 1 ? 0 : 180) : rotation;
         const { hz } = getAhuHalfExtents(candRot);
         const faceDist = Math.abs(Math.abs(dz) - WALL_HALF_THICK - hz);
@@ -511,17 +491,7 @@ export function resolveWallPhysicsAndSnap(
         const maxZ = Math.max(seg.z1, seg.z2);
         if (workZ < minZ + 0.6 || workZ > maxZ - 0.6) continue;
         const dx = workX - seg.x1;
-        const probeSide: 1 | -1 =
-          Math.abs(dx) > 0.01
-            ? dx > 0
-              ? 1
-              : -1
-            : (targetZone.xMin + targetZone.xMax) / 2 > seg.x1
-              ? 1
-              : -1;
-        const testZone = findZoneAt(seg.x1 + probeSide * 1.15, workZ);
-        if (!testZone || testZone.indoor !== targetZone.indoor) continue;
-
+        const probeSide: 1 | -1 = dx >= 0 ? 1 : -1;
         const candRot = autoAlignRotation ? (probeSide === 1 ? 270 : 90) : rotation;
         const { hx } = getAhuHalfExtents(candRot);
         const faceDist = Math.abs(Math.abs(dx) - WALL_HALF_THICK - hx);
@@ -557,19 +527,9 @@ export function resolveWallPhysicsAndSnap(
     workZ = snapToPlatformGrid(workZ, 0.5);
   }
 
-  // Step 2: Clamp inside outdoor pad concrete curbs when on an outdoor pad
+  // Step 2: Iterative Solid Wall AABB Push-Out Solver (guarantees zero wall penetration!)
   const { hx, hz } = getAhuHalfExtents(rotation);
-  if (targetZone && !targetZone.indoor) {
-    workX = Number(
-      Math.min(targetZone.xMax - hx - 0.2, Math.max(targetZone.xMin + hx + 0.05, workX)).toFixed(2),
-    );
-    workZ = Number(
-      Math.min(targetZone.zMax - hz - 0.05, Math.max(targetZone.zMin + hz + 0.2, workZ)).toFixed(2),
-    );
-  }
-
-  // Step 3: Iterative Solid Wall AABB Push-Out Solver (guarantees zero wall penetration!)
-  for (let iter = 0; iter < 5; iter += 1) {
+  for (let iter = 0; iter < 6; iter += 1) {
     let pushed = false;
     for (const seg of walls) {
       const wb = getWallBox(seg);
@@ -595,15 +555,6 @@ export function resolveWallPhysicsAndSnap(
     if (!pushed) break;
   }
 
-  // Re-clamp outdoor pad outer edges after wall push-out if applicable
-  const resolvedZone = findZoneAt(workX, workZ);
-  if (resolvedZone && !resolvedZone.indoor) {
-    if (workX + hx > resolvedZone.xMax) workX = Number((resolvedZone.xMax - hx - 0.15).toFixed(2));
-    if (workX - hx < resolvedZone.xMin) workX = Number((resolvedZone.xMin + hx + 0.15).toFixed(2));
-    if (workZ + hz > resolvedZone.zMax) workZ = Number((resolvedZone.zMax - hz - 0.15).toFixed(2));
-    if (workZ - hz < resolvedZone.zMin) workZ = Number((resolvedZone.zMin + hz + 0.15).toFixed(2));
-  }
-
   const footprint = isFootprintOnPlatform(workX, workZ, rotation);
   if (!footprint.ok || !footprint.zone) {
     return {
@@ -615,11 +566,11 @@ export function resolveWallPhysicsAndSnap(
       zone: null,
       snappedToWall: false,
       snappedWall: null,
-      reason: "Blocked by wall or platform edge — slide onto a valid floor wing or outdoor pad.",
+      reason: "Blocked by wall corner — slide slightly along the wall or onto open floor.",
     };
   }
 
-  // Step 4: Unit-to-unit solid collision check
+  // Step 3: Unit-to-unit solid collision check
   for (const unit of existing) {
     if (excludeId && unit.id === excludeId) continue;
     const otherExt = getAhuHalfExtents(unit.rotation ?? 0);
@@ -653,7 +604,7 @@ export function resolveWallPhysicsAndSnap(
   };
 }
 
-/** Validates a floor or wall-snapped platform placement. */
+/** Validates a floor, outdoor campus, or wall-snapped placement. */
 export function validatePlatformPlacement(
   rawX: number,
   rawZ: number,
@@ -670,7 +621,7 @@ export function validatePlatformPlacement(
   });
 }
 
-/** Picks a clean, guaranteed non-overlapping floor or wall-snapped platform slot for a new AHU. */
+/** Picks a clean, guaranteed non-overlapping indoor or outdoor slot for a new AHU. */
 export function suggestCleanPlatformSlot(
   existing: Array<{ id: string; x: number; z: number; rotation?: number }>,
   preferIndoor = true,
@@ -691,13 +642,15 @@ export function suggestCleanPlatformSlot(
         [5, -4, 0],
       ]
     : [
-        // Outdoor slots mounted flush against the exterior building walls!
         [15.1, 10.2, 270],
         [15.1, 17.8, 270],
         [12, -13.1, 180],
-        [19.8, -13.1, 180],
-        [20, 14, 270],
-        [16, -17.5, 180],
+        [20, -13.1, 180],
+        [-12, -19.1, 180],
+        [-23.1, 6, 90],
+        [6, 21.1, 0],
+        [24, 6, 270],
+        [-24, -10, 90],
       ];
 
   for (const [cx, cz, crot] of candidates) {
@@ -718,27 +671,21 @@ export function suggestCleanPlatformSlot(
     }
   }
 
-  const orderedZones = [
-    ...FACILITY_ZONES.filter((z) => z.indoor === preferIndoor),
-    ...FACILITY_ZONES.filter((z) => z.indoor !== preferIndoor),
-  ];
-  for (const wz of orderedZones) {
-    for (let x = wz.xMin + 1.1; x <= wz.xMax - 1.1; x += 1.5) {
-      for (let z = wz.zMin + 1.1; z <= wz.zMax - 1.1; z += 1.5) {
-        const res = resolveWallPhysicsAndSnap(x, z, existing, {
-          enableWallSnap: true,
-          autoAlignRotation: true,
-          clampVoidToWall: false,
-        });
-        if (res.valid && res.zone) {
-          return {
-            x: res.snappedX,
-            z: res.snappedZ,
-            rotation: res.rotation,
-            zone: res.zone,
-            indoor: res.indoor,
-          };
-        }
+  for (let x = -30; x <= 30; x += 4) {
+    for (let z = -28; z <= 28; z += 4) {
+      const res = resolveWallPhysicsAndSnap(x, z, existing, {
+        enableWallSnap: true,
+        autoAlignRotation: true,
+        clampVoidToWall: false,
+      });
+      if (res.valid && res.zone && res.indoor === preferIndoor) {
+        return {
+          x: res.snappedX,
+          z: res.snappedZ,
+          rotation: res.rotation,
+          zone: res.zone,
+          indoor: res.indoor,
+        };
       }
     }
   }

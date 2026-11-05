@@ -94,13 +94,13 @@ const STATUS_HEX: Record<AhuStatus, number> = {
 };
 
 const STATUS_DOT_CLASS: Record<AhuStatus, string> = {
-  RUN: "bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.95)]",
+  RUN: "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.75)]",
   STOP: "bg-slate-400",
   FAULT: "bg-red-500 animate-ping",
   OFFLINE: "bg-rose-500",
 };
 
-/** Builds a detailed industrial 3D Air Handling Unit on a raised floor mounting plinth. */
+/** Builds a detailed daylight-lit industrial 3D Air Handling Unit on a raised mounting plinth. */
 function buildAhuModel3D(opts: {
   id: string;
   status: AhuStatus;
@@ -128,15 +128,15 @@ function buildAhuModel3D(opts: {
   group.userData = { ahuId: id, isAhuRoot: !isGhost };
 
   const transparent = isGhost || dimmed;
-  const baseOpacity = isGhost ? 0.65 : dimmed ? 0.28 : 1;
+  const baseOpacity = isGhost ? 0.68 : dimmed ? 0.3 : 1;
   const ghostTint = !isGhost ? null : isValidGhost ? 0x10b981 : 0xef4444;
 
-  // 1. Dedicated steel-framed vibration-isolation floor platform plinth (3.1m x 1.85m)
+  // 1. Steel vibration-isolation plinth (3.1m x 1.85m)
   const plinthGeo = new THREE.BoxGeometry(3.1, 0.22, 1.85);
   const plinthMat = new THREE.MeshStandardMaterial({
     color: ghostTint ?? (outdoor ? 0x334155 : 0x1e293b),
-    roughness: 0.72,
-    metalness: 0.28,
+    roughness: 0.65,
+    metalness: 0.3,
     transparent,
     opacity: isGhost ? 0.55 : baseOpacity,
   });
@@ -149,50 +149,50 @@ function buildAhuModel3D(opts: {
 
   const trimGeo = new THREE.EdgesGeometry(plinthGeo);
   const trimMat = new THREE.LineBasicMaterial({
-    color: isGhost ? (isValidGhost ? 0x34d399 : 0xf87171) : outdoor ? 0xf59e0b : 0x38bdf8,
+    color: isGhost ? (isValidGhost ? 0x10b981 : 0xef4444) : outdoor ? 0x0284c7 : 0x2563eb,
     transparent: true,
-    opacity: isGhost ? 0.95 : dimmed ? 0.25 : 0.6,
+    opacity: isGhost ? 0.95 : dimmed ? 0.25 : 0.65,
   });
   const trim = new THREE.LineSegments(trimGeo, trimMat);
   trim.position.copy(plinth.position);
   group.add(trim);
 
   // Selection / placement halo ring on floor
-  const haloGeo = new THREE.RingGeometry(1.88, 2.15, 40);
+  const haloGeo = new THREE.RingGeometry(1.88, 2.18, 44);
   haloGeo.rotateX(-Math.PI / 2);
   const haloMat = new THREE.MeshBasicMaterial({
-    color: isGhost ? (isValidGhost ? 0x10b981 : 0xef4444) : 0x38bdf8,
+    color: isGhost ? (isValidGhost ? 0x10b981 : 0xef4444) : 0x2563eb,
     side: THREE.DoubleSide,
     transparent: true,
     opacity: isGhost ? 0.85 : 0,
   });
   const halo = new THREE.Mesh(haloGeo, haloMat);
-  halo.position.set(0, 0.025, 0);
+  halo.position.set(0, 0.03, 0);
   group.add(halo);
 
-  // 2. Main insulated double-skin AHU cabinet sections
-  const casingColor = ghostTint ?? (outdoor ? 0xdbe5f0 : 0xe8eef7);
+  // 2. Insulated double-skin powder-coated AHU cabinet sections
+  const casingColor = ghostTint ?? (outdoor ? 0xeef4fb : 0xffffff);
   const frameColor = ghostTint ?? 0x334155;
   const casingMat = new THREE.MeshStandardMaterial({
     color: casingColor,
-    roughness: 0.36,
-    metalness: 0.32,
+    roughness: 0.34,
+    metalness: 0.18,
     transparent,
     opacity: baseOpacity,
   });
   const darkFrameMat = new THREE.MeshStandardMaterial({
     color: frameColor,
-    roughness: 0.5,
-    metalness: 0.55,
+    roughness: 0.48,
+    metalness: 0.45,
     transparent,
     opacity: baseOpacity,
   });
 
-  // Rear wall-interface supply/return duct flange on local -Z (faces wall when snapped flush!)
+  // Rear wall-interface supply/return duct flanges on local -Z
   const wallFlangeMat = new THREE.MeshStandardMaterial({
     color: ghostTint ?? 0x64748b,
-    roughness: 0.4,
-    metalness: 0.65,
+    roughness: 0.42,
+    metalness: 0.55,
     transparent,
     opacity: baseOpacity,
   });
@@ -241,14 +241,14 @@ function buildAhuModel3D(opts: {
     const cwSupplyMat = new THREE.MeshStandardMaterial({
       color: 0x0284c7,
       roughness: 0.3,
-      metalness: 0.6,
+      metalness: 0.55,
       transparent,
       opacity: baseOpacity,
     });
     const cwReturnMat = new THREE.MeshStandardMaterial({
       color: hasHeater ? 0xf97316 : 0x38bdf8,
       roughness: 0.3,
-      metalness: 0.6,
+      metalness: 0.55,
       transparent,
       opacity: baseOpacity,
     });
@@ -282,9 +282,9 @@ function buildAhuModel3D(opts: {
     const roofCap = new THREE.Mesh(
       new THREE.BoxGeometry(3.04, 0.09, 1.72),
       new THREE.MeshStandardMaterial({
-        color: 0x475569,
-        roughness: 0.45,
-        metalness: 0.55,
+        color: 0x64748b,
+        roughness: 0.42,
+        metalness: 0.45,
         transparent,
         opacity: baseOpacity,
       }),
@@ -314,7 +314,7 @@ function buildAhuModel3D(opts: {
     color: status === "RUN" ? 0x38bdf8 : 0x94a3b8,
     emissive: status === "RUN" ? 0x0ea5e9 : 0x000000,
     emissiveIntensity: status === "RUN" ? 0.35 : 0,
-    metalness: 0.5,
+    metalness: 0.45,
     roughness: 0.3,
     transparent,
     opacity: baseOpacity,
@@ -332,7 +332,7 @@ function buildAhuModel3D(opts: {
   const beaconMat = new THREE.MeshStandardMaterial({
     color: statusColor,
     emissive: statusColor,
-    emissiveIntensity: status === "RUN" || status === "FAULT" ? 0.9 : 0.35,
+    emissiveIntensity: status === "RUN" || status === "FAULT" ? 0.75 : 0.25,
     roughness: 0.2,
     transparent,
     opacity: baseOpacity,
@@ -344,6 +344,14 @@ function buildAhuModel3D(opts: {
 
   return { group, rotor, halo, beaconMat };
 }
+
+/** High-contrast architectural button helper for the Light-Mode 3D HUD toolbar. */
+const hudBtnBase =
+  "inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-[11.5px] font-semibold transition-all duration-200 select-none";
+const hudBtnNeutral =
+  "border-[#cbd8ea] bg-white text-[#12294d] shadow-[0_1px_2px_rgba(16,24,40,0.05)] hover:border-[#93c5fd] hover:bg-[#f2f7ff] hover:text-[#1d6ef2]";
+const hudBtnActiveBlue =
+  "border-[#1d6ef2] bg-[#1d6ef2] text-white shadow-[0_8px_18px_-6px_rgba(29,110,242,0.7)] hover:bg-[#185fd6]";
 
 export default function AhuFacilityMap3D({
   items,
@@ -361,9 +369,9 @@ export default function AhuFacilityMap3D({
   placement = null,
   onPlacementChange,
 }: Props) {
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const mountRef = useRef<HTMLDivElement | null>(null);
-  const labelElsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
-  const cardAnchorRef = useRef<HTMLDivElement | null>(null);
+  const anchorElsRef = useRef<Map<string, HTMLDivElement>>(new Map());
   const draftLabelRef = useRef<HTMLDivElement | null>(null);
 
   const [internalSelectedId, setInternalSelectedId] = useState<string | null>(null);
@@ -463,16 +471,16 @@ export default function AhuFacilityMap3D({
     }
   }, [movingAhuId, moveDraft, onMoveAhuSave, setSelectedId]);
 
-  // Camera spherical orbit state in ref for 60fps smooth dragging AND immediate snap presets
+  // Camera spherical orbit state in ref for 60fps smooth gliding & dragging
   const camStateRef = useRef({
     theta: mode === "placement" ? 0.62 : 0.72,
     phi: mode === "placement" ? 0.78 : 0.88,
-    radius: mode === "placement" ? 44 : 45,
+    radius: mode === "placement" ? 44 : 46,
     targetX: 1,
     targetZ: -1,
     goalTheta: mode === "placement" ? 0.62 : 0.72,
     goalPhi: mode === "placement" ? 0.78 : 0.88,
-    goalRadius: mode === "placement" ? 44 : 45,
+    goalRadius: mode === "placement" ? 44 : 46,
     goalTargetX: 1,
     goalTargetZ: -1,
   });
@@ -513,62 +521,58 @@ export default function AhuFacilityMap3D({
   const startMovingUnitRef = useRef(startMovingUnit);
   startMovingUnitRef.current = startMovingUnit;
 
-  /** Immediately jumps camera to Top View (0ms lag) or 3D / Outdoor presets. */
-  const setCameraPreset = useCallback((preset: "iso" | "top" | "outdoor", immediate = true) => {
+  /** Smoothly glides camera to Top View, 3D Isometric View, or Outdoor View along shortest angular path. */
+  const setCameraPreset = useCallback((preset: "iso" | "top" | "outdoor") => {
     const c = camStateRef.current;
     autoRotateRef.current = false;
     setAutoRotate(false);
 
-    let nextTheta = 0.72;
+    let desiredTheta = 0.72;
     let nextPhi = 0.88;
-    let nextRadius = 45;
+    let nextRadius = 46;
     let nextTx = 1;
     let nextTz = -1;
 
     if (preset === "top") {
-      // True straight-down 90° architectural plan view
-      nextTheta = 0;
-      nextPhi = 0.002;
-      nextRadius = 54;
+      desiredTheta = 0;
+      nextPhi = 0.004;
+      nextRadius = 55;
       nextTx = 0;
       nextTz = 0;
       setIsTopView(true);
     } else if (preset === "outdoor") {
-      nextTheta = 1.12;
-      nextPhi = 0.86;
-      nextRadius = 38;
-      nextTx = 13;
+      desiredTheta = 1.08;
+      nextPhi = 0.84;
+      nextRadius = 42;
+      nextTx = 10;
       nextTz = 0;
       setIsTopView(false);
     } else {
       setIsTopView(false);
     }
 
-    c.goalTheta = nextTheta;
+    // Shortest angular delta so camera smoothly rotates without spinning 360°
+    let delta = ((desiredTheta - c.theta) % (Math.PI * 2));
+    if (delta > Math.PI) delta -= Math.PI * 2;
+    if (delta < -Math.PI) delta += Math.PI * 2;
+
+    c.goalTheta = c.theta + delta;
     c.goalPhi = nextPhi;
     c.goalRadius = nextRadius;
     c.goalTargetX = nextTx;
     c.goalTargetZ = nextTz;
-
-    if (immediate) {
-      c.theta = nextTheta;
-      c.phi = nextPhi;
-      c.radius = nextRadius;
-      c.targetX = nextTx;
-      c.targetZ = nextTz;
-    }
   }, []);
 
   const zoomBy = useCallback((delta: number) => {
     const c = camStateRef.current;
-    c.goalRadius = Math.min(72, Math.max(15, c.goalRadius + delta));
+    c.goalRadius = Math.min(78, Math.max(15, c.goalRadius + delta));
   }, []);
 
   useEffect(() => {
     if (mode !== "explore" || !selectedUnit || isTopView) return;
     const c = camStateRef.current;
-    c.goalTargetX = selectedUnit.placement.x * 0.5;
-    c.goalTargetZ = selectedUnit.placement.z * 0.5;
+    c.goalTargetX = selectedUnit.placement.x * 0.45;
+    c.goalTargetZ = selectedUnit.placement.z * 0.45;
   }, [mode, selectedUnit, isTopView]);
 
   const ahuSceneObjectsRef = useRef<{
@@ -592,23 +596,23 @@ export default function AhuFacilityMap3D({
     const len = Math.hypot(seg.x2 - seg.x1, seg.z2 - seg.z1);
     const midX = (seg.x1 + seg.x2) / 2;
     const midZ = (seg.z1 + seg.z2) / 2;
-    const wX = seg.orientation === "H" ? len + 0.2 : 0.42;
-    const wZ = seg.orientation === "V" ? len + 0.2 : 0.42;
+    const wX = seg.orientation === "H" ? len + 0.2 : 0.44;
+    const wZ = seg.orientation === "V" ? len + 0.2 : 0.44;
 
     const beam = new THREE.Mesh(
       new THREE.BoxGeometry(wX, 2.96, wZ),
       new THREE.MeshBasicMaterial({
-        color: 0x34d399,
+        color: 0x10b981,
         transparent: true,
-        opacity: 0.34,
+        opacity: 0.32,
       }),
     );
     beam.position.set(midX, 1.48, midZ);
     objs.wallSnapLineGroup.add(beam);
 
     const rail = new THREE.Mesh(
-      new THREE.BoxGeometry(wX + 0.06, 0.14, wZ + 0.06),
-      new THREE.MeshBasicMaterial({ color: 0x10b981 }),
+      new THREE.BoxGeometry(wX + 0.08, 0.15, wZ + 0.08),
+      new THREE.MeshBasicMaterial({ color: 0x059669 }),
     );
     rail.position.set(midX, 2.95, midZ);
     objs.wallSnapLineGroup.add(rail);
@@ -617,7 +621,8 @@ export default function AhuFacilityMap3D({
 
   useEffect(() => {
     const container = mountRef.current;
-    if (!container) return;
+    const stageEl = viewportRef.current ?? container;
+    if (!container || !stageEl) return;
 
     let renderer: THREE.WebGLRenderer;
     try {
@@ -627,85 +632,88 @@ export default function AhuFacilityMap3D({
       return;
     }
 
-    const width = Math.max(300, container.clientWidth);
-    const height = Math.max(280, container.clientHeight);
+    const domEl = renderer.domElement;
+    domEl.style.display = "block";
+    domEl.style.width = "100%";
+    domEl.style.height = "100%";
+
+    const initialRect = stageEl.getBoundingClientRect();
+    const initW = Math.max(320, Math.round(initialRect.width || window.innerWidth));
+    const initH = Math.max(320, Math.round(initialRect.height || window.innerHeight - 120));
+
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(width, height);
+    renderer.setSize(initW, initH, false);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.08;
+    renderer.toneMappingExposure = 1.06;
     container.innerHTML = "";
-    container.appendChild(renderer.domElement);
+    container.appendChild(domEl);
 
+    // Bright Daylight Architectural Digital Twin Scene (matches app's #eef3fa light theme!)
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x09172e);
-    scene.fog = new THREE.FogExp2(0x09172e, 0.0062);
+    scene.background = new THREE.Color(0xeaf1fb);
+    scene.fog = new THREE.FogExp2(0xeaf1fb, 0.0035);
 
-    const camera = new THREE.PerspectiveCamera(42, width / height, 0.5, 240);
+    const camera = new THREE.PerspectiveCamera(42, initW / initH, 0.5, 260);
 
-    const hemi = new THREE.HemisphereLight(0xdbeafe, 0x0f172a, 1.08);
-    hemi.position.set(0, 45, 0);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0xcbd5e1, 1.25);
+    hemi.position.set(0, 50, 0);
     scene.add(hemi);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.35);
-    dirLight.position.set(26, 40, 22);
-    dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 1024;
-    dirLight.shadow.mapSize.height = 1024;
-    dirLight.shadow.camera.near = 5;
-    dirLight.shadow.camera.far = 115;
-    const d = 38;
-    dirLight.shadow.camera.left = -d;
-    dirLight.shadow.camera.right = d;
-    dirLight.shadow.camera.top = d;
-    dirLight.shadow.camera.bottom = -d;
-    dirLight.shadow.bias = -0.0005;
-    scene.add(dirLight);
+    const sunLight = new THREE.DirectionalLight(0xffffff, 1.35);
+    sunLight.position.set(28, 44, 24);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
+    sunLight.shadow.camera.near = 5;
+    sunLight.shadow.camera.far = 135;
+    const d = 46;
+    sunLight.shadow.camera.left = -d;
+    sunLight.shadow.camera.right = d;
+    sunLight.shadow.camera.top = d;
+    sunLight.shadow.camera.bottom = -d;
+    sunLight.shadow.bias = -0.0004;
+    scene.add(sunLight);
 
-    const fillLight = new THREE.DirectionalLight(0x38bdf8, 0.45);
-    fillLight.position.set(-28, 18, -22);
-    scene.add(fillLight);
+    const skyFillLight = new THREE.DirectionalLight(0x93c5fd, 0.45);
+    skyFillLight.position.set(-30, 22, -24);
+    scene.add(skyFillLight);
 
-    const groundGeo = new THREE.PlaneGeometry(160, 160);
+    // Open Unrestricted Exterior Campus Ground (No yellow pad boundary restrictions!)
+    const groundGeo = new THREE.PlaneGeometry(190, 190);
     groundGeo.rotateX(-Math.PI / 2);
     const ground = new THREE.Mesh(
       groundGeo,
-      new THREE.MeshStandardMaterial({ color: 0x071224, roughness: 0.95, metalness: 0.05 }),
+      new THREE.MeshStandardMaterial({ color: 0xe1ebf7, roughness: 0.9, metalness: 0.04 }),
     );
-    ground.position.y = -0.36;
+    ground.position.y = -0.26;
     ground.receiveShadow = true;
     scene.add(ground);
 
-    const subtleCampusGrid = new THREE.GridHelper(140, 70, 0x162b4d, 0x0e203d);
-    subtleCampusGrid.position.y = -0.35;
-    scene.add(subtleCampusGrid);
+    const campusGrid = new THREE.GridHelper(160, 80, 0xbdd0e7, 0xd0dfef);
+    campusGrid.position.y = -0.24;
+    scene.add(campusGrid);
 
     const facilityGroup = new THREE.Group();
     scene.add(facilityGroup);
 
+    // Multi-Wing Indoor Cleanroom Floor Slabs (crisp daylight alabaster-white)
     const indoorSlabMat = new THREE.MeshStandardMaterial({
-      color: mode === "placement" ? 0x132b4c : 0x102442,
-      roughness: 0.62,
-      metalness: 0.18,
-    });
-    const outdoorSlabMat = new THREE.MeshStandardMaterial({
-      color: 0x1f2937,
-      roughness: 0.85,
-      metalness: 0.12,
+      color: 0xf9fbff,
+      roughness: 0.48,
+      metalness: 0.06,
     });
 
     for (const wz of FACILITY_ZONES) {
+      if (!wz.indoor) continue;
       const w = wz.xMax - wz.xMin;
       const depth = wz.zMax - wz.zMin;
       const cxPos = (wz.xMin + wz.xMax) / 2;
       const czPos = (wz.zMin + wz.zMax) / 2;
 
-      const slab = new THREE.Mesh(
-        new THREE.BoxGeometry(w, 0.34, depth),
-        wz.indoor ? indoorSlabMat : outdoorSlabMat,
-      );
-      slab.position.set(cxPos, -0.17, czPos);
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(w, 0.26, depth), indoorSlabMat);
+      slab.position.set(cxPos, -0.13, czPos);
       slab.receiveShadow = true;
       facilityGroup.add(slab);
 
@@ -722,65 +730,39 @@ export default function AhuFacilityMap3D({
         new THREE.LineSegments(
           gridGeo,
           new THREE.LineBasicMaterial({
-            color: wz.indoor ? 0x2563eb : 0xf59e0b,
+            color: 0xbfdbfe,
             transparent: true,
-            opacity: 0.24,
+            opacity: 0.65,
           }),
         ),
       );
-
-      if (!wz.indoor) {
-        const curbEdges = new THREE.EdgesGeometry(new THREE.BoxGeometry(w + 0.06, 0.36, depth + 0.06));
-        const curb = new THREE.LineSegments(
-          curbEdges,
-          new THREE.LineBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.75 }),
-        );
-        curb.position.set(cxPos, -0.17, czPos);
-        facilityGroup.add(curb);
-
-        // Place safety bollards on the outer corners (away from the building wall!)
-        const bollardMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, roughness: 0.4, metalness: 0.3 });
-        const corners: Array<[number, number]> =
-          wz.id === "outdoor-east-yard"
-            ? [
-                [wz.xMax - 0.45, wz.zMin + 0.45],
-                [wz.xMax - 0.45, wz.zMax - 0.45],
-              ]
-            : [
-                [wz.xMin + 0.45, wz.zMin + 0.45],
-                [wz.xMax - 0.45, wz.zMin + 0.45],
-              ];
-        for (const [bx, bz] of corners) {
-          const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.75, 10), bollardMat);
-          bollard.position.set(bx, 0.375, bz);
-          bollard.castShadow = true;
-          facilityGroup.add(bollard);
-        }
-      }
     }
 
-    // Solid Exterior Perimeter Walls (0.28m thick)
+    // Solid Frosted Architectural Perimeter Walls (0.28m thick)
     const wallSegments = computeExteriorWallSegments();
     const wallHeight = 2.85;
     const wallThickness = 0.28;
     const wallMat = new THREE.MeshStandardMaterial({
-      color: 0x1e3a5f,
-      roughness: 0.45,
-      metalness: 0.15,
+      color: 0xcbdcf4,
+      roughness: 0.34,
+      metalness: 0.1,
       transparent: true,
-      opacity: 0.76,
+      opacity: 0.72,
     });
     const wallCapMat = new THREE.MeshStandardMaterial({
-      color: 0x60a5fa,
-      emissive: 0x1d4ed8,
-      emissiveIntensity: 0.25,
-      roughness: 0.35,
-      metalness: 0.5,
+      color: 0x2563eb,
+      roughness: 0.32,
+      metalness: 0.35,
+    });
+    const basePlinthMat = new THREE.MeshStandardMaterial({
+      color: 0x64748b,
+      roughness: 0.55,
+      metalness: 0.25,
     });
     const columnMat = new THREE.MeshStandardMaterial({
-      color: 0x334155,
-      roughness: 0.5,
-      metalness: 0.45,
+      color: 0x64748b,
+      roughness: 0.45,
+      metalness: 0.35,
     });
 
     const cornerSet = new Set<string>();
@@ -797,8 +779,12 @@ export default function AhuFacilityMap3D({
       wallMesh.receiveShadow = true;
       facilityGroup.add(wallMesh);
 
-      const capMesh = new THREE.Mesh(new THREE.BoxGeometry(wX + 0.04, 0.08, wZ + 0.04), wallCapMat);
-      capMesh.position.set(midX, wallHeight + 0.04, midZ);
+      const baseSkirt = new THREE.Mesh(new THREE.BoxGeometry(wX + 0.04, 0.12, wZ + 0.04), basePlinthMat);
+      baseSkirt.position.set(midX, 0.06, midZ);
+      facilityGroup.add(baseSkirt);
+
+      const capMesh = new THREE.Mesh(new THREE.BoxGeometry(wX + 0.05, 0.09, wZ + 0.05), wallCapMat);
+      capMesh.position.set(midX, wallHeight + 0.045, midZ);
       facilityGroup.add(capMesh);
 
       for (const [px, pz] of [
@@ -808,8 +794,8 @@ export default function AhuFacilityMap3D({
         const key = `${px},${pz}`;
         if (!cornerSet.has(key)) {
           cornerSet.add(key);
-          const col = new THREE.Mesh(new THREE.BoxGeometry(0.42, wallHeight + 0.16, 0.42), columnMat);
-          col.position.set(px, (wallHeight + 0.16) / 2, pz);
+          const col = new THREE.Mesh(new THREE.BoxGeometry(0.42, wallHeight + 0.18, 0.42), columnMat);
+          col.position.set(px, (wallHeight + 0.18) / 2, pz);
           col.castShadow = true;
           facilityGroup.add(col);
         }
@@ -854,12 +840,10 @@ export default function AhuFacilityMap3D({
     let lastY = 0;
     let movedDist = 0;
 
-    const domEl = renderer.domElement;
-
     const updateNdc = (clientX: number, clientY: number) => {
       const rect = domEl.getBoundingClientRect();
-      pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-      pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      pointerNdc.x = ((clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
+      pointerNdc.y = -((clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1;
     };
 
     const evaluatePhysicsAtRay = () => {
@@ -867,14 +851,13 @@ export default function AhuFacilityMap3D({
       const currentDraft = mode === "placement" ? placementRef.current : moveDraftRef.current;
       const baseRot = currentDraft?.rotation ?? 0;
 
-      const check = resolveWallPhysicsAndSnap(planeHit.x, planeHit.z, existingCoordsRef.current, {
+      return resolveWallPhysicsAndSnap(planeHit.x, planeHit.z, existingCoordsRef.current, {
         excludeId: activeMovingId ?? undefined,
         rotation: baseRot,
         enableWallSnap: wallSnapRef.current,
         autoAlignRotation: wallSnapRef.current && !manualRotLockedRef.current,
         clampVoidToWall: true,
       });
-      return check;
     };
 
     const applyGhostPreview = (check: PlacementValidation) => {
@@ -926,7 +909,6 @@ export default function AhuFacilityMap3D({
       autoRotateRef.current = false;
       setAutoRotate(false);
 
-      // If in placement or move mode and user grabs the placed draft AHU directly with left button, drag the AHU live!
       const isEditingPlacement = mode === "placement" || Boolean(movingAhuIdRef.current);
       if (isEditingPlacement && e.button === 0) {
         updateNdc(e.clientX, e.clientY);
@@ -954,7 +936,6 @@ export default function AhuFacilityMap3D({
         lastY = e.clientY;
         movedDist += Math.hypot(dx, dy);
 
-        // Live solid-wall physics drag of the 3D AHU model!
         if (isDraggingModelDirectly && isEditingPlacement) {
           updateNdc(e.clientX, e.clientY);
           raycaster.setFromCamera(pointerNdc, camera);
@@ -972,12 +953,12 @@ export default function AhuFacilityMap3D({
           const panScale = c.goalRadius * 0.0016;
           const sinT = Math.sin(c.theta);
           const cosT = Math.cos(c.theta);
-          c.goalTargetX = Math.min(28, Math.max(-24, c.goalTargetX - (dx * cosT + dy * sinT) * panScale));
-          c.goalTargetZ = Math.min(22, Math.max(-24, c.goalTargetZ - (-dx * sinT + dy * cosT) * panScale));
+          c.goalTargetX = Math.min(34, Math.max(-34, c.goalTargetX - (dx * cosT + dy * sinT) * panScale));
+          c.goalTargetZ = Math.min(32, Math.max(-32, c.goalTargetZ - (-dx * sinT + dy * cosT) * panScale));
         } else {
           c.goalTheta -= dx * 0.0072;
           c.goalPhi = Math.min(1.36, Math.max(0.05, c.goalPhi - dy * 0.0065));
-          if (c.goalPhi > 0.12) setIsTopView(false);
+          if (c.goalPhi > 0.14) setIsTopView(false);
         }
         return;
       }
@@ -1010,18 +991,19 @@ export default function AhuFacilityMap3D({
     };
 
     const handlePointerUp = (e: PointerEvent) => {
-      if (!isDragging) return;
-      const wasDirectModelDrag = isDraggingModelDirectly;
-      isDragging = false;
-      isDraggingModelDirectly = false;
-      domEl.releasePointerCapture?.(e.pointerId);
-
-      if (wasDirectModelDrag) {
+      const wasDraggingModel = isDraggingModelDirectly;
+      if (isDragging) {
+        isDragging = false;
+        isDraggingModelDirectly = false;
+        domEl.releasePointerCapture?.(e.pointerId);
+      }
+      if (wasDraggingModel) {
         domEl.style.cursor = "grab";
         return;
       }
 
-      if (movedDist < 6 && Math.hypot(e.clientX - downX, e.clientY - downY) < 6 && dragButton === 0) {
+      const clickDelta = Math.hypot(e.clientX - downX, e.clientY - downY);
+      if (movedDist < 6 && clickDelta < 6 && e.button === 0) {
         updateNdc(e.clientX, e.clientY);
         raycaster.setFromCamera(pointerNdc, camera);
 
@@ -1029,7 +1011,8 @@ export default function AhuFacilityMap3D({
         if (isEditingPlacement) {
           if (raycaster.ray.intersectPlane(floorPlane, planeHit)) {
             const check = evaluatePhysicsAtRay();
-            applyGhostPreview(check);
+            setHoverInfo(check);
+            updateWallSnapHighlight(check.snappedToWall ? check.snappedWall : null);
             commitPlacementFromCheck(check);
           }
         } else {
@@ -1040,8 +1023,8 @@ export default function AhuFacilityMap3D({
             for (const h of hits) {
               let cur: THREE.Object3D | null = h.object;
               while (cur) {
-                if (typeof cur.userData?.ahuId === "string") {
-                  clickedId = cur.userData.ahuId;
+                if (cur.userData?.ahuId) {
+                  clickedId = String(cur.userData.ahuId);
                   break;
                 }
                 cur = cur.parent;
@@ -1069,7 +1052,7 @@ export default function AhuFacilityMap3D({
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
       const c = camStateRef.current;
-      c.goalRadius = Math.min(72, Math.max(15, c.goalRadius + e.deltaY * 0.028));
+      c.goalRadius = Math.min(78, Math.max(15, c.goalRadius + e.deltaY * 0.028));
     };
 
     const handleContextMenu = (e: MouseEvent) => e.preventDefault();
@@ -1081,19 +1064,25 @@ export default function AhuFacilityMap3D({
     domEl.addEventListener("wheel", handleWheel, { passive: false });
     domEl.addEventListener("contextmenu", handleContextMenu);
 
-    const resizeObserver = new ResizeObserver(() => {
-      if (!mountRef.current) return;
-      const w = Math.max(280, mountRef.current.clientWidth);
-      const h = Math.max(260, mountRef.current.clientHeight);
+    const syncRendererSize = () => {
+      const rect = stageEl.getBoundingClientRect();
+      const w = Math.round(rect.width);
+      const h = Math.round(rect.height);
+      if (w < 40 || h < 40) return;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-    });
-    resizeObserver.observe(container);
+      renderer.setSize(w, h, false);
+    };
+
+    const resizeObserver = new ResizeObserver(syncRendererSize);
+    resizeObserver.observe(stageEl);
+    window.addEventListener("resize", syncRendererSize);
+    const initRaf = requestAnimationFrame(syncRendererSize);
 
     let rafId = 0;
     const projVec = new THREE.Vector3();
     const clock = new THREE.Clock();
+    const clampOffsets = new Map<string, { dx: number; dy: number }>();
 
     const animate = () => {
       rafId = requestAnimationFrame(animate);
@@ -1105,17 +1094,19 @@ export default function AhuFacilityMap3D({
         c.goalTheta += dt * 0.16;
       }
 
-      const damp = 1 - Math.exp(-dt * 12);
+      // Responsive while user drags manually; smooth cinematic glide when transitioning to Top View / presets!
+      const speed = isDragging ? 15 : 4.2;
+      const damp = 1 - Math.exp(-dt * speed);
       c.theta += (c.goalTheta - c.theta) * damp;
       c.phi += (c.goalPhi - c.phi) * damp;
       c.radius += (c.goalRadius - c.radius) * damp;
       c.targetX += (c.goalTargetX - c.targetX) * damp;
       c.targetZ += (c.goalTargetZ - c.targetZ) * damp;
 
-      const sinPhi = Math.sin(Math.max(0.0015, c.phi));
+      const sinPhi = Math.sin(Math.max(0.002, c.phi));
       camera.position.set(
         c.targetX + c.radius * sinPhi * Math.sin(c.theta),
-        c.radius * Math.cos(Math.max(0.0015, c.phi)),
+        c.radius * Math.cos(Math.max(0.002, c.phi)),
         c.targetZ + c.radius * sinPhi * Math.cos(c.theta),
       );
       camera.lookAt(c.targetX, 0.5, c.targetZ);
@@ -1128,11 +1119,11 @@ export default function AhuFacilityMap3D({
         for (const [id, haloMesh] of objs.halos.entries()) {
           const mat = haloMesh.material as THREE.MeshBasicMaterial;
           const isSel = id === selectedIdRef.current;
-          mat.opacity = isSel ? 0.68 + Math.sin(elapsed * 4) * 0.22 : 0;
+          mat.opacity = isSel ? 0.65 + Math.sin(elapsed * 4) * 0.2 : 0;
         }
         for (const b of objs.beacons) {
           if (b.fault) {
-            b.mat.emissiveIntensity = 0.4 + Math.abs(Math.sin(elapsed * 5.5)) * 1.1;
+            b.mat.emissiveIntensity = 0.4 + Math.abs(Math.sin(elapsed * 5.5)) * 1.0;
           }
         }
       }
@@ -1142,39 +1133,35 @@ export default function AhuFacilityMap3D({
       const cw = domEl.clientWidth;
       const ch = domEl.clientHeight;
       for (const u of resolvedUnitsRef.current) {
-        const el = labelElsRef.current.get(u.item.ahu.id);
+        const el = anchorElsRef.current.get(u.item.ahu.id);
         if (!el) continue;
         if (u.item.ahu.id === movingAhuIdRef.current) {
           el.style.opacity = "0";
           el.style.pointerEvents = "none";
           continue;
         }
-        projVec.set(u.placement.x, 2.48, u.placement.z);
+        const isSel = u.item.ahu.id === selectedIdRef.current && mode === "explore" && !movingAhuIdRef.current;
+        projVec.set(u.placement.x, 2.52, u.placement.z);
         projVec.project(camera);
         if (projVec.z < -1 || projVec.z > 1) {
           el.style.opacity = "0";
           el.style.pointerEvents = "none";
           continue;
         }
-        const sx = (projVec.x * 0.5 + 0.5) * cw;
-        const sy = (-projVec.y * 0.5 + 0.5) * ch;
+        const rawSx = (projVec.x * 0.5 + 0.5) * cw;
+        const rawSy = (-projVec.y * 0.5 + 0.5) * ch;
+        const targetDx = isSel ? Math.min(Math.max(162, rawSx), Math.max(162, cw - 162)) - rawSx : 0;
+        const targetDy = isSel ? Math.min(Math.max(248, rawSy), Math.max(248, ch - 20)) - rawSy : 0;
+        const prev = clampOffsets.get(u.item.ahu.id) ?? { dx: 0, dy: 0 };
+        const offsetLerp = 1 - Math.exp(-dt * 10);
+        prev.dx += (targetDx - prev.dx) * offsetLerp;
+        prev.dy += (targetDy - prev.dy) * offsetLerp;
+        clampOffsets.set(u.item.ahu.id, prev);
+        const sx = rawSx + prev.dx;
+        const sy = rawSy + prev.dy;
         el.style.opacity = "1";
         el.style.pointerEvents = mode === "explore" && !movingAhuIdRef.current ? "auto" : "none";
         el.style.transform = `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, 0) translate(-50%, -100%)`;
-      }
-
-      if (cardAnchorRef.current && selectedIdRef.current && mode === "explore" && !movingAhuIdRef.current) {
-        const sel = resolvedUnitsRef.current.find((u) => u.item.ahu.id === selectedIdRef.current);
-        if (sel) {
-          projVec.set(sel.placement.x, 2.75, sel.placement.z);
-          projVec.project(camera);
-          const rawX = (projVec.x * 0.5 + 0.5) * cw;
-          const rawY = (-projVec.y * 0.5 + 0.5) * ch;
-          const clampedX = Math.min(Math.max(158, rawX), Math.max(158, cw - 158));
-          const clampedY = Math.min(Math.max(225, rawY), Math.max(225, ch - 20));
-          cardAnchorRef.current.style.opacity = "1";
-          cardAnchorRef.current.style.transform = `translate3d(${clampedX.toFixed(1)}px, ${clampedY.toFixed(1)}px, 0) translate(-50%, -104%)`;
-        }
       }
 
       const activeDraft = mode === "placement" ? placementRef.current : moveDraftRef.current;
@@ -1191,8 +1178,10 @@ export default function AhuFacilityMap3D({
     animate();
 
     return () => {
+      cancelAnimationFrame(initRaf);
       cancelAnimationFrame(rafId);
       resizeObserver.disconnect();
+      window.removeEventListener("resize", syncRendererSize);
       domEl.removeEventListener("pointerdown", handlePointerDown);
       domEl.removeEventListener("pointermove", handlePointerMove);
       domEl.removeEventListener("pointerup", handlePointerUp);
@@ -1231,7 +1220,7 @@ export default function AhuFacilityMap3D({
     }
   }, [resolvedUnits, movingAhuId]);
 
-  // Sync placed draft 3D AHU model (both in Add-AHU placement mode AND in Move-AHU mode!)
+  // Sync placed draft 3D AHU model (both in Add-AHU placement mode AND in Move-AHU mode)
   useEffect(() => {
     const objs = ahuSceneObjectsRef.current;
     if (!objs) return;
@@ -1252,7 +1241,7 @@ export default function AhuFacilityMap3D({
       outdoor: !activeDraft.indoor,
     });
     built.halo.material = new THREE.MeshBasicMaterial({
-      color: 0x22c55e,
+      color: 0x10b981,
       side: THREE.DoubleSide,
       transparent: true,
       opacity: 0.88,
@@ -1306,7 +1295,7 @@ export default function AhuFacilityMap3D({
 
   if (webglError) {
     return (
-      <div className="rounded-2xl border border-slate-200 bg-slate-900 p-6 text-center text-xs text-slate-300">
+      <div className="rounded-2xl border border-[#dbe4f0] bg-white p-6 text-center text-xs text-slate-600">
         {webglError}
       </div>
     );
@@ -1315,88 +1304,83 @@ export default function AhuFacilityMap3D({
   return (
     <div
       className={cx(
-        "relative flex flex-col overflow-hidden bg-[#09172e]",
+        "flex flex-col overflow-hidden bg-[#eaf1fb]",
         fullPage
-          ? "h-full w-full flex-1"
-          : "rounded-2xl border border-[#1d355d] shadow-[0_22px_50px_-20px_rgba(9,23,46,0.65)]",
+          ? "absolute inset-0 h-full w-full"
+          : "relative rounded-2xl border border-[#d6e2f2] shadow-[0_18px_42px_-20px_rgba(18,41,77,0.24)]",
       )}
     >
-      {/* Top 3D HUD Header Bar */}
-      <div className="z-20 flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-[#0b1d3a]/95 px-3.5 py-2.5 backdrop-blur-md sm:px-5">
+      {/* Clean Frosted-White Architectural Top HUD Bar */}
+      <div className="z-20 flex flex-none flex-wrap items-center justify-between gap-2 border-b border-[#dbe5f2] bg-white/92 px-3.5 py-2.5 shadow-[0_4px_20px_-14px_rgba(18,41,77,0.16)] backdrop-blur-xl sm:px-5">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className="grid h-8 w-8 flex-none place-items-center rounded-xl bg-sky-500/15 text-sky-300 ring-1 ring-sky-400/30">
-            <Layers size={15} />
+          <span className="grid h-9 w-9 flex-none place-items-center rounded-xl bg-[#eef4ff] text-[#1d6ef2] ring-1 ring-[#bfd6fb]">
+            <Layers size={16} />
           </span>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-[13.5px] font-bold tracking-tight text-white sm:text-[15px]">
+              <h1 className="truncate text-[14px] font-bold tracking-tight text-[#12294d] sm:text-[15.5px]">
                 {mode === "placement"
-                  ? "Place New 3D AHU (Solid Wall Physics & Snap)"
+                  ? "Place New 3D AHU · Indoor or Anywhere Outdoor"
                   : movingAhuId
                     ? `Moving ${movingAhuId} in 3D Facility`
                     : "AHU Units · 3D Facility Digital Twin"}
               </h1>
-              <span className="hidden rounded-full border border-sky-400/25 bg-sky-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-sky-300 md:inline-flex">
-                {indoorCount} Indoor · {outdoorCount} Outdoor Wall-Mounted
+              <span className="hidden rounded-full border border-[#cbe0fd] bg-[#eef5ff] px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#1d6ef2] md:inline-flex">
+                {indoorCount} Indoor · {outdoorCount} Outdoor
               </span>
             </div>
-            <p className="truncate text-[10.5px] text-slate-400">
+            <p className="truncate text-[11px] text-[#475569]">
               {mode === "placement" || movingAhuId
-                ? "Solid wall physics active · drag the 3D AHU or click near any wall to snap flush against the wall"
+                ? "Place inside any wing or anywhere outside · solid walls snap flush & prevent clipping"
                 : pickToMove
-                  ? "Select any 3D AHU model (or its label) to start moving it across the facility"
-                  : "Drag to rotate 360° · scroll to zoom · click any 3D AHU for Move, Config & Detail"}
+                  ? "Click any 3D AHU model (or its name badge) to drag & move it indoors or anywhere outdoors"
+                  : "Drag to rotate 360° · scroll to zoom · click any 3D AHU to unfold its live card"}
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          {/* Open Classic AHU Units List Page */}
+          {/* Smoothly Open Classic AHU Units List Drawer/View */}
           {mode === "explore" && onOpenList ? (
             <button
               type="button"
               onClick={onOpenList}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-sky-400/40 bg-sky-500/15 px-3 py-1.5 text-[11.5px] font-bold text-sky-100 transition hover:bg-sky-500/25"
-              title="Open classic AHU Units list view"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[#9ec2fb] bg-[#eaf2ff] px-3 py-1.5 text-[11.5px] font-bold text-[#1456c7] shadow-[0_1px_2px_rgba(29,110,242,0.08)] transition-all hover:border-[#60a5fa] hover:bg-[#dceaff]"
+              title="Smoothly open AHU Units Fleet List"
             >
               <LayoutGrid size={13} /> AHU List ({items.length})
             </button>
           ) : null}
 
-          {/* Immediate Top View Button (0ms instant overhead switch!) */}
+          {/* Smooth Animated Top View Camera Glide */}
           <button
             type="button"
-            onClick={() => setCameraPreset(isTopView ? "iso" : "top", true)}
-            className={cx(
-              "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11.5px] font-bold transition",
-              isTopView
-                ? "border-emerald-400/60 bg-emerald-500/25 text-emerald-100 shadow-[0_0_16px_rgba(16,185,129,0.35)]"
-                : "border-white/15 bg-white/10 text-white hover:bg-white/18",
-            )}
-            title="Immediately switch camera to straight-down Top View"
+            onClick={() => setCameraPreset(isTopView ? "iso" : "top")}
+            className={cx(hudBtnBase, isTopView ? hudBtnActiveBlue : hudBtnNeutral)}
+            title="Smoothly glide camera to overhead Top View"
           >
             <Eye size={13} /> Top View
           </button>
 
           <button
             type="button"
-            onClick={() => setCameraPreset("iso", true)}
-            className="inline-flex items-center gap-1 rounded-lg border border-white/12 bg-white/8 px-2.5 py-1.5 text-[11px] font-medium text-slate-200 transition hover:bg-white/15"
-            title="Reset 3D isometric angle immediately"
+            onClick={() => setCameraPreset("iso")}
+            className={cx(hudBtnBase, !isTopView ? "border-[#bfd6fb] bg-[#f4f8ff] text-[#1d6ef2]" : hudBtnNeutral)}
+            title="Smoothly glide camera to 3D isometric angle"
           >
             <RotateCcw size={12} /> <span className="hidden sm:inline">3D View</span>
           </button>
 
           <button
             type="button"
-            onClick={() => setCameraPreset("outdoor", true)}
-            className="hidden items-center gap-1 rounded-lg border border-amber-400/25 bg-amber-500/10 px-2.5 py-1.5 text-[11px] font-medium text-amber-200 transition hover:bg-amber-500/20 md:inline-flex"
-            title="Focus wall-mounted outdoor AHU pads"
+            onClick={() => setCameraPreset("outdoor")}
+            className={cx(hudBtnBase, hudBtnNeutral, "hidden md:inline-flex")}
+            title="Smoothly glide camera to exterior units"
           >
-            <Sun size={12} /> Outdoor
+            <Sun size={13} className="text-amber-500" /> Outdoor
           </button>
 
-          {/* Wall Snap Toggle when placing or moving */}
+          {/* Wall Snap & Rotate Controls in Placement / Move Mode */}
           {mode === "placement" || movingAhuId ? (
             <>
               <button
@@ -1406,10 +1390,10 @@ export default function AhuFacilityMap3D({
                   setManualRotLocked(false);
                 }}
                 className={cx(
-                  "inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition",
+                  hudBtnBase,
                   wallSnapEnabled
-                    ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-200"
-                    : "border-white/15 bg-white/8 text-slate-300",
+                    ? "border-emerald-600 bg-emerald-600 text-white shadow-[0_6px_16px_-6px_rgba(5,150,105,0.65)]"
+                    : hudBtnNeutral,
                 )}
                 title="Toggle magnetic flush-to-wall snapping"
               >
@@ -1418,7 +1402,7 @@ export default function AhuFacilityMap3D({
               <button
                 type="button"
                 onClick={rotateActiveDraft90}
-                className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/10 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-white/18"
+                className={cx(hudBtnBase, hudBtnNeutral)}
                 title="Rotate 3D AHU by 90°"
               >
                 <RotateCw size={12} /> {(mode === "placement" ? placement?.rotation : moveDraft?.rotation) ?? 0}°
@@ -1426,7 +1410,7 @@ export default function AhuFacilityMap3D({
             </>
           ) : null}
 
-          {/* Move 3D Model Button in Explore Toolbar */}
+          {/* Move 3D Model Button */}
           {mode === "explore" && canMoveAhu && !movingAhuId ? (
             <button
               type="button"
@@ -1435,12 +1419,12 @@ export default function AhuFacilityMap3D({
                 else setPickToMove((v) => !v);
               }}
               className={cx(
-                "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11.5px] font-semibold transition",
+                hudBtnBase,
                 pickToMove
-                  ? "border-amber-400/60 bg-amber-500/25 text-amber-100"
-                  : "border-white/15 bg-white/10 text-slate-100 hover:bg-white/18",
+                  ? "border-amber-500 bg-amber-500 text-white shadow-[0_6px_16px_-6px_rgba(245,158,11,0.7)]"
+                  : hudBtnNeutral,
               )}
-              title="Move a 3D AHU model on the floor or snap it to a wall"
+              title="Move a 3D AHU model indoors or anywhere outdoors"
             >
               <Move size={13} /> {pickToMove ? "Cancel Pick" : selectedId ? `Move ${selectedId}` : "Move AHU"}
             </button>
@@ -1450,34 +1434,29 @@ export default function AhuFacilityMap3D({
             <button
               type="button"
               onClick={() => setAutoRotate((v) => !v)}
-              className={cx(
-                "hidden items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition lg:inline-flex",
-                autoRotate
-                  ? "border-sky-400/50 bg-sky-500/20 text-sky-200"
-                  : "border-white/12 bg-white/8 text-slate-200 hover:bg-white/15",
-              )}
-              title="Toggle slow 360° turntable rotation"
+              className={cx(hudBtnBase, "hidden lg:inline-flex", autoRotate ? hudBtnActiveBlue : hudBtnNeutral)}
+              title="Toggle 360° turntable orbit"
             >
-              <Compass size={12} /> Orbit
+              <Compass size={13} /> Orbit
             </button>
           ) : null}
 
-          <div className="hidden items-center overflow-hidden rounded-lg border border-white/12 bg-white/8 sm:inline-flex">
+          <div className="hidden items-center overflow-hidden rounded-xl border border-[#cbd8ea] bg-white shadow-[0_1px_2px_rgba(16,24,40,0.05)] sm:inline-flex">
             <button
               type="button"
               onClick={() => zoomBy(-6)}
-              className="px-2 py-1.5 text-slate-200 transition hover:bg-white/15"
+              className="px-2.5 py-1.5 text-[#12294d] transition hover:bg-[#f2f7ff] hover:text-[#1d6ef2]"
               aria-label="Zoom in"
             >
-              <ZoomIn size={12} />
+              <ZoomIn size={13} />
             </button>
             <button
               type="button"
               onClick={() => zoomBy(6)}
-              className="border-l border-white/10 px-2 py-1.5 text-slate-200 transition hover:bg-white/15"
+              className="border-l border-[#e2e8f0] px-2.5 py-1.5 text-[#12294d] transition hover:bg-[#f2f7ff] hover:text-[#1d6ef2]"
               aria-label="Zoom out"
             >
-              <ZoomOut size={12} />
+              <ZoomOut size={13} />
             </button>
           </div>
 
@@ -1485,40 +1464,40 @@ export default function AhuFacilityMap3D({
             <button
               type="button"
               onClick={onRequestAddAhu}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#2563eb] to-[#1d6ef2] px-3 py-1.5 text-[11.5px] font-bold text-white shadow-[0_8px_20px_-6px_rgba(37,99,235,0.9)] transition hover:brightness-110"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#2563eb] to-[#1d6ef2] px-3.5 py-1.5 text-[11.5px] font-bold text-white shadow-[0_8px_20px_-6px_rgba(37,99,235,0.85)] transition hover:brightness-105"
             >
-              <Plus size={13} /> Add New AHU
+              <Plus size={14} /> Add New AHU
             </button>
           ) : null}
         </div>
       </div>
 
-      {/* Floating Save / Cancel Action Bar while Moving an Existing 3D AHU */}
+      {/* Action Bar while Moving an Existing 3D AHU */}
       {mode === "explore" && movingAhuId && moveDraft ? (
-        <div className="z-20 flex flex-wrap items-center justify-between gap-2 border-b border-emerald-400/25 bg-emerald-950/85 px-4 py-2 text-[11.5px] text-emerald-100 backdrop-blur-md">
+        <div className="z-20 flex flex-none flex-wrap items-center justify-between gap-2 border-b border-emerald-200 bg-emerald-50/95 px-4 py-2 text-[11.5px] text-emerald-950 backdrop-blur-md">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-2.5 py-0.5 font-mono text-[11px] font-bold text-emerald-200 ring-1 ring-emerald-400/40">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-2.5 py-0.5 font-mono text-[11px] font-bold text-white">
               <Move size={11} /> {movingAhuId}
             </span>
             <span>
-              <strong>{moveDraft.zoneLabel}</strong> ·{" "}
-              <span className="font-mono text-emerald-200">
+              <strong className="text-[#12294d]">{moveDraft.zoneLabel}</strong> ·{" "}
+              <span className="font-mono text-emerald-800">
                 (X {moveDraft.x}m, Z {moveDraft.z}m · {moveDraft.rotation}°)
               </span>
               {moveDraft.snappedToWall ? (
-                <span className="ml-2 rounded-full bg-emerald-400/25 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-200">
+                <span className="ml-2 rounded-full border border-emerald-300 bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-800">
                   Snapped Flush to Wall
                 </span>
               ) : null}
             </span>
-            {moveError ? <span className="font-semibold text-red-300">· {moveError}</span> : null}
+            {moveError ? <span className="font-semibold text-red-600">· {moveError}</span> : null}
           </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
               disabled={savingMove}
               onClick={cancelMovingUnit}
-              className="rounded-lg border border-white/20 bg-white/10 px-3 py-1 font-semibold text-white transition hover:bg-white/20"
+              className="rounded-xl border border-[#cbd8ea] bg-white px-3 py-1 font-semibold text-[#12294d] transition hover:bg-slate-50"
             >
               Cancel
             </button>
@@ -1526,7 +1505,7 @@ export default function AhuFacilityMap3D({
               type="button"
               disabled={savingMove}
               onClick={() => void confirmMoveSave()}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3.5 py-1 font-bold text-slate-950 shadow-sm transition hover:bg-emerald-400"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1 font-bold text-white shadow-sm transition hover:bg-emerald-700"
             >
               <Check size={13} /> {savingMove ? "Saving…" : "Save 3D Position"}
             </button>
@@ -1534,63 +1513,177 @@ export default function AhuFacilityMap3D({
         </div>
       ) : null}
 
-      {/* 3D WebGL Viewport + Projected Hovering Labels & Floating Unit Card */}
+      {/* Full-Height 3D WebGL Stage + Morphing Name-Pill-to-Card Overlays */}
       <div
+        ref={viewportRef}
         className={cx(
-          "relative w-full select-none",
+          "relative w-full select-none overflow-hidden",
           fullPage
             ? "min-h-0 flex-1"
             : mode === "placement"
-              ? "h-[340px] sm:h-[400px]"
-              : "h-[430px] sm:h-[510px]",
+              ? "h-[360px] sm:h-[420px]"
+              : "h-[450px] sm:h-[530px]",
         )}
       >
-        <div ref={mountRef} className="h-full w-full touch-none" />
+        <div ref={mountRef} className="absolute inset-0 h-full w-full touch-none" />
 
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
           {resolvedUnits.map(({ item, placement: pos }) => {
-            const isSelected = item.ahu.id === selectedId;
+            const isSelected = mode === "explore" && !movingAhuId && item.ahu.id === selectedId;
             const shortName = item.ahu.name.replace(new RegExp(`^${item.ahu.id}\\s*[-·]?\\s*`, "i"), "").trim();
+
             return (
-              <button
+              <div
                 key={item.ahu.id}
-                type="button"
                 ref={(el) => {
-                  if (el) labelElsRef.current.set(item.ahu.id, el);
-                  else labelElsRef.current.delete(item.ahu.id);
+                  if (el) anchorElsRef.current.set(item.ahu.id, el);
+                  else anchorElsRef.current.delete(item.ahu.id);
                 }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (mode === "explore") {
-                    if (pickToMove) startMovingUnit(item.ahu.id);
-                    else setSelectedId(isSelected ? null : item.ahu.id);
-                  }
-                }}
-                style={{ left: 0, top: 0, opacity: 0 }}
+                onClick={(e) => e.stopPropagation()}
+                style={{ left: 0, top: 0, opacity: 0, transformOrigin: "50% 100%" }}
                 className={cx(
-                  "absolute flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-left backdrop-blur-md transition-colors",
+                  "absolute overflow-hidden border bg-white/95 text-[#12294d] backdrop-blur-xl transition-[width,padding,border-radius,box-shadow,border-color,background-color] duration-350 ease-[cubic-bezier(0.22,1,0.36,1)]",
                   isSelected
-                    ? "z-20 border-sky-300 bg-[#0f2952]/95 text-white shadow-[0_0_20px_rgba(56,189,248,0.55)]"
+                    ? "z-30 w-[304px] rounded-2xl border-[#60a5fa] p-3.5 shadow-[0_24px_50px_-14px_rgba(18,41,77,0.32)] ring-2 ring-[#3b82f6]/20"
                     : pickToMove
-                      ? "z-20 border-amber-300/70 bg-amber-950/90 text-amber-100 hover:bg-amber-900"
-                      : "z-10 border-white/20 bg-[#0b1930]/85 text-slate-100 hover:border-sky-400/60 hover:bg-[#102648]/95",
+                      ? "z-20 w-[196px] cursor-pointer rounded-full border-amber-400 bg-amber-50/95 px-3 py-1.5 shadow-[0_10px_24px_-10px_rgba(245,158,11,0.45)] hover:bg-amber-100"
+                      : "z-10 w-[196px] cursor-pointer rounded-full border-[#cbd8ea] px-3 py-1.5 shadow-[0_8px_20px_-8px_rgba(18,41,77,0.2)] hover:border-[#60a5fa] hover:bg-white",
                 )}
               >
-                <span className={cx("h-2 w-2 flex-none rounded-full", STATUS_DOT_CLASS[item.status])} />
-                <span className="font-mono text-[10.5px] font-extrabold tracking-tight text-white">
-                  {item.ahu.id}
-                </span>
-                {shortName ? (
-                  <span className="hidden max-w-[115px] truncate text-[10px] font-medium text-slate-300 sm:inline">
-                    · {shortName}
-                  </span>
-                ) : null}
-                {!pos.indoor ? (
-                  <span className="rounded bg-amber-500/25 px-1 py-0.2 text-[8.5px] font-bold uppercase tracking-wider text-amber-300">
-                    OUT
-                  </span>
-                ) : null}
-              </button>
+                {/* Header Row: Acts as the compact floating name pill when closed, and stretches into the card header when clicked! */}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => {
+                    if (mode !== "explore") return;
+                    if (pickToMove) startMovingUnit(item.ahu.id);
+                    else setSelectedId(isSelected ? null : item.ahu.id);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      if (mode !== "explore") return;
+                      if (pickToMove) startMovingUnit(item.ahu.id);
+                      else setSelectedId(isSelected ? null : item.ahu.id);
+                    }
+                  }}
+                  className="flex w-full items-center justify-between gap-2 text-left"
+                >
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className={cx("h-2.5 w-2.5 flex-none rounded-full", STATUS_DOT_CLASS[item.status])} />
+                    <span
+                      className={cx(
+                        "font-mono font-extrabold tracking-tight text-[#12294d] transition-[font-size] duration-300",
+                        isSelected ? "text-[14px]" : "text-[11px]",
+                      )}
+                    >
+                      {item.ahu.id}
+                    </span>
+                    {!isSelected && shortName ? (
+                      <span className="truncate text-[10.5px] font-medium text-[#475569]">
+                        · {shortName}
+                      </span>
+                    ) : null}
+                    {!isSelected && !pos.indoor ? (
+                      <span className="ml-auto flex-none rounded-full bg-[#e0f2fe] px-1.5 py-0.5 text-[8.5px] font-bold uppercase tracking-wider text-[#0369a1]">
+                        OUT
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {isSelected ? (
+                    <div className="flex flex-none items-center gap-1.5">
+                      <StatusBadge status={item.status} size="sm" />
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedId(null);
+                        }}
+                        aria-label="Close AHU card"
+                        className="grid h-6 w-6 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* Smoothly Unfolding Card Body (CSS Grid 0fr -> 1fr stretch animation!) */}
+                <div
+                  className={cx(
+                    "grid transition-[grid-template-rows,opacity,margin-top] duration-350 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                    isSelected ? "mt-2 grid-rows-[1fr] opacity-100" : "mt-0 grid-rows-[0fr] opacity-0",
+                  )}
+                >
+                  <div className="min-h-0 overflow-hidden">
+                    <p className="truncate text-[11.5px] font-semibold text-slate-700">{item.ahu.name}</p>
+                    <p className="mt-0.5 flex items-center gap-1 truncate text-[10.5px] text-slate-500">
+                      <MapPin size={11} className="flex-none text-[#1d6ef2]" />
+                      {pos.zone}
+                    </p>
+
+                    <dl className="mt-2.5 grid grid-cols-2 gap-1.5 rounded-xl border border-[#e6eef8] bg-[#f4f8fd] p-2 text-[10.5px]">
+                      <div className="flex items-center justify-between px-1">
+                        <dt className="text-slate-500">Supply</dt>
+                        <dd className="num font-bold text-[#12294d]">
+                          {item.values.supplyTemp != null ? `${item.values.supplyTemp.toFixed(1)}°C` : "—"}
+                        </dd>
+                      </div>
+                      <div className="flex items-center justify-between px-1">
+                        <dt className="text-slate-500">RH</dt>
+                        <dd className="num font-bold text-[#12294d]">
+                          {item.values.humidity != null ? `${item.values.humidity.toFixed(0)}%` : "—"}
+                        </dd>
+                      </div>
+                      <div className="flex items-center justify-between px-1">
+                        <dt className="text-slate-500">Fan</dt>
+                        <dd className="num font-bold text-[#12294d]">
+                          {item.values.fanSpeed != null ? `${item.values.fanSpeed.toFixed(0)}%` : "—"}
+                        </dd>
+                      </div>
+                      <div className="flex items-center justify-between px-1">
+                        <dt className="text-slate-500">Alarms</dt>
+                        <dd
+                          className={cx(
+                            "num font-bold",
+                            item.activeAlarms > 0 ? "text-red-600" : "text-emerald-600",
+                          )}
+                        >
+                          {item.activeAlarms}
+                        </dd>
+                      </div>
+                    </dl>
+
+                    <div className={cx("mt-2.5 grid gap-1.5", canMoveAhu ? "grid-cols-3" : "grid-cols-2")}>
+                      {canMoveAhu ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startMovingUnit(item.ahu.id);
+                          }}
+                          className="inline-flex items-center justify-center gap-1 rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 transition hover:bg-emerald-100"
+                        >
+                          <Move size={12} /> Move
+                        </button>
+                      ) : null}
+                      <Link
+                        href={`/config?ahu=${encodeURIComponent(item.ahu.id)}`}
+                        className="inline-flex items-center justify-center gap-1 rounded-xl border border-[#dbe7fb] bg-[#f4f8ff] px-2.5 py-1.5 text-[11px] font-bold text-[#1d6ef2] transition hover:bg-[#e6effe]"
+                      >
+                        <Settings2 size={12} /> Config
+                      </Link>
+                      <Link
+                        href={`/ahu/${encodeURIComponent(item.ahu.id)}`}
+                        className="inline-flex items-center justify-center gap-1 rounded-xl bg-gradient-to-r from-[#2563eb] to-[#1d6ef2] px-2.5 py-1.5 text-[11px] font-bold text-white shadow-[0_6px_16px_-6px_rgba(37,99,235,0.8)] transition hover:brightness-105"
+                      >
+                        Detail <ExternalLink size={11} />
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              </div>
             );
           })}
 
@@ -1599,161 +1692,63 @@ export default function AhuFacilityMap3D({
             <div
               ref={draftLabelRef}
               style={{ left: 0, top: 0, opacity: 0 }}
-              className="pointer-events-none absolute z-20 flex items-center gap-1.5 whitespace-nowrap rounded-full border border-emerald-400 bg-emerald-950/92 px-3 py-1 text-[11px] font-bold text-emerald-200 shadow-[0_0_20px_rgba(16,185,129,0.55)]"
+              className="pointer-events-none absolute z-20 flex items-center gap-1.5 whitespace-nowrap rounded-full border border-emerald-500 bg-emerald-600 px-3 py-1 text-[11px] font-bold text-white shadow-[0_10px_24px_-6px_rgba(5,150,105,0.65)]"
             >
-              <Sparkles size={11} className="text-emerald-300" />
+              <Sparkles size={11} />
               <span className="font-mono">
                 {mode === "placement" ? draftAhuId || "NEW" : movingAhuId}
               </span>
-              <span className="max-w-[140px] truncate font-normal text-emerald-100/85">
+              <span className="max-w-[150px] truncate font-normal text-white/90">
                 ·{" "}
                 {(mode === "placement" ? placement?.snappedToWall : moveDraft?.snappedToWall)
-                  ? "Wall-Snapped"
+                  ? "Snapped to Wall"
                   : mode === "placement"
                     ? draftAhuName || "Placed"
-                    : "Drag or Click"}
+                    : "Drag Anywhere"}
               </span>
-            </div>
-          ) : null}
-
-          {/* Clickable Small AHU Card anchored right on the clicked 3D AHU Model */}
-          {mode === "explore" && selectedUnit && !movingAhuId ? (
-            <div
-              ref={cardAnchorRef}
-              style={{ left: 0, top: 0, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-              className="pointer-events-auto absolute z-30 w-[296px] rounded-2xl border border-white/80 bg-white/96 p-3.5 text-slate-800 shadow-[0_24px_48px_-12px_rgba(7,18,36,0.75)] ring-1 ring-sky-500/25 backdrop-blur-xl"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-mono text-[14px] font-extrabold text-[#12294d]">
-                      {selectedUnit.item.ahu.id}
-                    </span>
-                    <StatusBadge status={selectedUnit.item.status} size="sm" />
-                  </div>
-                  <p className="mt-0.5 truncate text-[11.5px] font-semibold text-slate-700">
-                    {selectedUnit.item.ahu.name}
-                  </p>
-                  <p className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-slate-500">
-                    <MapPin size={10} className="flex-none text-sky-600" />
-                    {selectedUnit.placement.zone}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedId(null)}
-                  aria-label="Close AHU 3D card"
-                  className="grid h-6 w-6 flex-none place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-                >
-                  <X size={13} />
-                </button>
-              </div>
-
-              <dl className="mt-2.5 grid grid-cols-2 gap-1.5 rounded-xl bg-[#f4f7fc] p-2 text-[10.5px]">
-                <div className="flex items-center justify-between px-1">
-                  <dt className="text-slate-400">Supply</dt>
-                  <dd className="num font-bold text-[#12294d]">
-                    {selectedUnit.item.values.supplyTemp != null
-                      ? `${selectedUnit.item.values.supplyTemp.toFixed(1)}°C`
-                      : "—"}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between px-1">
-                  <dt className="text-slate-400">RH</dt>
-                  <dd className="num font-bold text-[#12294d]">
-                    {selectedUnit.item.values.humidity != null
-                      ? `${selectedUnit.item.values.humidity.toFixed(0)}%`
-                      : "—"}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between px-1">
-                  <dt className="text-slate-400">Fan</dt>
-                  <dd className="num font-bold text-[#12294d]">
-                    {selectedUnit.item.values.fanSpeed != null
-                      ? `${selectedUnit.item.values.fanSpeed.toFixed(0)}%`
-                      : "—"}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between px-1">
-                  <dt className="text-slate-400">Alarms</dt>
-                  <dd
-                    className={cx(
-                      "num font-bold",
-                      selectedUnit.item.activeAlarms > 0 ? "text-red-600" : "text-emerald-600",
-                    )}
-                  >
-                    {selectedUnit.item.activeAlarms}
-                  </dd>
-                </div>
-              </dl>
-
-              <div className={cx("mt-2.5 grid gap-1.5", canMoveAhu ? "grid-cols-3" : "grid-cols-2")}>
-                {canMoveAhu ? (
-                  <button
-                    type="button"
-                    onClick={() => startMovingUnit(selectedUnit.item.ahu.id)}
-                    className="inline-flex items-center justify-center gap-1 rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 transition hover:bg-emerald-100"
-                  >
-                    <Move size={12} /> Move
-                  </button>
-                ) : null}
-                <Link
-                  href={`/config?ahu=${encodeURIComponent(selectedUnit.item.ahu.id)}`}
-                  className="inline-flex items-center justify-center gap-1 rounded-xl border border-[#dbe7fb] bg-[#f4f8ff] px-2.5 py-1.5 text-[11px] font-bold text-[#1d6ef2] transition hover:bg-[#e6effe]"
-                >
-                  <Settings2 size={12} /> Config
-                </Link>
-                <Link
-                  href={`/ahu/${encodeURIComponent(selectedUnit.item.ahu.id)}`}
-                  className="inline-flex items-center justify-center gap-1 rounded-xl bg-gradient-to-r from-[#2563eb] to-[#1d6ef2] px-2.5 py-1.5 text-[11px] font-bold text-white shadow-[0_8px_18px_-6px_rgba(37,99,235,0.85)] transition hover:brightness-110"
-                >
-                  Detail <ExternalLink size={11} />
-                </Link>
-              </div>
             </div>
           ) : null}
         </div>
 
-        {/* Bottom Legend & Live Wall-Snap / Physics Feedback */}
-        <div className="pointer-events-none absolute inset-x-3 bottom-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/12 bg-[#08152b]/88 px-3 py-1.5 text-[10.5px] text-slate-300 backdrop-blur-md">
+        {/* Clean Frosted-White Bottom Legend & Live Wall-Physics Status */}
+        <div className="pointer-events-none absolute inset-x-3.5 bottom-3.5 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-[#d5e1f0] bg-white/92 px-3.5 py-1.5 text-[11px] font-semibold text-[#1e293b] shadow-[0_8px_24px_-12px_rgba(18,41,77,0.22)] backdrop-blur-xl">
             <span className="inline-flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" /> RUN
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> RUN
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-slate-400" /> STOP
+              <span className="h-2.5 w-2.5 rounded-full bg-slate-400" /> STOP
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-red-500" /> FAULT
+              <span className="h-2.5 w-2.5 rounded-full bg-red-500" /> FAULT
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-rose-500" /> OFFLINE
+              <span className="h-2.5 w-2.5 rounded-full bg-rose-500" /> OFFLINE
             </span>
-            <span className="hidden text-slate-500 sm:inline">|</span>
-            <span className="hidden items-center gap-1 text-amber-300 sm:inline-flex">
-              <Sun size={11} /> Outdoor Pads Flush Against Wall
+            <span className="hidden text-slate-300 sm:inline">|</span>
+            <span className="hidden items-center gap-1 text-[#1d6ef2] sm:inline-flex">
+              <Sun size={12} /> Indoor Wings &amp; Open Outdoor Campus
             </span>
           </div>
 
           {mode === "placement" || movingAhuId ? (
             <div
               className={cx(
-                "rounded-xl border px-3 py-1.5 text-[10.5px] font-medium backdrop-blur-md",
+                "rounded-xl border px-3.5 py-1.5 text-[11px] font-semibold shadow-sm backdrop-blur-xl",
                 hoverInfo && !hoverInfo.valid
-                  ? "border-red-400/40 bg-red-950/88 text-red-200"
+                  ? "border-red-300 bg-red-50/95 text-red-700"
                   : hoverInfo?.snappedToWall
-                    ? "border-emerald-400/50 bg-emerald-950/90 text-emerald-200"
-                    : "border-sky-400/35 bg-[#08152b]/90 text-sky-200",
+                    ? "border-emerald-300 bg-emerald-50/95 text-emerald-800"
+                    : "border-[#bfd6fb] bg-white/95 text-[#12294d]",
               )}
             >
               <span className="inline-flex items-center gap-1.5">
-                <Crosshair size={11} />
+                <Crosshair size={12} className="text-[#1d6ef2]" />
                 {hoverInfo && !hoverInfo.valid
                   ? hoverInfo.reason
                   : hoverInfo?.snappedToWall
                     ? `Wall Snap Active · Flush against wall (${hoverInfo.snappedX}m, ${hoverInfo.snappedZ}m · ${hoverInfo.rotation}°)`
-                    : "Drag 3D AHU or click floor/wall · solid walls block pass-through"}
+                    : "Drag 3D AHU or click anywhere indoors or outdoors"}
               </span>
             </div>
           ) : null}
