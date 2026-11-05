@@ -389,9 +389,9 @@ export default function AppShell({
                 <Database size={12} className="text-[#22c55e]" />
                 {`Supabase · ${liveSync?.pollingIntervalSec ?? 5}s poll`}
               </p>
-              <p className="flex items-center gap-2">
+              <p className="flex items-center gap-2" suppressHydrationWarning>
                 <CheckCircle2 size={12} className="text-[#22c55e]" />
-                Last sync: {liveSync?.lastSuccessAt ? timeAgo(liveSync.lastSuccessAt) : "—"}
+                Last sync: {liveSync?.lastSuccessAt ? (mounted ? timeAgo(liveSync.lastSuccessAt) : "just now") : "—"}
               </p>
             </div>
           </div>

@@ -1,7 +1,7 @@
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { users } from "@/db/schema";
-import { getClientIp, safePublicUser, sameOrigin, setCsrfCookie, writeAudit } from "@/lib/auth";
+import { getClientIp, invalidateSessionCache, safePublicUser, sameOrigin, setCsrfCookie, writeAudit } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { clearDeviceCookie } from "@/lib/device-access";
 import {
@@ -10,7 +10,8 @@ import {
   releaseLoginAttempt,
   reserveLoginAttempt,
 } from "@/lib/login-rate-limiter";
-import { isValidUserRole, parseLoginPayload } from "@/lib/role-auth";
+import { resolveOrLinkAppUserForAuthUser } from "@/lib/oauth-account";
+import { parseLoginPayload } from "@/lib/role-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -91,8 +92,14 @@ export async function POST(req: Request) {
     return Response.json({ error: "Invalid email/username or password" }, { status: 401 });
   }
 
-  const [user] = await db.select().from(users).where(eq(users.id, data.user.id)).limit(1);
-  if (!user || !isValidUserRole(user.role)) {
+  const user = await resolveOrLinkAppUserForAuthUser({
+    id: data.user.id,
+    email: data.user.email ?? loginEmail,
+    emailConfirmed: Boolean(data.user.email_confirmed_at),
+    fullName:
+      (typeof data.user.user_metadata?.full_name === "string" && data.user.user_metadata.full_name) || null,
+  });
+  if (!user) {
     await supabase.auth.signOut({ scope: "local" });
     await writeAudit({
       userEmail: loginEmail,
@@ -107,6 +114,7 @@ export async function POST(req: Request) {
     );
   }
 
+  invalidateSessionCache();
   await clearDeviceCookie();
   await releaseLoginAttempt(rateKey);
   const csrfToken = await setCsrfCookie();
@@ -120,6 +128,7 @@ export async function POST(req: Request) {
       role: user.role,
       username: user.username ?? null,
       identifierType: parsed.identifierType,
+      provider: "password",
     },
   });
   return Response.json({ ok: true, user: safePublicUser(user), csrfToken });

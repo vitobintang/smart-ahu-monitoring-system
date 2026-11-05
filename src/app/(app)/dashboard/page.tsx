@@ -90,18 +90,21 @@ const PILL: Record<AhuStatus, { label: string; cls: string }> = {
 const SERIES_COLORS = ["#2563eb", "#0ea5e9", "#f59e0b", "#22c55e", "#ef4444", "#475569", "#a855f7"];
 
 const HeroClock = memo(function HeroClock() {
-  const [now, setNow] = useState(() => new Date());
+  const [now, setNow] = useState<Date | null>(null);
   useEffect(() => {
+    setNow(new Date());
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
   return (
-    <span className="text-center">
+    <span className="text-center" suppressHydrationWarning>
       <span className="block text-[11px] font-medium text-slate-500">
-        {now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "2-digit", year: "numeric" })}
+        {now
+          ? now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "2-digit", year: "numeric" })
+          : "\u00A0"}
       </span>
       <span className="num block text-[17px] font-bold leading-tight text-[#12294d]">
-        {now.toLocaleTimeString("en-GB", { hour12: false })}
+        {now ? now.toLocaleTimeString("en-GB", { hour12: false }) : "--:--:--"}
       </span>
       <span className="block text-[9.5px] text-slate-400">(GMT+7)</span>
     </span>
@@ -230,7 +233,7 @@ export default function DashboardPage() {
       <div className="relative">
         <div className="relative flex flex-wrap items-end justify-between gap-2.5 pb-1 pt-0.5 sm:gap-4 sm:pb-2 sm:pt-1">
           <div>
-            <h1 className="text-[21px] font-bold tracking-[-0.02em] text-[#12294d] sm:text-[34px]">
+            <h1 suppressHydrationWarning className="text-[21px] font-bold tracking-[-0.02em] text-[#12294d] sm:text-[34px]">
               {greet}, {name} <span aria-hidden>👋</span>
             </h1>
             <p className="mt-0.5 text-[12px] text-slate-500 sm:mt-1 sm:text-[13.5px]">

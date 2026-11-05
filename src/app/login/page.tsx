@@ -1,15 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   AtSign,
+  CheckCircle2,
   Cpu,
   Eye,
   EyeOff,
   Fan,
+  Loader2,
   Lock,
   ShieldCheck,
   Sparkles,
@@ -20,18 +22,81 @@ import { api } from "@/lib/client";
 import { BUILD_NOTES, BUILD_STAMP } from "@/lib/build";
 import { Btn, Field, cx, inputClass } from "@/components/ui";
 
+type AuthPhase = "idle" | "verifying" | "redirecting" | "google";
+
+function GoogleMark() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="h-[17px] w-[17px] flex-none">
+      <path
+        fill="#4285F4"
+        d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58v2.98h3.86c2.26-2.09 3.56-5.17 3.56-8.8Z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-2.98c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.07A12 12 0 0 0 12 24Z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.27 14.31A7.2 7.2 0 0 1 4.9 12c0-.8.14-1.58.37-2.31V6.62H1.29A12 12 0 0 0 0 12c0 1.93.46 3.77 1.29 5.38l3.98-3.07Z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0A12 12 0 0 0 1.29 6.62l3.98 3.07c.95-2.85 3.6-4.94 6.73-4.94Z"
+      />
+    </svg>
+  );
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [googleSetupHint, setGoogleSetupHint] = useState(false);
+  const [phase, setPhase] = useState<AuthPhase>("idle");
+
+  const busy = phase !== "idle";
+  const supabaseCallbackHint = process.env.NEXT_PUBLIC_SUPABASE_URL
+    ? `${process.env.NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/, "")}/auth/v1/callback`
+    : "https://<PROJECT_REF>.supabase.co/auth/v1/callback";
+
+  useEffect(() => {
+    router.prefetch("/dashboard");
+  }, [router]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const errCode = params.get("error");
+    const detail = params.get("detail");
+    const emailParam = params.get("email");
+    if (!errCode) return;
+
+    if (errCode === "google_not_configured") {
+      setGoogleSetupHint(true);
+      setError("Google Sign-In is ready in the app — enable the Google provider in Supabase Auth to activate it.");
+    } else if (errCode === "unregistered_google") {
+      setError(
+        emailParam
+          ? `No operator account is registered for ${emailParam}. Ask an Administrator to add this email in Admin → Users first — once registered, both Password and Google Sign-In open the same account.`
+          : "This Google account is not registered yet. Ask an Administrator to add your Gmail address in Admin → Users first.",
+      );
+    } else if (errCode === "google_cancelled") {
+      setError("Google sign-in was cancelled.");
+    } else if (errCode === "supabase_not_configured") {
+      setError("Supabase Auth environment variables are missing.");
+    } else {
+      setError(detail ? `Google sign-in failed: ${detail}` : "Google sign-in could not be completed. Please try again.");
+    }
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
+    if (busy) return;
+    setPhase("verifying");
     setError(null);
+    setGoogleSetupHint(false);
     try {
       await api("/api/auth/login", {
         method: "POST",
@@ -40,13 +105,22 @@ export default function LoginPage() {
           password,
         }),
       });
-      router.push("/dashboard");
-      router.refresh();
+      // Keep the button locked in "redirecting" until the browser lands on /dashboard
+      // so it NEVER snaps back to clickable while the dashboard compiles/loads.
+      setPhase("redirecting");
+      window.location.replace("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
-    } finally {
-      setBusy(false);
+      setPhase("idle");
     }
+  }
+
+  function signInWithGoogle() {
+    if (busy) return;
+    setError(null);
+    setGoogleSetupHint(false);
+    setPhase("google");
+    window.location.assign("/api/auth/google");
   }
 
   return (
@@ -61,7 +135,6 @@ export default function LoginPage() {
           sizes="100vw"
           className="object-cover object-[center_44%] saturate-[1.16] contrast-[1.04]"
         />
-        {/* Gentle atmospheric framing that preserves the mountain peaks */}
         <div className="absolute inset-0 bg-gradient-to-b from-[#0c2144]/18 via-transparent to-[#dbe7f6]/58" />
         <div className="absolute inset-0 bg-[radial-gradient(900px_420px_at_50%_0%,rgba(255,255,255,0.28),transparent_70%)]" />
       </div>
@@ -150,8 +223,8 @@ export default function LoginPage() {
               <li className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/6 px-3.5 py-2.5 backdrop-blur-xs">
                 <Wifi size={15} className="mt-0.5 flex-none text-[#c4b5fd]" />
                 <span>
-                  <span className="font-semibold text-white">FR-24 / NFR-05</span> — Supabase Cloud PostgreSQL with 5 s
-                  real-time polling
+                  <span className="font-semibold text-white">Supabase Auth &amp; PostgreSQL</span> — unified identity
+                  across Email/Username + Password and Google Sign-In
                 </span>
               </li>
             </ul>
@@ -175,13 +248,13 @@ export default function LoginPage() {
               Welcome back
             </h2>
             <p className="mt-1 text-[12px] leading-relaxed text-[#475569]">
-              Sign in with your <strong className="font-semibold text-[#12294d]">Email</strong> or{" "}
-              <strong className="font-semibold text-[#12294d]">Username</strong> and{" "}
-              <strong className="font-semibold text-[#12294d]">Password</strong>. Rate limited to 10 attempts per 15
-              minutes per IP (NFR-02).
+              Sign in with <strong className="font-semibold text-[#12294d]">Google (Gmail)</strong> or your{" "}
+              <strong className="font-semibold text-[#12294d]">Email / Username</strong> &amp;{" "}
+              <strong className="font-semibold text-[#12294d]">Password</strong>. Matching Gmail addresses automatically
+              open the same account.
             </p>
 
-            <div className="mt-3.5 flex flex-wrap gap-1.5">
+            <div className="mt-3 flex flex-wrap gap-1.5">
               {(["Admin", "Engineering", "Operator", "Viewer"] as const).map((r) => (
                 <span
                   key={r}
@@ -192,7 +265,42 @@ export default function LoginPage() {
               ))}
             </div>
 
-            <form onSubmit={submit} className="mt-5 space-y-4">
+            {/* Google / Gmail Sign-In Button */}
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={signInWithGoogle}
+                disabled={busy}
+                className={cx(
+                  "flex w-full items-center justify-center gap-2.5 rounded-xl border border-[#cbd5e1] bg-white px-4 py-2.5 text-[13px] font-bold text-[#0f172a] shadow-[0_2px_8px_-2px_rgba(15,23,42,0.08)] transition",
+                  busy
+                    ? "cursor-not-allowed opacity-65"
+                    : "hover:border-[#94a3b8] hover:bg-[#f8fafc] active:scale-[0.995]",
+                )}
+              >
+                {phase === "google" ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin text-[#2563eb]" />
+                    Connecting to Google…
+                  </>
+                ) : (
+                  <>
+                    <GoogleMark />
+                    Continue with Google
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="my-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-[#e2e8f0]" />
+              <span className="text-[10.5px] font-bold uppercase tracking-wider text-[#64748b]">
+                or email / username
+              </span>
+              <div className="h-px flex-1 bg-[#e2e8f0]" />
+            </div>
+
+            <form onSubmit={submit} className="space-y-3.5">
               <Field label="Email or Username" hint="Use either your registered email address or @username">
                 <div className="relative">
                   <AtSign
@@ -204,7 +312,8 @@ export default function LoginPage() {
                     type="text"
                     autoComplete="username"
                     spellCheck={false}
-                    placeholder="e.g. vizobintang or admin@example.com"
+                    disabled={busy}
+                    placeholder="e.g. vizobintang or vizobintang@gmail.com"
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value)}
                     required
@@ -222,6 +331,7 @@ export default function LoginPage() {
                     className={cx(inputClass, "py-2.5 pl-9 pr-10")}
                     type={showPassword ? "text" : "password"}
                     autoComplete="current-password"
+                    disabled={busy}
                     placeholder="Enter your password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -229,8 +339,9 @@ export default function LoginPage() {
                   />
                   <button
                     type="button"
+                    disabled={busy}
                     onClick={() => setShowPassword((v) => !v)}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-[#64748b] transition hover:bg-slate-100 hover:text-[#0f172a]"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-[#64748b] transition hover:bg-slate-100 hover:text-[#0f172a] disabled:opacity-50"
                     aria-label={showPassword ? "Hide password" : "Show password"}
                   >
                     {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
@@ -239,8 +350,30 @@ export default function LoginPage() {
               </Field>
 
               {error ? (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-[12px] font-medium text-red-700">
-                  {error}
+                <div
+                  className={cx(
+                    "rounded-xl border px-3.5 py-2.5 text-[12px] font-medium",
+                    googleSetupHint
+                      ? "border-amber-200 bg-amber-50 text-amber-900"
+                      : "border-red-200 bg-red-50 text-red-700",
+                  )}
+                >
+                  <p>{error}</p>
+                  {googleSetupHint ? (
+                    <ol className="mt-2 list-decimal space-y-1 pl-4 text-[11px] text-amber-800">
+                      <li>
+                        In Google Cloud Console → <strong>Credentials</strong>, create an OAuth 2.0 Client ID with
+                        Authorized Redirect URI:{" "}
+                        <code className="rounded bg-amber-100 px-1 py-0.5 font-mono text-[10px]">
+                          {supabaseCallbackHint}
+                        </code>
+                      </li>
+                      <li>
+                        In Supabase Dashboard → <strong>Authentication → Providers → Google</strong>, toggle{" "}
+                        <strong>Enable Sign in with Google</strong> ON and paste the Client ID &amp; Secret.
+                      </li>
+                    </ol>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -248,10 +381,24 @@ export default function LoginPage() {
                 type="submit"
                 variant="primary"
                 disabled={busy}
-                className="w-full bg-gradient-to-r from-[#2563eb] to-[#1d6ef2] py-2.5 text-[13px] shadow-[0_12px_26px_-10px_rgba(37,99,235,0.9)] hover:from-[#1d4ed8] hover:to-[#155bd4]"
+                className={cx(
+                  "w-full py-2.5 text-[13px] transition-all",
+                  phase === "redirecting"
+                    ? "bg-gradient-to-r from-[#059669] to-[#10b981] shadow-[0_12px_26px_-10px_rgba(16,185,129,0.9)]"
+                    : "bg-gradient-to-r from-[#2563eb] to-[#1d6ef2] shadow-[0_12px_26px_-10px_rgba(37,99,235,0.9)] hover:from-[#1d4ed8] hover:to-[#155bd4]",
+                )}
               >
-                {busy ? (
-                  "Signing in…"
+                {phase === "verifying" ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin" />
+                    Verifying credentials…
+                  </>
+                ) : phase === "redirecting" ? (
+                  <>
+                    <CheckCircle2 size={15} />
+                    Signed in! Opening Dashboard…
+                    <Loader2 size={14} className="animate-spin" />
+                  </>
                 ) : (
                   <>
                     Sign in to Dashboard <ArrowRight size={14} />
@@ -261,7 +408,7 @@ export default function LoginPage() {
             </form>
           </div>
 
-          <div className="mt-6 space-y-3">
+          <div className="mt-5 space-y-2.5">
             <div className="rounded-xl border border-[#e2eaf4] bg-[#f7faff] px-3.5 py-2.5 text-[11px] leading-relaxed text-[#334155]">
               <p className="flex items-start gap-2">
                 <Cpu size={14} className="mt-0.5 flex-none text-[#1d6ef2]" />

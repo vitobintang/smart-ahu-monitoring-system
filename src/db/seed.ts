@@ -29,66 +29,62 @@ export const AHU_SEEDS: AhuSeed[] = [
 ];
 
 export async function seed() {
-  for (const a of AHU_SEEDS) {
-    await db
-      .insert(ahus)
-      .values({
+  await db
+    .insert(ahus)
+    .values(
+      AHU_SEEDS.map((a) => ({
         id: a.id,
         name: a.name,
         location: a.location,
         commTimeoutSec: a.commTimeoutSec,
         hasHeater: a.hasHeater,
         installedSensors: a.sensors,
-        currentStatus: "OFFLINE",
-        controlMode: "AUTO",
+        currentStatus: "OFFLINE" as const,
+        controlMode: "AUTO" as const,
         desiredRunState: a.desiredRunState,
         setpoint: a.setpoint,
         physicalControlEnabled: false,
-      })
-      .onConflictDoNothing();
-  }
+      })),
+    )
+    .onConflictDoNothing();
 
-  for (const a of AHU_SEEDS) {
-    for (const p of PARAMETERS) {
+  const thresholdValues = AHU_SEEDS.flatMap((a) =>
+    PARAMETERS.map((p) => {
       const installed = a.sensors.includes(p.key);
-      await db
-        .insert(sensorThresholds)
-        .values({
-          id: `${a.id}:${p.key}`,
-          ahuId: a.id,
-          parameter: p.key,
-          enabled: installed && (p.defaultLow !== null || p.defaultHigh !== null),
-          lowLimit: p.defaultLow,
-          highLimit: p.defaultHigh,
-          delaySec: p.key === "current" ? 10 : 5,
-          priority: p.defaultPriority,
-          validMin: p.validMin,
-          validMax: p.validMax,
-          unit: p.unit,
-          label: p.label,
-          trendEnabled: installed && p.trendByDefault,
-        })
-        .onConflictDoNothing();
-    }
-  }
-
-  for (const a of AHU_SEEDS) {
-    const token = `sim_${a.id.toLowerCase().replace("-", "")}_${randomHex(8)}`;
-    const existing = await db
-      .select({ id: devices.id })
-      .from(devices)
-      .where(sql`${devices.ahuId} = ${a.id} and ${devices.sourceType} = 'SIMULATION'`)
-      .limit(1);
-    if (existing.length === 0) {
-      await db.insert(devices).values({
-        id: randomId(),
+      return {
+        id: `${a.id}:${p.key}`,
         ahuId: a.id,
-        label: `${a.id} Simulation Controller`,
-        token,
-        sourceType: "SIMULATION",
-        enabled: true,
-      });
-    }
+        parameter: p.key,
+        enabled: installed && (p.defaultLow !== null || p.defaultHigh !== null),
+        lowLimit: p.defaultLow,
+        highLimit: p.defaultHigh,
+        delaySec: p.key === "current" ? 10 : 5,
+        priority: p.defaultPriority,
+        validMin: p.validMin,
+        validMax: p.validMax,
+        unit: p.unit,
+        label: p.label,
+        trendEnabled: installed && p.trendByDefault,
+      };
+    }),
+  );
+  await db.insert(sensorThresholds).values(thresholdValues).onConflictDoNothing();
+
+  const existingSimDevices = await db
+    .select({ ahuId: devices.ahuId })
+    .from(devices)
+    .where(sql`${devices.sourceType} = 'SIMULATION'`);
+  const existingSimAhuIds = new Set(existingSimDevices.map((d) => d.ahuId));
+  const missingDevices = AHU_SEEDS.filter((a) => !existingSimAhuIds.has(a.id)).map((a) => ({
+    id: randomId(),
+    ahuId: a.id,
+    label: `${a.id} Simulation Controller`,
+    token: `sim_${a.id.toLowerCase().replace("-", "")}_${randomHex(8)}`,
+    sourceType: "SIMULATION" as const,
+    enabled: true,
+  }));
+  if (missingDevices.length > 0) {
+    await db.insert(devices).values(missingDevices).onConflictDoNothing();
   }
 
   await db
@@ -96,8 +92,10 @@ export async function seed() {
     .values({ id: 1, mode: "LOCAL", pollingIntervalSec: 5 })
     .onConflictDoNothing();
 
-  const count = await db.select({ n: sql<number>`count(*)::int` }).from(telemetry);
-  if (process.env.SEED_SIMULATED_HISTORY !== "false" && (count[0]?.n ?? 0) === 0) await backfill();
+  if (process.env.SEED_SIMULATED_HISTORY !== "false") {
+    const anyTelemetry = await db.select({ id: telemetry.id }).from(telemetry).limit(1);
+    if (anyTelemetry.length === 0) await backfill();
+  }
 
   return { ahus: AHU_IDS.length };
 }
