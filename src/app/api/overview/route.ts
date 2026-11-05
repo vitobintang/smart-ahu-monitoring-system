@@ -5,6 +5,7 @@ import { requireAuth, jsonError } from "@/lib/auth";
 import { getDashboard } from "@/lib/queries";
 import { getSyncStatus } from "@/lib/realtime";
 import { authoritativeTelemetry } from "@/lib/source";
+import { maybePulseWorkers } from "@/lib/workers";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,7 @@ async function loadOverview(windowMin: number, lite: boolean): Promise<Record<st
   if (existing) return existing;
 
   const work = (async () => {
+    await maybePulseWorkers();
     const dash = await getDashboard();
     const sync = await getSyncStatus();
     const recentAlarms = lite

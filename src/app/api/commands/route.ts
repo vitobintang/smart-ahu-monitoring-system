@@ -2,7 +2,8 @@ import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { ahuCommands } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth } from "@/lib/auth";
-import { COMMAND_TYPES, createCommand, expireStaleCommands, type CommandType } from "@/lib/engine";
+import { acceptPendingCommands, COMMAND_TYPES, createCommand, expireStaleCommands, type CommandType } from "@/lib/engine";
+import { getOverride, maybePulseWorkers } from "@/lib/workers";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   try {
     await requireAuth("view");
+    await maybePulseWorkers();
     await expireStaleCommands();
     const url = new URL(req.url);
     const ahuId = url.searchParams.get("ahuId");
@@ -43,7 +45,12 @@ export async function POST(req: Request) {
     if ("error" in outcome) {
       return Response.json({ error: outcome.error, code: outcome.code }, { status: outcome.status });
     }
-    return Response.json({ ok: true, commandId: outcome.commandId, status: outcome.status });
+    let nextStatus = outcome.status;
+    if (process.env.SIMULATION_ENABLED !== "false" && !getOverride(body.ahuId).rejectCommands && !getOverride(body.ahuId).commLoss) {
+      const accepted = await acceptPendingCommands(body.ahuId);
+      if (accepted.length > 0) nextStatus = "ACCEPTED";
+    }
+    return Response.json({ ok: true, commandId: outcome.commandId, status: nextStatus });
   } catch (err) {
     return jsonError(err);
   }

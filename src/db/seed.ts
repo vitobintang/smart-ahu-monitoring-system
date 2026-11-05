@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ahus, devices, sensorThresholds, syncState, telemetry } from "@/db/schema";
 import { AHU_IDS, PARAMETERS, type ParamKey } from "@/lib/domain";
+import { DEFAULT_AHU_PLACEMENTS } from "@/lib/facility-layout";
 
 interface AhuSeed {
   id: string;
@@ -32,19 +33,26 @@ export async function seed() {
   await db
     .insert(ahus)
     .values(
-      AHU_SEEDS.map((a) => ({
-        id: a.id,
-        name: a.name,
-        location: a.location,
-        commTimeoutSec: a.commTimeoutSec,
-        hasHeater: a.hasHeater,
-        installedSensors: a.sensors,
-        currentStatus: "OFFLINE" as const,
-        controlMode: "AUTO" as const,
-        desiredRunState: a.desiredRunState,
-        setpoint: a.setpoint,
-        physicalControlEnabled: false,
-      })),
+      AHU_SEEDS.map((a) => {
+        const mapPos = DEFAULT_AHU_PLACEMENTS[a.id];
+        return {
+          id: a.id,
+          name: a.name,
+          location: a.location,
+          commTimeoutSec: a.commTimeoutSec,
+          hasHeater: a.hasHeater,
+          installedSensors: a.sensors,
+          currentStatus: "OFFLINE" as const,
+          controlMode: "AUTO" as const,
+          desiredRunState: a.desiredRunState,
+          setpoint: a.setpoint,
+          physicalControlEnabled: false,
+          mapX: mapPos?.x ?? null,
+          mapZ: mapPos?.z ?? null,
+          mapRotation: mapPos?.rotation ?? 0,
+          mapZone: mapPos?.zone ?? null,
+        };
+      }),
     )
     .onConflictDoNothing();
 

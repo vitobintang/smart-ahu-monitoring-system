@@ -24,7 +24,8 @@ export async function GET() {
       })
       .from(ahus)
       .orderBy(ahus.id);
-    const overrides = AHU_IDS.map((id) => ({ ahuId: id, ...getOverride(id) }));
+    const ids = rows.length > 0 ? rows.map((r) => r.id) : [...AHU_IDS];
+    const overrides = ids.map((id) => ({ ahuId: id, ...getOverride(id) }));
     return Response.json({
       ahus: rows,
       overrides,
@@ -55,7 +56,9 @@ export async function POST(req: Request) {
     };
 
     if (body.action === "RESET_ALL") {
-      for (const id of AHU_IDS) {
+      const allRows = await db.select({ id: ahus.id }).from(ahus).orderBy(ahus.id);
+      const ids = allRows.length > 0 ? allRows.map((r) => r.id) : [...AHU_IDS];
+      for (const id of ids) {
         setOverride(id, {
           forcedFault: null,
           commLoss: false,
@@ -73,7 +76,7 @@ export async function POST(req: Request) {
         ipAddress: await getClientIp(),
         details: { scope: "ALL" },
       });
-      return Response.json({ ok: true, overrides: AHU_IDS.map((id) => ({ ahuId: id, ...getOverride(id) })) });
+      return Response.json({ ok: true, overrides: ids.map((id) => ({ ahuId: id, ...getOverride(id) })) });
     }
 
     if (body.action === "TICK") {
@@ -115,8 +118,9 @@ export async function POST(req: Request) {
     }
 
     const ahuId = body.ahuId;
-    if (!ahuId || !AHU_IDS.includes(ahuId as (typeof AHU_IDS)[number]))
-      return Response.json({ error: "A valid ahuId is required" }, { status: 400 });
+    if (!ahuId) return Response.json({ error: "A valid ahuId is required" }, { status: 400 });
+    const [exists] = await db.select({ id: ahus.id }).from(ahus).where(eq(ahus.id, ahuId)).limit(1);
+    if (!exists) return Response.json({ error: "A valid ahuId is required" }, { status: 400 });
 
     const patch: Record<string, unknown> = {};
     if (body.forcedFault !== undefined) patch.forcedFault = body.forcedFault ? String(body.forcedFault).slice(0, 60) : null;

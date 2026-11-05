@@ -141,6 +141,10 @@ export const ahus = pgTable("ahus", {
   setpoint: real("setpoint").notNull().default(22),
   faultCode: text("fault_code"),
   physicalControlEnabled: boolean("physical_control_enabled").notNull().default(false),
+  mapX: real("map_x"),
+  mapZ: real("map_z"),
+  mapRotation: real("map_rotation").notNull().default(0),
+  mapZone: text("map_zone"),
 });
 
 export const devices = pgTable(

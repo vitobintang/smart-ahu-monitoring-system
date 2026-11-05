@@ -44,6 +44,7 @@ const MIGRATION_FILES = [
   "0001_numerous_lucky_pierre.sql",
   "0002_nebulous_exiles.sql",
   "0003_add_users_username.sql",
+  "0004_add_ahu_map_placement.sql",
 ];
 
 async function createMigratedTestDb() {
