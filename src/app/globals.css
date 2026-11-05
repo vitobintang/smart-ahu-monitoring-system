@@ -309,7 +309,8 @@ input[type="checkbox"] { cursor: pointer; }
 /* ================================================================== */
 
 @page {
-  margin: 14mm 12mm 16mm 12mm;
+  size: A4 portrait;
+  margin: 11mm 10mm 13mm 10mm;
 }
 
 @media print {
@@ -317,13 +318,21 @@ input[type="checkbox"] { cursor: pointer; }
     background: #ffffff !important;
     background-image: none !important;
     color: #0f172a !important;
-    font-size: 9.5pt;
+    font-size: 9pt;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
 
-  .no-print, header, aside, footer, nav, button, select, input, kbd { display: none !important; }
-  main { display: block !important; margin: 0 !important; padding: 0 !important; max-width: none !important; }
+  .no-print { display: none !important; }
+  /* Reset AppShell's lg:pl-[280px] offset when sidebar is hidden in print */
+  body > div > div { padding-left: 0 !important; }
+  main {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+    width: 100% !important;
+  }
 
   .overflow-x-auto, .overflow-auto, .overflow-y-auto,
   [class*="max-h-"] {
@@ -332,77 +341,47 @@ input[type="checkbox"] { cursor: pointer; }
     height: auto !important;
   }
 
-  .panel, section, div {
+  .report-sheet {
+    max-width: none !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+  }
+
+  .panel {
     background: #ffffff !important;
     box-shadow: none !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
   }
-  .panel {
-    border: 0.8pt solid #d7dfe9 !important;
-    border-radius: 4pt !important;
-    break-inside: auto;
-    margin-bottom: 10px !important;
-    padding: 0 !important;
+
+  h1, h2, h3, h4 {
+    break-after: avoid;
+    page-break-after: avoid;
   }
 
-  h1, h2, h3, p, span, strong, code, pre, dt, dd, li, a, td, th {
-    color: #0f172a !important;
-    text-shadow: none !important;
-  }
-  a { text-decoration: none !important; }
-  h1 { font-size: 15pt !important; }
-  h2 { font-size: 11pt !important; letter-spacing: 0.01em !important; }
-  h1, h2, h3 { break-after: avoid; page-break-after: avoid; }
-
-  span[class*="bg-"], span[class*="ring-"], span[class*="text-"] {
-    background: #f1f5f9 !important;
-    border: 0.6pt solid #cbd5e1 !important;
-    box-shadow: none !important;
+  .avoid-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
-  table {
+  .report-table {
     width: 100% !important;
     min-width: 0 !important;
-    table-layout: auto !important;
     border-collapse: collapse !important;
-    font-size: 7.4pt !important;
   }
-  thead { display: table-header-group; }
-  tfoot { display: table-footer-group; }
-  th {
-    background: #eef2f7 !important;
-    border-bottom: 1.1pt solid #94a3b8 !important;
-    font-size: 6.8pt !important;
-    font-weight: 700 !important;
-    padding: 4px 5px !important;
-    text-align: left;
-    white-space: normal !important;
-    word-break: break-word;
+  .report-table thead { display: table-header-group; }
+  .report-table tfoot { display: table-footer-group; }
+  .report-table tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
-  td {
-    border-bottom: 0.6pt solid #e2e8f0 !important;
-    padding: 3.4px 5px !important;
-    word-break: break-word;
-    overflow-wrap: anywhere;
-  }
-  tbody tr { break-inside: avoid; page-break-inside: avoid; }
-  tbody tr:nth-child(even) td { background: #f8fafc !important; }
 
   .print-hide { display: none !important; }
-
-  .print-chart {
-    overflow: hidden !important;
-    width: 100% !important;
-    height: 175px !important;
-    break-inside: avoid;
-  }
-  .print-chart .recharts-wrapper {
-    transform: scale(0.62);
-    transform-origin: top left;
-  }
-  .recharts-tooltip-wrapper { display: none !important; }
-
   .print-break { break-before: page; page-break-before: always; }
   .print-only { display: block !important; }
 }

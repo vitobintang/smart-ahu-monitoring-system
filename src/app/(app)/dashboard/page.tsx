@@ -226,39 +226,41 @@ export default function DashboardPage() {
   const pieData = statusRows.filter((d) => d.value > 0);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       <div className="relative">
-        <div className="relative flex flex-wrap items-end justify-between gap-4 pb-2 pt-1">
+        <div className="relative flex flex-wrap items-end justify-between gap-2.5 pb-1 pt-0.5 sm:gap-4 sm:pb-2 sm:pt-1">
           <div>
-            <h1 className="text-[30px] font-bold tracking-[-0.02em] text-[#12294d] sm:text-[34px]">
+            <h1 className="text-[21px] font-bold tracking-[-0.02em] text-[#12294d] sm:text-[34px]">
               {greet}, {name} <span aria-hidden>👋</span>
             </h1>
-            <p className="mt-1 text-[13.5px] text-slate-500">
-              Everything looks good! Here&rsquo;s the real-time status of your Air Handling Units.
+            <p className="mt-0.5 text-[12px] text-slate-500 sm:mt-1 sm:text-[13.5px]">
+              Real-time status of your Air Handling Units.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <div className="hidden items-center gap-2.5 sm:flex">
               <Sun size={26} className="text-amber-400 drop-shadow-[0_0_10px_rgba(251,191,36,0.7)]" />
               <span>
                 <span className="block text-[17px] font-bold leading-tight text-[#12294d]">28°C</span>
                 <span className="block text-[10.5px] text-slate-500">Partly cloudy</span>
               </span>
             </div>
-            <span className="h-8 w-px bg-slate-300/70" />
-            <HeroClock />
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-600">
+            <span className="hidden h-8 w-px bg-slate-300/70 sm:inline-block" />
+            <div className="hidden sm:block">
+              <HeroClock />
+            </div>
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[10.5px] font-bold text-emerald-600 sm:px-3 sm:py-2 sm:text-[11px]">
               <span className={cx("h-1.5 w-1.5 rounded-full bg-emerald-500", !paused && "animate-pulse")} />
               {paused ? "Paused" : "Live Data"}
             </span>
             <select
               value={win}
               onChange={(e) => setWin(Number(e.target.value))}
-              className="rounded-lg border border-[#e6ecf5] bg-white px-3 py-2 text-[11.5px] font-semibold text-slate-600 outline-none focus:border-[#bfdbfe]"
+              className="rounded-lg border border-[#e6ecf5] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 outline-none focus:border-[#bfdbfe] sm:px-3 sm:py-2 sm:text-[11.5px]"
             >
-              <option value={5}>Last 5 minutes</option>
-              <option value={15}>Last 15 minutes</option>
-              <option value={30}>Last 30 minutes</option>
+              <option value={5}>Last 5m</option>
+              <option value={15}>Last 15m</option>
+              <option value={30}>Last 30m</option>
             </select>
             <span className="hidden items-center gap-2 md:inline-flex">
               <Image
@@ -283,13 +285,14 @@ export default function DashboardPage() {
 
       {data ? (
         <>
-          <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-2 sm:gap-3.5 lg:grid-cols-3 xl:grid-cols-5">
             <Tile
-              tile={<Box size={22} />}
+              tile={<Box size={19} className="sm:h-[22px] sm:w-[22px]" />}
               grad="from-[#3b82f6] to-[#1d4ed8]"
               glow="rgba(37,99,235,0.55)"
               value={String(data.totals.ahus)}
-              label="Total AHU Units"
+              label="Total AHU"
+              mobileTag="Fleet"
               viz={<Bars bars={bars} color="#93c5fd" />}
               caption={
                 <span className="inline-flex items-center gap-1 text-emerald-600">
@@ -298,11 +301,12 @@ export default function DashboardPage() {
               }
             />
             <Tile
-              tile={<Wifi size={22} />}
+              tile={<Wifi size={19} className="sm:h-[22px] sm:w-[22px]" />}
               grad="from-[#34d399] to-[#059669]"
               glow="rgba(16,185,129,0.5)"
               value={String(data.totals.online)}
-              label="Online Units"
+              label="Online AHU"
+              mobileTag={`${onlinePct}%`}
               viz={<Progress value={data.totals.online / Math.max(1, data.totals.ahus)} />}
               caption={
                 <span className="inline-flex items-center gap-1 text-emerald-600">
@@ -311,11 +315,12 @@ export default function DashboardPage() {
               }
             />
             <Tile
-              tile={<TriangleAlert size={22} />}
+              tile={<TriangleAlert size={19} className="sm:h-[22px] sm:w-[22px]" />}
               grad="from-[#f87171] to-[#dc2626]"
               glow="rgba(239,68,68,0.5)"
               value={String(data.totals.activeAlarms)}
               label="Active Alarms"
+              mobileTag={data.totals.activeAlarms > 0 ? "Alert" : "Clear"}
               viz={<Bars bars={bars} color="#fca5a5" />}
               alert={data.totals.activeAlarms > 0}
               caption={
@@ -326,21 +331,23 @@ export default function DashboardPage() {
               }
             />
             <Tile
-              tile={<Activity size={22} />}
+              tile={<Activity size={19} className="sm:h-[22px] sm:w-[22px]" />}
               grad="from-[#a78bfa] to-[#7c3aed]"
               glow="rgba(139,92,246,0.5)"
               value={String(data.totals.trendAlerts)}
               label="Trend Alerts"
+              mobileTag={data.totals.trendAlerts > 0 ? "Watch" : "Stable"}
               viz={<Bars bars={bars} color="#c4b5fd" />}
               caption={<span className="text-slate-400">Requiring Attention</span>}
             />
             <Tile
-              tile={<Cloud size={22} />}
+              tile={<Cloud size={19} className="sm:h-[22px] sm:w-[22px]" />}
               grad="from-[#38bdf8] to-[#2563eb]"
               glow="rgba(37,99,235,0.6)"
               value={data.sync.mode === "LOCAL" ? "Local Mode" : "Supabase Cloud"}
-              valueClass="block text-[15px] font-bold leading-snug tracking-[-0.01em] text-[#12294d]"
+              valueClass="block text-[14px] sm:text-[15px] font-bold leading-snug tracking-[-0.01em] text-[#12294d]"
               label="Database sync · FR-24"
+              mobileBanner
               viz={
                 <span className="flex w-full items-center gap-1.5 text-[11.5px] font-medium text-slate-600">
                   <span className="h-2 w-2 flex-none rounded-full bg-[#22c55e] shadow-[0_0_8px_rgba(34,197,94,0.9)]" />
@@ -357,14 +364,16 @@ export default function DashboardPage() {
           </div>
 
           <div className="grid gap-5 xl:grid-cols-[1fr_21rem]">
-            <div>
-              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-[18px] font-bold tracking-[-0.015em] text-[#12294d] sm:text-[19px]">AHU Units</h2>
-                  <p className="text-[11.5px] text-slate-500">Live status of all air handling units</p>
+            <div className="min-w-0">
+              <div className="mb-3 flex flex-col gap-2.5 sm:mb-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                <div className="flex items-baseline justify-between gap-2">
+                  <div>
+                    <h2 className="text-[16px] font-bold tracking-[-0.015em] text-[#12294d] sm:text-[19px]">AHU Units</h2>
+                    <p className="text-[11px] text-slate-500 sm:text-[11.5px]">Live status of all air handling units</p>
+                  </div>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                  <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="-mx-0.5 flex items-center gap-1.5 overflow-x-auto px-0.5 pb-0.5 sm:flex-wrap sm:overflow-visible">
                     {(
                       [
                         ["ALL", `All (${counts.ALL})`, "bg-[#2563eb] text-white shadow-[0_6px_16px_-6px_rgba(37,99,235,0.9)]"],
@@ -378,7 +387,7 @@ export default function DashboardPage() {
                         key={key}
                         onClick={() => setFilter(key as typeof filter)}
                         className={cx(
-                          "rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition sm:px-3",
+                          "shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition sm:px-3",
                           filter === key ? cls : "border border-[#e6ecf5] bg-white text-slate-500 hover:border-[#bfdbfe] hover:text-[#2563eb]",
                         )}
                       >
@@ -400,7 +409,7 @@ export default function DashboardPage() {
                       onClick={() => setDense((d) => !d)}
                       title="Toggle grid density"
                       className={cx(
-                        "rounded-lg border p-1.5 transition",
+                        "hidden rounded-lg border p-1.5 transition sm:inline-flex",
                         dense ? "border-[#bfdbfe] bg-[#e8f0fe] text-[#2563eb]" : "border-[#e6ecf5] bg-white text-slate-400 hover:text-[#2563eb]",
                       )}
                     >
@@ -410,21 +419,28 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className={cx("grid gap-4", dense ? "md:grid-cols-2 xl:grid-cols-4" : "md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4")}>
+              <div
+                className={cx(
+                  "grid grid-cols-2 gap-2.5 sm:gap-4",
+                  dense ? "md:grid-cols-2 xl:grid-cols-4" : "md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4",
+                )}
+              >
                 {shown.map((c) => (
                   <UnitCard key={c.ahu.id} card={c} />
                 ))}
                 <Link
                   href="/admin?tab=devices"
                   title="Provision a device for a new unit (FR-21)"
-                  className="flex min-h-[248px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#dbe4f0] bg-white/60 p-5 text-center transition hover:border-[#bfdbfe] hover:bg-[#f6faff]"
+                  className="flex aspect-square flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed border-[#dbe4f0] bg-white/60 p-3 text-center transition hover:border-[#bfdbfe] hover:bg-[#f6faff] sm:aspect-auto sm:min-h-[248px] sm:gap-2 sm:p-5"
                 >
-                  <span className="grid h-12 w-12 place-items-center rounded-full bg-[#dbeafe] text-[#2563eb]">
-                    <Plus size={22} />
+                  <span className="grid h-10 w-10 place-items-center rounded-full bg-[#dbeafe] text-[#2563eb] sm:h-12 sm:w-12">
+                    <Plus size={20} />
                   </span>
-                  <span className="text-[13.5px] font-bold text-[#12294d]">Add New AHU Unit</span>
-                  <span className="text-[11px] text-slate-400">Expand your monitoring system</span>
-                  <span className="mt-2 rounded-lg bg-[#dbeafe] px-4 py-2 text-[11.5px] font-bold text-[#2563eb]">Add Unit</span>
+                  <span className="text-[12px] font-bold text-[#12294d] sm:text-[13.5px]">Add AHU Unit</span>
+                  <span className="hidden text-[11px] text-slate-400 sm:inline">Expand your monitoring system</span>
+                  <span className="mt-1 rounded-lg bg-[#dbeafe] px-3 py-1 text-[10.5px] font-bold text-[#2563eb] sm:mt-2 sm:px-4 sm:py-2 sm:text-[11.5px]">
+                    Add Unit
+                  </span>
                 </Link>
               </div>
               {shown.length === 0 ? <Empty>No units match this filter.</Empty> : null}
@@ -654,6 +670,8 @@ function Tile({
   value,
   valueClass,
   label,
+  mobileTag,
+  mobileBanner,
   viz,
   caption,
   alert,
@@ -665,19 +683,80 @@ function Tile({
   value: string;
   valueClass?: string;
   label: string;
+  mobileTag?: string;
+  mobileBanner?: boolean;
   viz: React.ReactNode;
   caption: React.ReactNode;
   alert?: boolean;
   href?: string;
 }) {
-  const body = (
+  const body = mobileBanner ? (
     <div
       className={cx(
-        "panel card-hover relative flex h-full flex-col rounded-2xl p-5",
+        "panel card-hover relative flex h-full flex-col rounded-2xl p-3.5 sm:p-5",
         alert && "border-red-200 bg-red-50/40",
       )}
     >
-      <div className="flex items-start gap-3.5">
+      <div className="flex items-center gap-3 sm:items-start sm:gap-3.5">
+        <span
+          className={cx(
+            "grid h-10 w-10 flex-none place-items-center rounded-xl bg-gradient-to-br text-white sm:h-14 sm:w-14 sm:rounded-2xl",
+            grad,
+          )}
+          style={{ boxShadow: `0 10px 22px -10px ${glow}` }}
+        >
+          {tile}
+        </span>
+        <span className="min-w-0 flex-1 pr-5 sm:pr-0">
+          <span className={valueClass ?? "num block text-[22px] font-bold leading-tight tracking-[-0.02em] text-[#12294d] sm:text-[26px]"}>
+            {value}
+          </span>
+          <span className="mt-0.5 block truncate text-[11px] leading-snug text-slate-500 sm:text-[11.5px]">{label}</span>
+        </span>
+      </div>
+      <div className="mt-2 hidden h-8 flex-1 items-center sm:mt-3 sm:flex">{viz}</div>
+      <div className="mt-2 border-t border-[#eef2f7] pt-1.5 text-[10px] font-semibold sm:mt-2.5 sm:pt-2 sm:text-[10.5px]">
+        {caption}
+      </div>
+      {href ? (
+        <ChevronRight size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-[#2563eb] sm:right-4" />
+      ) : null}
+    </div>
+  ) : (
+    <div
+      className={cx(
+        "panel card-hover relative flex aspect-square h-full flex-col justify-between rounded-2xl p-3.5 sm:aspect-auto sm:justify-start sm:p-5",
+        alert && "border-red-200 bg-red-50/40",
+      )}
+    >
+      {/* Compact Square Mobile Layout (< sm) */}
+      <div className="flex items-start justify-between gap-2 sm:hidden">
+        <span
+          className={cx("grid h-10 w-10 flex-none place-items-center rounded-xl bg-gradient-to-br text-white", grad)}
+          style={{ boxShadow: `0 10px 20px -10px ${glow}` }}
+        >
+          {tile}
+        </span>
+        {mobileTag ? (
+          <span
+            className={cx(
+              "rounded-md px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase tracking-wider",
+              alert ? "bg-red-100 text-red-700" : "bg-[#eff4fb] text-[#334155]",
+            )}
+          >
+            {mobileTag}
+          </span>
+        ) : null}
+      </div>
+      <div className="sm:hidden">
+        <span className="num block text-[28px] font-extrabold leading-none tracking-[-0.03em] text-[#12294d]">
+          {value}
+        </span>
+        <span className="mt-1 block truncate text-[11.5px] font-semibold text-slate-600">{label}</span>
+      </div>
+
+      {/* Rich Tablet/Desktop Layout (>= sm) */}
+      <div className="hidden items-start gap-3.5 sm:flex">
         <span
           className={cx("grid h-14 w-14 flex-none place-items-center rounded-2xl bg-gradient-to-br text-white", grad)}
           style={{ boxShadow: `0 12px 26px -10px ${glow}` }}
@@ -691,17 +770,17 @@ function Tile({
           <span className="mt-0.5 block text-[11.5px] leading-snug text-slate-500">{label}</span>
         </span>
       </div>
-      <div className="mt-3 flex h-8 flex-1 items-center">{viz}</div>
-      <div className="mt-2.5 border-t border-[#eef2f7] pt-2 text-[10.5px] font-semibold">{caption}</div>
-      {href ? (
-        <ChevronRight size={17} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-[#2563eb]" />
-      ) : null}
+      <div className="mt-3 hidden h-8 flex-1 items-center sm:flex">{viz}</div>
+      <div className="mt-2.5 hidden border-t border-[#eef2f7] pt-2 text-[10.5px] font-semibold sm:block">{caption}</div>
     </div>
   );
+  const wrapCls = cx(mobileBanner && "col-span-2 sm:col-span-2 lg:col-span-1");
   return href ? (
-    <Link href={href} className="group block h-full" title="Sync & system event log (FR-29)">
+    <Link href={href} className={cx("group block h-full", wrapCls)} title="Sync & system event log (FR-29)">
       {body}
     </Link>
+  ) : wrapCls ? (
+    <div className={wrapCls}>{body}</div>
   ) : (
     body
   );
@@ -742,83 +821,170 @@ function UnitCard({ card }: { card: Card }) {
   const C = 2 * Math.PI * 26;
   const gid = `gauge-${card.ahu.id}`;
 
+  const shortStatus =
+    card.status === "RUN" ? "RUN" : card.status === "STOP" ? "STOP" : card.status === "FAULT" ? "FAULT" : "OFF";
+
   return (
-    <div className="panel card-hover rounded-2xl p-5">
-      <div className="flex items-start justify-between gap-2">
-        <p className="font-mono text-[15px] font-bold tracking-[-0.01em] text-[#12294d]">{card.ahu.id}</p>
-        <span className={cx("rounded-md px-2.5 py-1 font-mono text-[9.5px] font-bold uppercase tracking-wider", pill.cls)}>{pill.label}</span>
-      </div>
-      <p className="mt-1 flex items-center gap-1 truncate text-[10.5px] text-slate-400">
-        <MapPin size={10} className="flex-none" /> {card.ahu.location}
-      </p>
-
-      <div className="mt-3 flex items-center gap-2.5 sm:gap-3">
-        <div className="relative h-[76px] w-[104px] flex-none sm:h-[84px] sm:w-[128px]">
-          <Image src="/ahu/unit-iso2.png" alt={`${card.ahu.id} unit`} fill sizes="128px" className={cx("object-contain", off && "opacity-40 grayscale")} />
-        </div>
-        <div className="grid flex-1 gap-1.5">
-          <Row icon={<Thermometer size={13} />} value={off || v.supplyTemp === null ? "--" : v.supplyTemp.toFixed(1)} unit="°C" />
-          <Row icon={<Droplets size={13} />} value={off || v.humidity === null ? "--" : v.humidity.toFixed(0)} unit="%RH" />
-          <Row icon={<Gauge size={13} />} value={off || v.filterDiffPressure === null ? "--" : v.filterDiffPressure.toFixed(0)} unit="Pa" alarm={card.status === "FAULT"} />
-          <Row icon={<Fan size={13} />} value={off || v.fanSpeed === null ? "--" : v.fanSpeed.toFixed(0)} unit="%" />
-        </div>
-      </div>
-
-      <div className="mt-4 flex items-end justify-between gap-3">
+    <>
+      {/* Compact Square Mobile AHU Card (< sm) */}
+      <Link
+        href={`/ahu/${card.ahu.id}`}
+        className={cx(
+          "panel card-hover flex aspect-square flex-col justify-between rounded-2xl p-3 sm:hidden",
+          card.status === "FAULT" && "border-red-200 bg-red-50/30",
+        )}
+      >
         <div>
-          <div className="relative h-[62px] w-[62px]">
-            <svg viewBox="0 0 64 64" className="h-full w-full -rotate-90">
-              <defs>
-                <linearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0%" stopColor="#2563eb" />
-                  <stop offset="100%" stopColor="#22c55e" />
-                </linearGradient>
-              </defs>
-              <circle cx={32} cy={32} r={26} fill="none" stroke="#e8edf4" strokeWidth={7} />
-              <circle
-                cx={32}
-                cy={32}
-                r={26}
-                fill="none"
-                stroke={card.status === "RUN" ? `url(#${gid})` : card.status === "FAULT" ? "#ef4444" : "#cbd5e1"}
-                strokeWidth={7}
-                strokeLinecap="round"
-                strokeDasharray={`${(Math.min(100, fanPct) / 100) * C} ${C}`}
-              />
-            </svg>
-            <span className="num absolute inset-0 grid place-items-center text-[12.5px] font-bold text-[#12294d]">
-              {off ? "—" : `${fanPct.toFixed(0)}%`}
+          <div className="flex items-center justify-between gap-1.5">
+            <span className="font-mono text-[13.5px] font-extrabold tracking-[-0.01em] text-[#12294d]">
+              {card.ahu.id}
+            </span>
+            <span
+              className={cx(
+                "rounded-md px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-wider",
+                pill.cls,
+              )}
+            >
+              {shortStatus}
             </span>
           </div>
-          <p className="mt-1 text-[10px] text-slate-400">Fan Speed</p>
+          <p className="mt-0.5 truncate text-[10px] font-medium text-slate-500">{card.ahu.location}</p>
         </div>
 
-        {off ? (
-          <span className="flex items-center gap-1.5 pb-4 text-[10.5px] text-slate-400">
-            <Clock size={12} /> Last seen {card.lastSeenAt ? timeAgo(card.lastSeenAt) : "—"}
-          </span>
-        ) : (
-          <span
+        <div className="grid grid-cols-2 gap-1.5">
+          <div className="rounded-lg bg-[#f4f7fc] px-2 py-1.5">
+            <span className="block text-[8.5px] font-bold uppercase tracking-wider text-slate-400">Temp</span>
+            <span className="num block text-[12.5px] font-bold leading-tight text-[#12294d]">
+              {off || v.supplyTemp === null ? "—" : `${v.supplyTemp.toFixed(1)}°C`}
+            </span>
+          </div>
+          <div className="rounded-lg bg-[#f4f7fc] px-2 py-1.5">
+            <span className="block text-[8.5px] font-bold uppercase tracking-wider text-slate-400">RH</span>
+            <span className="num block text-[12.5px] font-bold leading-tight text-[#12294d]">
+              {off || v.humidity === null ? "—" : `${v.humidity.toFixed(0)}%`}
+            </span>
+          </div>
+          <div className="rounded-lg bg-[#f4f7fc] px-2 py-1.5">
+            <span className="block text-[8.5px] font-bold uppercase tracking-wider text-slate-400">Fan</span>
+            <span className="num block text-[12.5px] font-bold leading-tight text-[#12294d]">
+              {off || v.fanSpeed === null ? "—" : `${v.fanSpeed.toFixed(0)}%`}
+            </span>
+          </div>
+          <div
             className={cx(
-              "flex items-center gap-1.5 pb-4 text-[11.5px] font-semibold",
-              card.activeAlarms > 0 ? "text-red-500" : "text-slate-600",
+              "rounded-lg px-2 py-1.5",
+              card.activeAlarms > 0 ? "bg-red-50" : "bg-[#f4f7fc]",
             )}
           >
-            {card.activeAlarms > 0 ? <TriangleAlert size={14} /> : <CheckCircle2 size={14} className="text-emerald-500" />}
-            Alarms
-            <span className={cx("num rounded-md px-2 py-0.5 text-[10.5px] font-bold", card.activeAlarms > 0 ? "bg-red-50 text-red-500" : "bg-[#f1f5fb] text-slate-500")}>
-              {card.activeAlarms}
+            <span className="block text-[8.5px] font-bold uppercase tracking-wider text-slate-400">Alarms</span>
+            <span
+              className={cx(
+                "num block text-[12.5px] font-bold leading-tight",
+                card.activeAlarms > 0 ? "text-red-600" : "text-emerald-600",
+              )}
+            >
+              {off ? "—" : card.activeAlarms > 0 ? `${card.activeAlarms} ALM` : "0 OK"}
             </span>
-          </span>
-        )}
-      </div>
+          </div>
+        </div>
+      </Link>
 
-      <div className="mt-1 flex justify-end border-t border-[#f1f5f9] pt-2.5">
-        <Link href={`/ahu/${card.ahu.id}`} className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-[#2563eb] hover:underline">
-          View Details <ArrowRight size={13} />
-        </Link>
+      {/* Full Tablet/Desktop AHU Card (>= sm) */}
+      <div className="panel card-hover hidden rounded-2xl p-5 sm:block">
+        <div className="flex items-start justify-between gap-2">
+          <p className="font-mono text-[15px] font-bold tracking-[-0.01em] text-[#12294d]">{card.ahu.id}</p>
+          <span className={cx("rounded-md px-2.5 py-1 font-mono text-[9.5px] font-bold uppercase tracking-wider", pill.cls)}>
+            {pill.label}
+          </span>
+        </div>
+        <p className="mt-1 flex items-center gap-1 truncate text-[10.5px] text-slate-400">
+          <MapPin size={10} className="flex-none" /> {card.ahu.location}
+        </p>
+
+        <div className="mt-3 flex items-center gap-3">
+          <div className="relative h-[84px] w-[128px] flex-none">
+            <Image
+              src="/ahu/unit-iso2.png"
+              alt={`${card.ahu.id} unit`}
+              fill
+              sizes="128px"
+              className={cx("object-contain", off && "opacity-40 grayscale")}
+            />
+          </div>
+          <div className="grid flex-1 gap-1.5">
+            <Row icon={<Thermometer size={13} />} value={off || v.supplyTemp === null ? "--" : v.supplyTemp.toFixed(1)} unit="°C" />
+            <Row icon={<Droplets size={13} />} value={off || v.humidity === null ? "--" : v.humidity.toFixed(0)} unit="%RH" />
+            <Row
+              icon={<Gauge size={13} />}
+              value={off || v.filterDiffPressure === null ? "--" : v.filterDiffPressure.toFixed(0)}
+              unit="Pa"
+              alarm={card.status === "FAULT"}
+            />
+            <Row icon={<Fan size={13} />} value={off || v.fanSpeed === null ? "--" : v.fanSpeed.toFixed(0)} unit="%" />
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-end justify-between gap-3">
+          <div>
+            <div className="relative h-[62px] w-[62px]">
+              <svg viewBox="0 0 64 64" className="h-full w-full -rotate-90">
+                <defs>
+                  <linearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#2563eb" />
+                    <stop offset="100%" stopColor="#22c55e" />
+                  </linearGradient>
+                </defs>
+                <circle cx={32} cy={32} r={26} fill="none" stroke="#e8edf4" strokeWidth={7} />
+                <circle
+                  cx={32}
+                  cy={32}
+                  r={26}
+                  fill="none"
+                  stroke={card.status === "RUN" ? `url(#${gid})` : card.status === "FAULT" ? "#ef4444" : "#cbd5e1"}
+                  strokeWidth={7}
+                  strokeLinecap="round"
+                  strokeDasharray={`${(Math.min(100, fanPct) / 100) * C} ${C}`}
+                />
+              </svg>
+              <span className="num absolute inset-0 grid place-items-center text-[12.5px] font-bold text-[#12294d]">
+                {off ? "—" : `${fanPct.toFixed(0)}%`}
+              </span>
+            </div>
+            <p className="mt-1 text-[10px] text-slate-400">Fan Speed</p>
+          </div>
+
+          {off ? (
+            <span className="flex items-center gap-1.5 pb-4 text-[10.5px] text-slate-400">
+              <Clock size={12} /> Last seen {card.lastSeenAt ? timeAgo(card.lastSeenAt) : "—"}
+            </span>
+          ) : (
+            <span
+              className={cx(
+                "flex items-center gap-1.5 pb-4 text-[11.5px] font-semibold",
+                card.activeAlarms > 0 ? "text-red-500" : "text-slate-600",
+              )}
+            >
+              {card.activeAlarms > 0 ? <TriangleAlert size={14} /> : <CheckCircle2 size={14} className="text-emerald-500" />}
+              Alarms
+              <span
+                className={cx(
+                  "num rounded-md px-2 py-0.5 text-[10.5px] font-bold",
+                  card.activeAlarms > 0 ? "bg-red-50 text-red-500" : "bg-[#f1f5fb] text-slate-500",
+                )}
+              >
+                {card.activeAlarms}
+              </span>
+            </span>
+          )}
+        </div>
+
+        <div className="mt-1 flex justify-end border-t border-[#f1f5f9] pt-2.5">
+          <Link href={`/ahu/${card.ahu.id}`} className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-[#2563eb] hover:underline">
+            View Details <ArrowRight size={13} />
+          </Link>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
