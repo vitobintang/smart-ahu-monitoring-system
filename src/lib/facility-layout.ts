@@ -771,6 +771,8 @@ export function resolveWallPhysicsAndSnap(
     autoAlignRotation?: boolean;
     clampVoidToWall?: boolean;
     roomVertices?: FloorVertex[] | null;
+    /** Placement grid increment for free (non-wall-snapped) positions; defaults to 0.5 m. */
+    gridStep?: number;
   },
 ): PlacementValidation {
   const excludeId = options?.excludeId;
@@ -778,14 +780,15 @@ export function resolveWallPhysicsAndSnap(
   const autoAlignRotation = options?.autoAlignRotation !== false;
   const clampVoidToWall = options?.clampVoidToWall === true;
   const roomVertices = options?.roomVertices;
+  const gridStep = options?.gridStep ?? 0.5;
 
   let rotation = normalizeRotation(options?.rotation ?? 0);
 
   if (!isPointWithinCampusBounds(rawX, rawZ) && !clampVoidToWall) {
     return {
       valid: false,
-      snappedX: snapToPlatformGrid(rawX, 0.5),
-      snappedZ: snapToPlatformGrid(rawZ, 0.5),
+      snappedX: snapToPlatformGrid(rawX, gridStep),
+      snappedZ: snapToPlatformGrid(rawZ, gridStep),
       rotation,
       indoor: false,
       zone: null,
@@ -882,8 +885,9 @@ export function resolveWallPhysicsAndSnap(
   }
 
   if (!snappedToWall) {
-    workX = snapToPlatformGrid(workX, 0.5);
-    workZ = snapToPlatformGrid(workZ, 0.5);
+    // Free placement lands the AHU center exactly on the visible floor-grid intersections
+    workX = snapToPlatformGrid(workX, gridStep);
+    workZ = snapToPlatformGrid(workZ, gridStep);
   }
 
   // Step 2: Iterative Solid Wall Normal Push-Out Solver (guarantees zero wall penetration for H/V/Angled walls!)

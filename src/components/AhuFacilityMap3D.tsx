@@ -1284,6 +1284,7 @@ export default function AhuFacilityMap3D({
         autoAlignRotation: wallSnapRef.current && !manualRotLockedRef.current,
         clampVoidToWall: true,
         roomVertices: activeRoomVerticesRef.current,
+        gridStep: ROOM_GRID_SNAP_STEP,
       });
     };
 
@@ -2109,45 +2110,74 @@ export default function AhuFacilityMap3D({
   const indoorCount = resolvedUnits.filter((u) => u.placement.indoor).length;
   const outdoorCount = resolvedUnits.length - indoorCount;
 
-  const rotateActiveDraft90 = () => {
-    setManualRotLocked(true);
-    if (mode === "placement" && placement && onPlacementChange) {
-      const nextRot = normalizeRotation(placement.rotation + 90);
-      const check = resolveWallPhysicsAndSnap(placement.x, placement.z, existingCoords, {
-        rotation: nextRot,
-        enableWallSnap: wallSnapEnabled,
-        autoAlignRotation: false,
-        clampVoidToWall: true,
-        roomVertices: activeRoomVertices,
-      });
-      onPlacementChange({
-        x: check.snappedX,
-        z: check.snappedZ,
-        rotation: check.rotation,
-        zoneLabel: check.zone?.label ?? placement.zoneLabel,
-        indoor: check.indoor,
-        snappedToWall: check.snappedToWall,
-      });
-    } else if (movingAhuId && moveDraft) {
-      const nextRot = normalizeRotation(moveDraft.rotation + 90);
-      const check = resolveWallPhysicsAndSnap(moveDraft.x, moveDraft.z, existingCoords, {
-        excludeId: movingAhuId,
-        rotation: nextRot,
-        enableWallSnap: wallSnapEnabled,
-        autoAlignRotation: false,
-        clampVoidToWall: true,
-        roomVertices: activeRoomVertices,
-      });
-      setMoveDraft({
-        x: check.snappedX,
-        z: check.snappedZ,
-        rotation: check.rotation,
-        zoneLabel: check.zone?.label ?? moveDraft.zoneLabel,
-        indoor: check.indoor,
-        snappedToWall: check.snappedToWall,
-      });
-    }
-  };
+  const rotateActiveDraft90 = useCallback(
+    (direction: 1 | -1 = 1) => {
+      setManualRotLocked(true);
+      if (mode === "placement" && placement && onPlacementChange) {
+        const nextRot = normalizeRotation(placement.rotation + 90 * direction);
+        const check = resolveWallPhysicsAndSnap(placement.x, placement.z, existingCoords, {
+          rotation: nextRot,
+          enableWallSnap: wallSnapEnabled,
+          autoAlignRotation: false,
+          clampVoidToWall: true,
+          roomVertices: activeRoomVertices,
+          gridStep: ROOM_GRID_SNAP_STEP,
+        });
+        onPlacementChange({
+          x: check.snappedX,
+          z: check.snappedZ,
+          rotation: check.rotation,
+          zoneLabel: check.zone?.label ?? placement.zoneLabel,
+          indoor: check.indoor,
+          snappedToWall: check.snappedToWall,
+        });
+      } else if (movingAhuId && moveDraft) {
+        const nextRot = normalizeRotation(moveDraft.rotation + 90 * direction);
+        const check = resolveWallPhysicsAndSnap(moveDraft.x, moveDraft.z, existingCoords, {
+          excludeId: movingAhuId,
+          rotation: nextRot,
+          enableWallSnap: wallSnapEnabled,
+          autoAlignRotation: false,
+          clampVoidToWall: true,
+          roomVertices: activeRoomVertices,
+          gridStep: ROOM_GRID_SNAP_STEP,
+        });
+        setMoveDraft({
+          x: check.snappedX,
+          z: check.snappedZ,
+          rotation: check.rotation,
+          zoneLabel: check.zone?.label ?? moveDraft.zoneLabel,
+          indoor: check.indoor,
+          snappedToWall: check.snappedToWall,
+        });
+      }
+    },
+    [mode, placement, onPlacementChange, existingCoords, wallSnapEnabled, activeRoomVertices, movingAhuId, moveDraft],
+  );
+
+  // Keyboard rotation while placing or moving an AHU: R = 90° clockwise, Shift+R = counter-clockwise.
+  // Ignored while typing in inputs, and while editing the room (R stays reserved there).
+  useEffect(() => {
+    if (mode !== "placement" && !movingAhuId) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "r" && e.key !== "R") return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      rotateActiveDraft90(e.shiftKey ? -1 : 1);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [mode, movingAhuId, rotateActiveDraft90]);
 
   if (webglError) {
     return (
@@ -2196,7 +2226,7 @@ export default function AhuFacilityMap3D({
               {editingRoom
                 ? "Drag any wall or corner orb · double-click a wall to add a point · extrude new wings in 1 click"
                 : mode === "placement" || movingAhuId
-                  ? "Place inside any wing or anywhere outside · solid walls snap flush & prevent clipping"
+                  ? "Place inside any wing or anywhere outside · snaps onto the 2m floor grid · R / Shift+R rotates 90°"
                   : pickToMove
                     ? "Click any 3D AHU model (or its name badge) to drag & move it indoors or anywhere outdoors"
                     : "Drag to rotate 360° · scroll to zoom · click any 3D AHU to view live status & controls"}
@@ -2257,11 +2287,18 @@ export default function AhuFacilityMap3D({
               </button>
               <button
                 type="button"
-                onClick={rotateActiveDraft90}
+                onClick={() => rotateActiveDraft90(1)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  rotateActiveDraft90(-1);
+                }}
                 className={cx(hudBtnBase, hudBtnNeutral)}
-                title="Rotate 3D AHU by 90°"
+                title="Rotate 90° clockwise (R) · Shift+R or right-click for counter-clockwise"
               >
                 <RotateCw size={12} /> {(mode === "placement" ? placement?.rotation : moveDraft?.rotation) ?? 0}°
+                <kbd className="ml-0.5 rounded border border-slate-300 bg-white/80 px-1 font-mono text-[9px] font-bold text-slate-500">
+                  R
+                </kbd>
               </button>
             </>
           ) : null}
@@ -2765,7 +2802,7 @@ export default function AhuFacilityMap3D({
                   ? hoverInfo.reason
                   : hoverInfo?.snappedToWall
                     ? `Wall Snap Active · Flush against wall (${hoverInfo.snappedX}m, ${hoverInfo.snappedZ}m · ${hoverInfo.rotation}°)`
-                    : "Drag 3D AHU or click anywhere indoors or outdoors"}
+                    : "Drag 3D AHU or click anywhere indoors or outdoors · R / Shift+R rotates 90°"}
               </span>
             </div>
           ) : null}

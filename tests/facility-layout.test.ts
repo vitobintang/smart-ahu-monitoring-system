@@ -22,6 +22,7 @@ import {
   moveFloorVertex,
   resolveAhuPlacement,
   resolveWallPhysicsAndSnap,
+  normalizeRotation,
   ROOM_GRID_SNAP_STEP,
   suggestCleanPlatformSlot,
   validateFloorplanPolygon,
@@ -358,4 +359,39 @@ test("room editing snaps walls & corners exactly onto the visible 2m floor grid 
   const grid1to1 = dragFloorWall(box, 0, 0, -13.2, ROOM_GRID_SNAP_STEP, 1.2);
   equal(grid1to1[0].z, -14);
   equal(grid1to1[1].z, -14);
+});
+test("AHU placement snaps free positions onto the visible 2m floor grid while wall flush-snap stays magnetic", () => {
+  // Free (non-wall) placement with gridStep=2 lands the AHU centre exactly on the visible
+  // 2m × 2m floor-grid intersections: (-13.4, -6.2) -> (-14, -6)
+  const gridSnapped = resolveWallPhysicsAndSnap(-13.4, -6.2, [], {
+    enableWallSnap: false,
+    gridStep: ROOM_GRID_SNAP_STEP,
+  });
+  equal(gridSnapped.valid, true);
+  equal(gridSnapped.snappedX, -14);
+  equal(gridSnapped.snappedZ, -6);
+
+  // Default (no gridStep) preserves the fine 0.5 m placement grid for saved/server positions
+  const fineSnapped = resolveWallPhysicsAndSnap(-13.4, -6.2, [], { enableWallSnap: false });
+  equal(fineSnapped.snappedX, -13.5);
+  equal(fineSnapped.snappedZ, -6);
+
+  // Rotation requested through the snap pipeline is normalized into 0..360: 460° -> 100°
+  const rotated = resolveWallPhysicsAndSnap(-13.4, -6.2, [], {
+    enableWallSnap: false,
+    rotation: 460,
+    gridStep: ROOM_GRID_SNAP_STEP,
+  });
+  equal(rotated.rotation, 100);
+  equal(normalizeRotation(450), 90);
+
+  // Magnetic wall flush-snap still works with the coarse free-placement grid enabled:
+  // east wall (edge x=22) captures a nearby drop and keeps a sub-grid flush offset
+  const wallFlush = resolveWallPhysicsAndSnap(21.2, -5, [], {
+    enableWallSnap: true,
+    autoAlignRotation: true,
+    gridStep: ROOM_GRID_SNAP_STEP,
+  });
+  equal(wallFlush.valid, true);
+  equal(wallFlush.snappedToWall, true);
 });
