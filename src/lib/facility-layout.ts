@@ -458,28 +458,39 @@ export function validateFloorplanPolygon(
 /* Interactive 3D Room CAD Editing Operations                         */
 /* ------------------------------------------------------------------ */
 
-/** Moves a single corner vertex with optional grid snapping. */
+/** Snapping increment matching the visible 2m × 2m indoor floor tile grid in the 3D room. */
+export const ROOM_GRID_SNAP_STEP = 2;
+
+/** Moves a single corner vertex with optional grid snapping and 1:1 cursor grab compensation. */
 export function moveFloorVertex(
   vertices: FloorVertex[],
   vertexIndex: number,
   targetX: number,
   targetZ: number,
   snapStep = 0.5,
+  grabDelta?: { dx: number; dz: number },
 ): FloorVertex[] {
   if (vertexIndex < 0 || vertexIndex >= vertices.length) return vertices;
-  const x = Math.min(OUTDOOR_CAMPUS_BOUNDS.xMax - 2.5, Math.max(OUTDOOR_CAMPUS_BOUNDS.xMin + 2.5, snapToPlatformGrid(targetX, snapStep)));
-  const z = Math.min(OUTDOOR_CAMPUS_BOUNDS.zMax - 2.5, Math.max(OUTDOOR_CAMPUS_BOUNDS.zMin + 2.5, snapToPlatformGrid(targetZ, snapStep)));
+  const grabbedX = targetX - (grabDelta?.dx ?? 0);
+  const grabbedZ = targetZ - (grabDelta?.dz ?? 0);
+  const x = Math.min(OUTDOOR_CAMPUS_BOUNDS.xMax - 2.5, Math.max(OUTDOOR_CAMPUS_BOUNDS.xMin + 2.5, snapToPlatformGrid(grabbedX, snapStep)));
+  const z = Math.min(OUTDOOR_CAMPUS_BOUNDS.zMax - 2.5, Math.max(OUTDOOR_CAMPUS_BOUNDS.zMin + 2.5, snapToPlatformGrid(grabbedZ, snapStep)));
   const next = vertices.map((v, idx) => (idx === vertexIndex ? { x, z } : { ...v }));
   return validateFloorplanPolygon(next).valid ? next : vertices;
 }
 
-/** Pushes/pulls an entire wall segment along its perpendicular normal so you can resize wings smoothly! */
+/**
+ * Pushes/pulls an entire wall segment along its perpendicular normal so you can resize wings smoothly.
+ * Axis-aligned walls land exactly on the visible floor grid lines when snapStep divides the grid,
+ * and `grabNormalOffset` compensates for wherever on the wall the user grabbed it (1:1 drag, no jump).
+ */
 export function dragFloorWall(
   vertices: FloorVertex[],
   edgeIndex: number,
   targetX: number,
   targetZ: number,
   snapStep = 0.5,
+  grabNormalOffset = 0,
 ): FloorVertex[] {
   const n = vertices.length;
   if (edgeIndex < 0 || edgeIndex >= n) return vertices;
@@ -497,8 +508,23 @@ export function dragFloorWall(
   const nz = dx / len;
   const midX = (a.x + b.x) / 2;
   const midZ = (a.z + b.z) / 2;
-  const rawOffset = (targetX - midX) * nx + (targetZ - midZ) * nz;
-  const snappedOffset = snapStep > 0 ? Math.round(rawOffset / snapStep) * snapStep : rawOffset;
+  const rawOffset = (targetX - midX) * nx + (targetZ - midZ) * nz - grabNormalOffset;
+
+  let snappedOffset: number;
+  const verticalWall = Math.abs(dx) < 1e-4;
+  const horizontalWall = Math.abs(dz) < 1e-4;
+  if (snapStep > 0 && (verticalWall || horizontalWall)) {
+    // Land the wall itself exactly on a grid line (matches the visible 2m floor tile grid)
+    const axisN = verticalWall ? nx : nz;
+    const midCoord = verticalWall ? midX : midZ;
+    const projected = verticalWall ? targetX : targetZ;
+    const desiredMid = midCoord + axisN * rawOffset;
+    snappedOffset = (snapToPlatformGrid(desiredMid, snapStep) - midCoord) * axisN;
+  } else if (snapStep > 0) {
+    snappedOffset = Math.round(rawOffset / snapStep) * snapStep;
+  } else {
+    snappedOffset = rawOffset;
+  }
   if (Math.abs(snappedOffset) < 1e-4) return vertices;
 
   const shiftX = Number((nx * snappedOffset).toFixed(2));

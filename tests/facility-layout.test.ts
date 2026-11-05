@@ -22,6 +22,7 @@ import {
   moveFloorVertex,
   resolveAhuPlacement,
   resolveWallPhysicsAndSnap,
+  ROOM_GRID_SNAP_STEP,
   suggestCleanPlatformSlot,
   validateFloorplanPolygon,
   validatePlatformPlacement,
@@ -306,3 +307,55 @@ test("randomized outdoor trees keep a sparse count and automatically appear/disa
 });
 
 
+test("room editing snaps walls & corners exactly onto the visible 2m floor grid with 1:1 grab feel", () => {
+  // The snap step must match the 2m × 2m floor tile grid rendered inside the 3D room
+  equal(ROOM_GRID_SNAP_STEP, 2);
+
+  const box = [
+    { x: -10, z: -10 },
+    { x: 10, z: -10 },
+    { x: 10, z: 10 },
+    { x: -10, z: 10 },
+  ];
+  equal(validateFloorplanPolygon(box).valid, true);
+
+  // 1. Corner drag snaps onto the 2m grid: (-7.3, -10.8) -> (-8, -10)
+  const cornerSnapped = moveFloorVertex(box, 0, -7.3, -10.8, ROOM_GRID_SNAP_STEP);
+  equal(cornerSnapped[0].x, -8);
+  equal(cornerSnapped[0].z, -10);
+  equal(validateFloorplanPolygon(cornerSnapped).valid, true);
+
+  // 2. Grab compensation: the raw ray hit includes a parallax offset, so subtracting the
+  //    grab delta (-4.1 - 1.5, -9.4 - 0.6) must land the corner on the SAME grid cell as
+  //    dragging without offset would not: (-4, -10) vs compensated (-6, -10).
+  const uncompensated = moveFloorVertex(box, 0, -4.1, -9.4, ROOM_GRID_SNAP_STEP);
+  equal(uncompensated[0].x, -4);
+  const compensated = moveFloorVertex(box, 0, -4.1, -9.4, ROOM_GRID_SNAP_STEP, { dx: 1.5, dz: 0.6 });
+  equal(compensated[0].x, -6);
+  equal(compensated[0].z, -10);
+
+  // 3. Wall push/pull lands the wall itself exactly on a grid line: z=-10 -> z=-8
+  const wallSnapped = dragFloorWall(box, 0, 0, -7.6, ROOM_GRID_SNAP_STEP);
+  equal(wallSnapped[0].z, -8);
+  equal(wallSnapped[1].z, -8);
+
+  // 4. Even an OFF-GRID wall lands exactly on the grid when snapped (old math would give z=-7)
+  const offGridBox = [
+    { x: -10, z: -9 },
+    { x: 10, z: -9 },
+    { x: 10, z: 10 },
+    { x: -10, z: 10 },
+  ];
+  equal(validateFloorplanPolygon(offGridBox).valid, true);
+  const relanded = dragFloorWall(offGridBox, 0, 0, -6.9, ROOM_GRID_SNAP_STEP);
+  equal(relanded[0].z, -6);
+  equal(relanded[1].z, -6);
+
+  // 5. Grab bias keeps the wall glued to the cursor (1:1 drag, no jump): freeform is exact,
+  //    and grid mode rounds that same relative motion onto the grid.
+  const freeform1to1 = dragFloorWall(box, 0, 0, -13.2, 0, 1.2);
+  equal(freeform1to1[0].z, -14.4);
+  const grid1to1 = dragFloorWall(box, 0, 0, -13.2, ROOM_GRID_SNAP_STEP, 1.2);
+  equal(grid1to1[0].z, -14);
+  equal(grid1to1[1].z, -14);
+});
