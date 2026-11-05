@@ -37,6 +37,66 @@ async function fleetSeries(windowMin: number) {
   return out;
 }
 
+const g = globalThis as typeof globalThis & {
+  __ahuOverviewInFlight?: Map<string, Promise<Record<string, unknown>>>;
+  __ahuOverviewCache?: Map<string, { data: Record<string, unknown>; expiresAt: number }>;
+};
+const overviewInFlight = (g.__ahuOverviewInFlight ??= new Map());
+const overviewCache = (g.__ahuOverviewCache ??= new Map());
+
+async function loadOverview(windowMin: number, lite: boolean): Promise<Record<string, unknown>> {
+  const key = `${lite ? "lite" : "full"}:${windowMin}`;
+  const now = Date.now();
+  const cached = overviewCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    return cached.data;
+  }
+  const existing = overviewInFlight.get(key);
+  if (existing) return existing;
+
+  const work = (async () => {
+    const dash = await getDashboard();
+    const sync = await getSyncStatus();
+    const recentAlarms = lite
+      ? []
+      : await db
+          .select()
+          .from(alarms)
+          .where(eq(alarms.isActive, true))
+          .orderBy(
+            sql`case ${alarms.priority} when 'CRITICAL' then 0 when 'HIGH' then 1 when 'MEDIUM' then 2 else 3 end`,
+            desc(alarms.triggeredAt),
+          )
+          .limit(12);
+    const recentTrends = lite
+      ? []
+      : await db
+          .select()
+          .from(trendAlerts)
+          .where(eq(trendAlerts.acknowledged, false))
+          .orderBy(desc(trendAlerts.createdAt))
+          .limit(8);
+    const series = lite ? {} : await fleetSeries(windowMin);
+
+    const payload: Record<string, unknown> = {
+      ...dash,
+      sync,
+      recentAlarms,
+      recentTrends,
+      fleetSeries: series,
+      windowMin,
+      serverTime: new Date().toISOString(),
+    };
+    overviewCache.set(key, { data: payload, expiresAt: Date.now() + 350 });
+    return payload;
+  })().finally(() => {
+    overviewInFlight.delete(key);
+  });
+
+  overviewInFlight.set(key, work);
+  return work;
+}
+
 /** FR-03 monitoring dashboard overview (all four roles may view). */
 export async function GET(req: Request) {
   try {
@@ -45,36 +105,8 @@ export async function GET(req: Request) {
     const win = Number(url.searchParams.get("window") ?? 15);
     const windowMin = [5, 15, 30].includes(win) ? win : 15;
     const lite = url.searchParams.get("lite") === "1";
-    const [dash, sync, recentAlarms, recentTrends, series] = await Promise.all([
-      getDashboard(),
-      getSyncStatus(),
-      lite
-        ? Promise.resolve([])
-        : db
-            .select()
-            .from(alarms)
-            .where(eq(alarms.isActive, true))
-            .orderBy(sql`case ${alarms.priority} when 'CRITICAL' then 0 when 'HIGH' then 1 when 'MEDIUM' then 2 else 3 end`, desc(alarms.triggeredAt))
-            .limit(12),
-      lite
-        ? Promise.resolve([])
-        : db
-            .select()
-            .from(trendAlerts)
-            .where(eq(trendAlerts.acknowledged, false))
-            .orderBy(desc(trendAlerts.createdAt))
-            .limit(8),
-      lite ? Promise.resolve({}) : fleetSeries(windowMin),
-    ]);
-    return Response.json({
-      ...dash,
-      sync,
-      recentAlarms,
-      recentTrends,
-      fleetSeries: series,
-      windowMin,
-      serverTime: new Date().toISOString(),
-    });
+    const payload = await loadOverview(windowMin, lite);
+    return Response.json(payload);
   } catch (err) {
     return jsonError(err);
   }

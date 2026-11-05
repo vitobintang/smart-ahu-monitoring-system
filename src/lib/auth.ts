@@ -7,6 +7,7 @@ import type { Role, UserRow } from "@/db/schema";
 import { type Activity, can } from "@/lib/domain";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { DEVICE_COOKIE, getAuthorizedDeviceUser, revokeCurrentDeviceCookie, secretHash } from "@/lib/device-access";
+import { resolveOrLinkAppUserForAuthUser } from "@/lib/oauth-account";
 import { resolveRoleSession } from "@/lib/role-auth";
 
 export const CSRF_COOKIE = "ahu_csrf";
@@ -50,6 +51,12 @@ export async function getSession(): Promise<SessionContext | null> {
 
   let pending = sessionInFlight.get(cacheKey);
   if (!pending) {
+    let verifiedAuthUser: {
+      id: string;
+      email?: string | null;
+      emailConfirmed?: boolean;
+      fullName?: string | null;
+    } | null = null;
     pending = resolveRoleSession<UserRow>({
       getSupabaseUserId: async () => {
         const supabase = await createSupabaseServerClient();
@@ -57,9 +64,22 @@ export async function getSession(): Promise<SessionContext | null> {
           data: { user: authUser },
           error,
         } = await supabase.auth.getUser();
-        return error || !authUser ? null : authUser.id;
+        if (error || !authUser) return null;
+        verifiedAuthUser = {
+          id: authUser.id,
+          email: authUser.email ?? null,
+          emailConfirmed: Boolean(authUser.email_confirmed_at || authUser.app_metadata?.provider === "google"),
+          fullName:
+            (typeof authUser.user_metadata?.full_name === "string" && authUser.user_metadata.full_name) ||
+            (typeof authUser.user_metadata?.name === "string" && authUser.user_metadata.name) ||
+            null,
+        };
+        return authUser.id;
       },
       getUserById: async (id) => {
+        if (verifiedAuthUser && verifiedAuthUser.id === id) {
+          return resolveOrLinkAppUserForAuthUser(verifiedAuthUser);
+        }
         const [row] = await db.select().from(users).where(eq(users.id, id)).limit(1);
         return row ?? null;
       },

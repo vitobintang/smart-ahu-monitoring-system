@@ -65,7 +65,8 @@ export async function getDashboard(): Promise<{
   const ids = ahuRows.map((a) => a.id);
   if (ids.length === 0) return { cards: [], totals: { ahus: 0, online: 0, run: 0, fault: 0, offline: 0, activeAlarms: 0, unackedAlarms: 0, trendAlerts: 0 } };
 
-  const [latest, alarmRows, trendRows, cmdRows, filterThresholdRows] = await Promise.all([
+  // Group into two compact waves so getDashboard never grabs 5 pool connections at once
+  const [latest, alarmRows] = await Promise.all([
     latestRows(ids),
     db
       .select({
@@ -77,6 +78,9 @@ export async function getDashboard(): Promise<{
       .from(alarms)
       .where(inArray(alarms.ahuId, ids))
       .groupBy(alarms.ahuId),
+  ]);
+
+  const [trendRows, cmdRows, filterThresholdRows] = await Promise.all([
     db
       .select({ ahuId: trendAlerts.ahuId, n: sql<number>`count(*) filter (where not ${trendAlerts.acknowledged})::int` })
       .from(trendAlerts)
