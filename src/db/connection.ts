@@ -1,21 +1,12 @@
-import { Pool } from "pg";
+import type { Pool } from "pg";
 
 import type { ClaimQuery } from "../lib/device-claims";
 import { getDatabaseUrl } from "./config";
-
-let pool: Pool | undefined;
+import { getSharedPool } from "./index";
 
 export function getDatabasePool(): Pool {
-  if (!pool) {
-    pool = new Pool({
-      connectionString: getDatabaseUrl(process.env.DATABASE_URL),
-      max: 5,
-      connectionTimeoutMillis: 5000,
-      idleTimeoutMillis: 30000,
-    });
-  }
-
-  return pool;
+  const validatedUrl = getDatabaseUrl(process.env.DATABASE_URL);
+  return getSharedPool(validatedUrl);
 }
 
 export const queryDeviceRecords: ClaimQuery = async (text, values) => {

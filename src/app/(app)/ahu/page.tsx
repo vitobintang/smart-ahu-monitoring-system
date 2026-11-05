@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import Image from "next/image";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRight,
   Box,
@@ -54,6 +54,7 @@ function suggestNextAhuId(existingIds: string[]): string {
 
 /** FR-03 / FR-05: Full-screen Light-Mode 3D Facility Digital Twin + sleek animated AHU Fleet List sheet. */
 export default function AhuIndexPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [listOpen, setListOpen] = useState(() => searchParams?.get("view") === "list");
 
@@ -63,10 +64,8 @@ export default function AhuIndexPage() {
 
   function switchView(showList: boolean) {
     setListOpen(showList);
-    if (typeof window !== "undefined") {
-      const nextUrl = showList ? "/ahu?view=list" : "/ahu";
-      window.history.replaceState(window.history.state, "", nextUrl);
-    }
+    const nextUrl = showList ? "/ahu?view=list" : "/ahu";
+    router.replace(nextUrl, { scroll: false });
   }
 
   const user = useSessionUser();
@@ -356,33 +355,41 @@ export default function AhuIndexPage() {
 
   if (loading && !data) {
     return (
-      <div className="flex h-full w-full items-center justify-center bg-[#eaf1fb]">
+      <div className={cx("flex h-full w-full items-center justify-center", !listOpen && "bg-[#eaf1fb]")}>
         <Spinner label="Loading AHU fleet…" />
       </div>
     );
   }
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-[#eaf1fb]">
-      {/* Persistent Full-Viewport 3D Facility Digital Twin (never unmounted when opening Fleet List -> 0ms blink!) */}
-      <AhuFacilityMap3D
-        items={cards}
-        mode="explore"
-        fullPage
-        selectedAhuId={selected3dId}
-        onSelectAhu={setSelected3dId}
-        onOpenList={() => switchView(true)}
-        canAddAhu={canConfigure}
-        onRequestAddAhu={openAddModal}
-        canMoveAhu={canControl || canConfigure}
-        onMoveAhuSave={handleMoveAhuSave}
-      />
+    <div className="relative h-full w-full overflow-hidden">
+      {/* Persistent Full-Viewport 3D Facility Digital Twin (cross-fades smoothly so mountain backdrop shines on List view!) */}
+      <div
+        aria-hidden={listOpen}
+        className={cx(
+          "absolute inset-0 transition-opacity duration-300 ease-out",
+          listOpen ? "pointer-events-none opacity-0" : "pointer-events-auto opacity-100",
+        )}
+      >
+        <AhuFacilityMap3D
+          items={cards}
+          mode="explore"
+          fullPage
+          selectedAhuId={selected3dId}
+          onSelectAhu={setSelected3dId}
+          onOpenList={() => switchView(true)}
+          canAddAhu={canConfigure}
+          onRequestAddAhu={openAddModal}
+          canMoveAhu={canControl || canConfigure}
+          onMoveAhuSave={handleMoveAhuSave}
+        />
+      </div>
 
-      {/* Sleek Animated AHU Fleet List Sheet Overlay (smooth fade + glide transition, zero page blink) */}
+      {/* Sleek Animated AHU Fleet List View (transparent over AppShell's scenic mountain background!) */}
       <div
         aria-hidden={!listOpen}
         className={cx(
-          "absolute inset-0 z-30 overflow-y-auto overscroll-contain bg-[#eef3fa]/96 backdrop-blur-xl transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          "absolute inset-0 z-20 overflow-y-auto overscroll-contain bg-transparent transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
           listOpen
             ? "pointer-events-auto translate-y-0 opacity-100"
             : "pointer-events-none translate-y-4 opacity-0",
