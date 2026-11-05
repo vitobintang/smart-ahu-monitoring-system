@@ -18,15 +18,6 @@ test("fictional roles, statuses and setpoint rules reject examples", () => {
 
   match(
     requestExample(
-      { ...state, role: "Viewer" },
-      "START",
-      "",
-    ).notice,
-    /role cannot/,
-  );
-
-  match(
-    requestExample(
       { ...state, status: "OFFLINE" },
       "STOP",
       "",

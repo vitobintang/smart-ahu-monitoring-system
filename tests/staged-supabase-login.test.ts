@@ -59,7 +59,7 @@ test("a denied browser triggers staged session discard", async () => {
   const deps: LoginDependencies<unknown> = {
     checkGateway: async () => ({ ok: true }),
     stagePassword: (credentials) => stageSupabasePassword(credentials, { ...config, fetch: fake.fetcher }),
-    getProfile: async (id) => ({ id, role: "Viewer" }),
+    getProfile: async (id) => ({ id, role: "Operator" }),
     isBrowserAuthorized: async () => false,
   };
   assert.deepEqual(await evaluatePasswordLogin(req, "ab".repeat(32), deps), { ok: false, status: 401 });
@@ -90,7 +90,7 @@ test("the coordinator with the SDK adapter releases staged cookies only for an a
   const deps: LoginDependencies<unknown> = {
     checkGateway: async () => ({ ok: true }),
     stagePassword: (credentials) => stageSupabasePassword(credentials, { ...config, fetch: fake.fetcher }),
-    getProfile: async (id) => ({ id, role: "Viewer" }),
+    getProfile: async (id) => ({ id, role: "Operator" }),
     isBrowserAuthorized: async (id) => id === user.id,
   };
   const decision = await evaluatePasswordLogin(req, "ab".repeat(32), deps);

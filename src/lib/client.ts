@@ -7,7 +7,7 @@ export interface SessionUser {
   email: string;
   username: string | null;
   fullName: string | null;
-  role: "Admin" | "Engineering" | "Operator" | "Viewer";
+  role: "Admin" | "Engineering" | "Operator";
   createdAt: string;
 }
 

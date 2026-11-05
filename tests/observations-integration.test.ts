@@ -65,8 +65,8 @@ test("observation authorization and queries work together locally", async (t) =>
       );
 
       INSERT INTO ahu_private.users VALUES
-        ('u1', 'Viewer'),
-        ('u2', 'Viewer');
+        ('u1', 'Operator'),
+        ('u2', 'Operator');
 
       INSERT INTO ahu_private.ahus VALUES
         ('AHU-01', ARRAY['roomTemp', 'humidity']),

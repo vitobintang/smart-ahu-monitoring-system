@@ -14,7 +14,7 @@ test("Admin-issued invitation is bound to its user, claimed once and revocable l
   try {
     const migrations = (await readdir("drizzle")).filter(name => /^\d+_.*\.sql$/.test(name)).sort();
     for (const file of migrations) await db.exec(await readFile(join("drizzle", file), "utf8"));
-    await db.exec(`INSERT INTO ahu_private.users (id,email,role) VALUES ('admin','admin@example.invalid','Admin'),('u1','u1@example.invalid','Viewer'),('u2','u2@example.invalid','Viewer');`);
+    await db.exec(`INSERT INTO ahu_private.users (id,email,role) VALUES ('admin','admin@example.invalid','Admin'),('u1','u1@example.invalid','Operator'),('u2','u2@example.invalid','Operator');`);
     const query: ClaimQuery = (text, values) => db.query<{ id: string }>(text, values);
     assert.equal(await issueBrowserInvitation(query, "u2", "u1", "Laptop"), null);
     const invite = await issueBrowserInvitation(query, "admin", "u1", "Laptop"); assert.ok(invite);

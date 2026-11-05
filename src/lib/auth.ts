@@ -31,7 +31,7 @@ export function invalidateSessionCache() {
 
 /**
  * Resolve session by role authentication policy:
- * All roles (Admin, Engineering, Operator, Viewer) authenticate via verified
+ * All roles (Admin, Engineering, Operator) authenticate via verified
  * Supabase Auth credentials (email or username + password).
  * Never trust client-editable user metadata for authorization.
  */

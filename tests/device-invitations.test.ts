@@ -29,7 +29,7 @@ test("only an Admin role can issue a user-bound invitation", async () => {
       VALUES
         ('admin', 'admin@example.invalid', 'Admin'),
         ('engineering', 'engineering@example.invalid', 'Engineering'),
-        ('viewer', 'viewer@example.invalid', 'Viewer'),
+        ('viewer', 'viewer@example.invalid', 'Operator'),
         ('target', 'target@example.invalid', 'Operator');
     `);
 

@@ -24,7 +24,7 @@ test("guard, rolling limiter, role and browser verification compose locally", as
       CREATE TABLE ahu_private.login_rate_windows (bucket_key text PRIMARY KEY, attempt_times_ms jsonb NOT NULL, last_checked_ms bigint NOT NULL);
       CREATE TABLE ahu_private.users (id text PRIMARY KEY, role text NOT NULL);
       CREATE TABLE ahu_private.access_devices (id text PRIMARY KEY, user_id text, device_hash text, claimed_at timestamptz, revoked_at timestamptz, expires_at timestamptz);
-      INSERT INTO ahu_private.users VALUES ('user-1', 'Viewer'), ('user-2', 'Viewer');`);
+      INSERT INTO ahu_private.users VALUES ('user-1', 'Operator'), ('user-2', 'Operator');`);
     await db.query("INSERT INTO ahu_private.access_devices VALUES ('browser-1', 'user-1', $1, now(), NULL, now() + interval '1 hour')", [hashDeviceToken(browser, "browser")]);
     const pool: RatePool = { async connect() { return { async query(text, values) {
       const result = await db.query(text, values ?? []); return { rows: result.rows };

@@ -13,7 +13,7 @@ export type UserLifecycleResult<T> =
   | { ok: false; status: number; error: string };
 
 /**
- * FR-20 / FR-29: Update any user's role (Admin, Engineering, Operator, Viewer),
+ * FR-20 / FR-29: Update any user's role (Admin, Engineering, Operator),
  * username, and/or display name with strict self-demotion and last-Admin guards.
  */
 export async function updateManagedUser(

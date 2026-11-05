@@ -26,6 +26,6 @@ test("the required AHU statuses and data sources are defined", () => {
   deepStrictEqual(DATA_SOURCES, ["PHYSICAL", "SIMULATION"]);
 });
 
-test("the four user roles are defined", () => {
-  deepStrictEqual(USER_ROLES, ["Admin", "Engineering", "Operator", "Viewer"]);
+test("the three user roles are defined", () => {
+  deepStrictEqual(USER_ROLES, ["Admin", "Engineering", "Operator"]);
 });

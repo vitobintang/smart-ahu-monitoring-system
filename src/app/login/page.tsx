@@ -273,7 +273,7 @@ export default function LoginPage() {
             </p>
 
             <div className="mt-3 flex flex-wrap gap-1.5">
-              {(["Admin", "Engineering", "Operator", "Viewer"] as const).map((r) => (
+              {(["Admin", "Engineering", "Operator"] as const).map((r) => (
                 <span
                   key={r}
                   className="inline-flex items-center gap-1 rounded-full border border-[#d6e4fb] bg-[#f5f9ff] px-2.5 py-0.5 text-[10.5px] font-semibold text-[#1d6ef2]"

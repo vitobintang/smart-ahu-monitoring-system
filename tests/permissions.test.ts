@@ -27,7 +27,6 @@ test("each role has only its expected permissions", () => {
   ];
 
   const expected: Record<UserRole, readonly Permission[]> = {
-    Viewer: read,
     Operator: [...read, ...operate],
     Engineering: [...read, ...operate, ...configure],
     Admin: [...read, ...operate, ...configure, ...adminOnly],

@@ -555,7 +555,7 @@ test("FR-20 / FR-29: user lifecycle management updates member roles, revokes ses
       {
         actor: primaryAdmin,
         targetUserId: primaryAdmin.id,
-        role: "Viewer",
+        role: "Operator",
       },
       testDb,
     );

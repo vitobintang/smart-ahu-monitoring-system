@@ -11,16 +11,15 @@ import {
   suggestUsernameFromEmail,
 } from "../src/lib/role-auth";
 
-test("role helpers recognize all four valid user roles and distinguish Admin", () => {
+test("role helpers recognize all three valid user roles and distinguish Admin", () => {
   assert.equal(isAdminRole("Admin"), true);
   assert.equal(isAdminRole("Engineering"), false);
   assert.equal(isAdminRole("Operator"), false);
-  assert.equal(isAdminRole("Viewer"), false);
 
   assert.equal(isValidUserRole("Admin"), true);
   assert.equal(isValidUserRole("Engineering"), true);
   assert.equal(isValidUserRole("Operator"), true);
-  assert.equal(isValidUserRole("Viewer"), true);
+  assert.equal(isValidUserRole("Viewer"), false);
   assert.equal(isValidUserRole("Superuser"), false);
   assert.equal(isValidUserRole(null), false);
 });
@@ -90,8 +89,8 @@ test("parseLoginPayload accepts email or username + password for all roles and r
   assert.equal(parseLoginPayload(null).ok, false);
 });
 
-test("resolveRoleSession authenticates Admin, Engineering, Operator, and Viewer via verified Supabase Auth", async () => {
-  for (const role of ["Admin", "Engineering", "Operator", "Viewer"] as const) {
+test("resolveRoleSession authenticates Admin, Engineering, and Operator via verified Supabase Auth", async () => {
+  for (const role of ["Admin", "Engineering", "Operator"] as const) {
     const resolved = await resolveRoleSession({
       getSupabaseUserId: async () => `uid-${role.toLowerCase()}`,
       getUserById: async (id) => ({ id, role }),
@@ -140,12 +139,4 @@ test("authorizeRolePermission enforces RBAC permissions on verified credential s
   );
   assert.deepEqual(operatorControl, { id: "op-1", role: "Operator" });
 
-  const viewerDeniedControl = await authorizeRolePermission(
-    {
-      getSupabaseUserId: async () => "viewer-1",
-      getUserById: async () => ({ id: "viewer-1", role: "Viewer" as const }),
-    },
-    "commands:request",
-  );
-  assert.equal(viewerDeniedControl, null);
 });

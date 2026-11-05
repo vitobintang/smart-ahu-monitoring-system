@@ -60,7 +60,7 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Create user form (all roles: Admin, Engineering, Operator, Viewer)
+  // Create user form (all roles: Admin, Engineering, Operator)
   const [role, setRole] = useState<string>("Operator");
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
@@ -594,7 +594,7 @@ export default function AdminPage() {
                 <Plus size={14} className="text-[#1d6ef2]" /> Create User Account
               </h2>
               <p className="mt-1 text-[11px] leading-relaxed text-[#475569]">
-                Creates an Email + Username + Password login for any role (Admin, Engineering, Operator, or Viewer).
+                Creates an Email + Username + Password login for any role (Admin, Engineering, or Operator).
               </p>
 
               <div className="mt-3.5 space-y-3">

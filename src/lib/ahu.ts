@@ -33,5 +33,5 @@ export type AhuStatus = (typeof AHU_STATUSES)[number];
 export const DATA_SOURCES = ["PHYSICAL", "SIMULATION"] as const;
 export type DataSource = (typeof DATA_SOURCES)[number];
 
-export const USER_ROLES = ["Admin", "Engineering", "Operator", "Viewer"] as const;
+export const USER_ROLES = ["Admin", "Engineering", "Operator"] as const;
 export type UserRole = (typeof USER_ROLES)[number];

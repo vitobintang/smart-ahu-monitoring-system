@@ -25,6 +25,8 @@ A production-shaped **HVAC monitoring platform**: it ingests telemetry from seve
 
 A built-in **telemetry simulator** drives the whole loop out of the box, and a device-token provisioning flow is ready for real gateways.
 
+Every role — including `Admin` — signs in through **Supabase Auth** with an **email/username + password**, or **Google Sign-In** for registered addresses.
+
 > ⚠️ **Status: prototype — not a commissioned industrial control system.** Physical control commands are disabled. The web STOP button is **not** an emergency stop. Independent local safety interlocks, control hardware, communications, failover, access security and operational procedures must be designed and validated by qualified professionals. Do not use this software to protect people or equipment.
 
 ---
@@ -40,7 +42,7 @@ A built-in **telemetry simulator** drives the whole loop out of the box, and a d
 | 📉 | **Trend projections** | 15/30-minute linear regression proximity warnings (`FR-16`–`FR-18`) that honestly flag low samples, short spans, or high residual variance (`R² < 0.35`) |
 | 📄 | **Reports & data logger** | Source-filtered history, streamed CSV exports, browser print/PDF with a clean print stylesheet |
 | 🧪 | **Built-in simulator** | Full `REQUESTED` → `ACCEPTED` → `SUCCEEDED` / `FAILED` / `EXPIRED` command lifecycle (`FR-26`/`FR-27`), fault abortion, NACK injection, `STOP`-only override during `FAULT` |
-| 🔐 | **Four-role RBAC** | `Admin` / `Engineering` / `Operator` / `Viewer`, enforced server-side on every query, with unified per-IP login rate limiting (10 attempts / 15 min, `NFR-02`) |
+| 🔐 | **Three-role RBAC** | `Admin` / `Engineering` / `Operator`, enforced server-side on every query, with unified per-IP login rate limiting (10 attempts / 15 min, `NFR-02`) |
 | 📝 | **Audit trail** | Who changed what, when — visible to `Admin` and `Engineering` |
 | 📡 | **Gateway-ready ingestion** | Bearer-token device API with idempotent deduplication (`FR-23`) |
 
@@ -56,7 +58,7 @@ A built-in **telemetry simulator** drives the whole loop out of the box, and a d
 | 🎨 UI & charts | [Tailwind CSS 4](https://tailwindcss.com/) · [Recharts 3](https://recharts.org/) · [Lucide](https://lucide.dev/) icons |
 | 🧊 3D facility | [Three.js r187](https://threejs.org/) — custom WebGL room editor (no heavy 3D framework) |
 | 🗄️ Database | [Supabase Cloud PostgreSQL](https://supabase.com/) via [Drizzle ORM](https://orm.drizzle.team/) — private `ahu_private` schema + typed migrations |
-| 🔑 Identity | Supabase Auth (Admin email/password) + server-verified one-time browser tokens (`Engineering` / `Operator` / `Viewer`) |
+| 🔑 Identity | Supabase Auth for **all roles** — email/username + password, or Google Sign-In; sessions resolved server-side against `ahu_private.users` (never trusting client-editable metadata) |
 | 🧪 Testing | Node's built-in test runner (`node --test`) + tsx, against real SQL via [PGlite](https://github.com/electric-sql/pglite) — 339 tests |
 | ⚙️ Background work | In-process simulator (5 s) & monitoring (10 s) loops in the Next.js Node server |
 
@@ -121,10 +123,9 @@ In the original specification (`FR-24`), "Cloud Mode" meant Firebase Realtime Da
 
 | Role | Sign-in | Capabilities |
 | --- | --- | --- |
-| 🛡️ **Admin** | Email + password (Supabase Auth) | Everything: user management (with self/last-Admin lockout protection), device provisioning, configurations, controls, acknowledgements, audit logs |
-| 🔧 **Engineering** | One-time browser token | Configures AHU/sensor thresholds, controls simulated units, acknowledges alarms/trends, views audit logs |
-| 🎛️ **Operator** | One-time browser token | Controls simulated units, acknowledges alarms/trends, views monitoring/reports |
-| 👁️ **Viewer** | One-time browser token | Read-only monitoring dashboards, unit details, alarms, trends, reports |
+| 🛡️ **Admin** | Email/username + password, or Google | Everything: user management (with self/last-Admin lockout protection), device provisioning, configurations, controls, acknowledgements, audit logs |
+| 🔧 **Engineering** | Email/username + password, or Google | Configures AHU/sensor thresholds, controls simulated units, acknowledges alarms/trends, views audit logs |
+| 🎛️ **Operator** | Email/username + password, or Google | Controls simulated units, acknowledges alarms/trends, views monitoring dashboards, unit details, alarms, trends, reports |
 
 All role checks are enforced **server-side**; the UI only mirrors what the API already guarantees.
 
@@ -163,10 +164,15 @@ npm run dev
 
 ---
 
-## 🔑 Browser Access & Admin Recovery
+## 🔑 Signing In & Admin Recovery
 
-- 🛡️ **Admin** → sign in at `/login` (**Administrator** tab) with email + password only.
-- 🎫 **Everyone else** → an Admin generates a **one-time 64-character hex token** in **Users (`/admin?tab=users`)**; the member redeems it at `/login` (**Member Token** tab). Tokens are valid for **24 h** and claim one browser session (90-day `ahu_device` cookie). Signing out revokes the cookie.
+All three roles use the same simple flow at `/login` — **no invitation tokens, no separate member flow**:
+
+- 🔏 **Password** — sign in with your **email or username + password**. Accounts are created by an Admin in **Users (`/admin?tab=users`)**, which provisions the Supabase Auth identity (`Admin`, `Engineering`, or `Operator`).
+- 🔵 **Google Sign-In** — any registered Gmail address automatically opens the same account (enable the Google provider in Supabase Auth to activate it).
+- 🛡️ What you may do after signing in is decided **server-side by your role** — the role chips shown on the login page are informational only.
+
+Logins are protected by a per-IP rolling rate limit (**10 attempts / 15 min**, `NFR-02`) and an optional **gateway proof** header check for deployments fronted by a private reverse proxy.
 
 <details>
 <summary><b>🔄 Changing or resetting an Administrator password</b></summary>

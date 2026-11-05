@@ -1,5 +1,5 @@
 import { test } from "node:test";
-import { equal, match, ok } from "node:assert/strict";
+import { doesNotMatch, equal, match, ok } from "node:assert/strict";
 import React, { act } from "react";
 import { JSDOM } from "jsdom";
 
@@ -112,6 +112,8 @@ test("command practice interacts locally and does not send requests", async () =
     const role =
       container.querySelectorAll<HTMLSelectElement>("select")[0];
 
+    // Tampered/unknown role values are ignored by the role select (Viewer was
+    // removed) — the previous role stays active and the request still succeeds.
     await act(async () => {
       role.value = "Viewer";
       role.dispatchEvent(
@@ -123,9 +125,13 @@ test("command practice interacts locally and does not send requests", async () =
       button("Request example START").click();
     });
 
-    match(
+    doesNotMatch(
       container.textContent!,
       /fictional role cannot issue commands/,
+    );
+    match(
+      container.textContent!,
+      /Example requested; nothing was sent\./,
     );
 
     await act(async () => {
