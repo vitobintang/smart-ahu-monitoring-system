@@ -1,7 +1,7 @@
 /**
- * Multi-branch 3D facility geometry, open outdoor campus grounds,
- * exterior wall extraction, solid wall collision physics, and magnetic
- * flush-to-wall AHU snapping (both indoor & anywhere outdoor).
+ * Multi-branch & custom-editable 3D facility floorplan geometry,
+ * polygon wall extraction, interactive wall/vertex CAD editing helpers,
+ * solid wall collision physics, and magnetic flush-to-wall AHU snapping.
  */
 
 export interface WingZone {
@@ -14,6 +14,11 @@ export interface WingZone {
   zMax: number;
   indoor: boolean;
   accent: string;
+}
+
+export interface FloorVertex {
+  x: number;
+  z: number;
 }
 
 export interface AhuPlacement {
@@ -30,7 +35,8 @@ export interface WallSegment {
   z1: number;
   x2: number;
   z2: number;
-  orientation: "H" | "V";
+  orientation: "H" | "V" | "A";
+  edgeIndex?: number;
 }
 
 export const GRID_CELL = 2;
@@ -42,7 +48,7 @@ export const WALL_SNAP_RANGE = 1.65; // magnetic snap engagement distance from w
 export const WALL_CLEARANCE = AHU_HALF_DEPTH + WALL_HALF_THICK + WALL_FLUSH_GAP;
 export const MIN_AHU_SPACING = 3.6;
 
-/** Full 3D architectural site bounds where outdoor AHUs can be freely placed anywhere outside the building. */
+/** Full 3D architectural site bounds where outdoor AHUs & room walls can be freely placed. */
 export const OUTDOOR_CAMPUS_BOUNDS = {
   xMin: -42,
   xMax: 42,
@@ -51,8 +57,38 @@ export const OUTDOOR_CAMPUS_BOUNDS = {
 } as const;
 
 /**
- * Six interconnected indoor branches forming one asymmetric open facility hall
- * (never a plain rectangle), surrounded by open unrestricted outdoor campus grounds.
+ * Default 22-vertex closed floorplan polygon tracing the exact perimeter of our
+ * 6 interconnected indoor branches (NW Cleanroom, North Alcove, Central Spine,
+ * East Lab, SE Warehouse, and West Packing).
+ */
+export const DEFAULT_ROOM_VERTICES: FloorVertex[] = [
+  { x: -20, z: -18 },
+  { x: -4, z: -18 },
+  { x: -4, z: -14 },
+  { x: 4, z: -14 },
+  { x: 4, z: -8 },
+  { x: 10, z: -8 },
+  { x: 10, z: -12 },
+  { x: 22, z: -12 },
+  { x: 22, z: 2 },
+  { x: 10, z: 2 },
+  { x: 10, z: 8 },
+  { x: 14, z: 8 },
+  { x: 14, z: 20 },
+  { x: -2, z: 20 },
+  { x: -2, z: 8 },
+  { x: -8, z: 8 },
+  { x: -8, z: 12 },
+  { x: -22, z: 12 },
+  { x: -22, z: 0 },
+  { x: -8, z: 0 },
+  { x: -8, z: -8 },
+  { x: -20, z: -8 },
+];
+
+/**
+ * Six interconnected indoor branches forming the default asymmetric open facility hall,
+ * surrounded by open unrestricted outdoor campus grounds.
  */
 export const FACILITY_ZONES: WingZone[] = [
   {
@@ -154,11 +190,30 @@ export function describeOutdoorSector(x: number, z: number): WingZone {
   };
 }
 
-/**
- * Default coordinates for the 7 baseline AHU units:
- * - 5 inside the multi-branch facility hall
- * - 2 outside mounted flush against the exterior building walls (movable anywhere outdoors)
- */
+export function describeIndoorSector(x: number, z: number): WingZone {
+  for (const w of FACILITY_ZONES) {
+    if (w.indoor && x >= w.xMin && x <= w.xMax && z >= w.zMin && z <= w.zMax) {
+      return w;
+    }
+  }
+  let sector = "Central";
+  if (Math.hypot(x, z) > 7) {
+    if (Math.abs(x) >= Math.abs(z)) sector = x >= 0 ? "East" : "West";
+    else sector = z < 0 ? "North" : "South";
+  }
+  return {
+    id: `custom-indoor-${sector.toLowerCase()}`,
+    label: `${sector} Facility Hall (Indoor)`,
+    shortLabel: `${sector} Hall`,
+    xMin: OUTDOOR_CAMPUS_BOUNDS.xMin,
+    xMax: OUTDOOR_CAMPUS_BOUNDS.xMax,
+    zMin: OUTDOOR_CAMPUS_BOUNDS.zMin,
+    zMax: OUTDOOR_CAMPUS_BOUNDS.zMax,
+    indoor: true,
+    accent: "#2563eb",
+  };
+}
+
 export const DEFAULT_AHU_PLACEMENTS: Record<
   string,
   { x: number; z: number; rotation: number; zone: string }
@@ -173,27 +228,86 @@ export const DEFAULT_AHU_PLACEMENTS: Record<
 };
 
 export function snapToPlatformGrid(v: number, step = 0.5): number {
+  if (step <= 0) return Number(v.toFixed(2));
   const s = Math.round(v / step) * step;
   return Number(s.toFixed(2));
 }
 
 export function normalizeRotation(deg: number): number {
-  const n = ((Math.round(deg / 90) * 90) % 360 + 360) % 360;
+  const rounded = Math.round(deg);
+  const n = ((rounded % 360) + 360) % 360;
   return n === 360 ? 0 : n;
 }
 
+/** Bounding half-extents in world X/Z for any rotation angle (exact at 0/90/180/270 AND smooth for angled walls). */
 export function getAhuHalfExtents(rotationDeg = 0): { hx: number; hz: number } {
-  const rot = normalizeRotation(rotationDeg);
-  if (rot === 90 || rot === 270) {
-    return { hx: AHU_HALF_DEPTH, hz: AHU_HALF_LENGTH };
-  }
-  return { hx: AHU_HALF_LENGTH, hz: AHU_HALF_DEPTH };
+  const rad = (-rotationDeg * Math.PI) / 180;
+  const c = Math.abs(Math.cos(rad));
+  const s = Math.abs(Math.sin(rad));
+  return {
+    hx: Number((c * AHU_HALF_LENGTH + s * AHU_HALF_DEPTH).toFixed(4)),
+    hz: Number((s * AHU_HALF_LENGTH + c * AHU_HALF_DEPTH).toFixed(4)),
+  };
 }
 
-export function isPointInsideIndoorRoom(x: number, z: number): boolean {
-  return FACILITY_ZONES.some(
-    (w) => w.indoor && x >= w.xMin && x <= w.xMax && z >= w.zMin && z <= w.zMax,
-  );
+/** Point-to-segment projection & distance in 2D (X, Z). */
+export function projectPointToSegment(
+  px: number,
+  pz: number,
+  x1: number,
+  z1: number,
+  x2: number,
+  z2: number,
+): { cx: number; cz: number; t: number; dist: number } {
+  const dx = x2 - x1;
+  const dz = z2 - z1;
+  const lenSq = dx * dx + dz * dz;
+  if (lenSq < 1e-8) {
+    return { cx: x1, cz: z1, t: 0, dist: Math.hypot(px - x1, pz - z1) };
+  }
+  const t = Math.min(1, Math.max(0, ((px - x1) * dx + (pz - z1) * dz) / lenSq));
+  const cx = x1 + t * dx;
+  const cz = z1 + t * dz;
+  return { cx, cz, t, dist: Math.hypot(px - cx, pz - cz) };
+}
+
+/** Exact 2D polygon inclusion test (ray-casting + boundary tolerance). */
+export function isPointInPolygon(
+  x: number,
+  z: number,
+  vertices: FloorVertex[] = DEFAULT_ROOM_VERTICES,
+): boolean {
+  const n = vertices.length;
+  if (n < 3) return false;
+
+  for (let i = 0; i < n; i += 1) {
+    const a = vertices[i];
+    const b = vertices[(i + 1) % n];
+    if (projectPointToSegment(x, z, a.x, a.z, b.x, b.z).dist <= 1e-3) {
+      return true;
+    }
+  }
+
+  let inside = false;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = vertices[i].x;
+    const zi = vertices[i].z;
+    const xj = vertices[j].x;
+    const zj = vertices[j].z;
+
+    const intersect = zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+export function isPointInsideIndoorRoom(
+  x: number,
+  z: number,
+  customVertices?: FloorVertex[] | null,
+): boolean {
+  const verts = customVertices && customVertices.length >= 3 ? customVertices : DEFAULT_ROOM_VERTICES;
+  return isPointInPolygon(x, z, verts);
 }
 
 export function isPointWithinCampusBounds(x: number, z: number): boolean {
@@ -205,134 +319,348 @@ export function isPointWithinCampusBounds(x: number, z: number): boolean {
   );
 }
 
-export function isPointInsideOutdoorPad(x: number, z: number): boolean {
-  return isPointWithinCampusBounds(x, z) && !isPointInsideIndoorRoom(x, z);
+export function isPointInsideOutdoorPad(
+  x: number,
+  z: number,
+  customVertices?: FloorVertex[] | null,
+): boolean {
+  return isPointWithinCampusBounds(x, z) && !isPointInsideIndoorRoom(x, z, customVertices);
 }
 
-export function findZoneAt(x: number, z: number): WingZone | null {
-  for (const w of FACILITY_ZONES) {
-    if (w.indoor && x > w.xMin && x < w.xMax && z > w.zMin && z < w.zMax) return w;
+export function findZoneAt(
+  x: number,
+  z: number,
+  customVertices?: FloorVertex[] | null,
+): WingZone | null {
+  if (!isPointWithinCampusBounds(x, z)) return null;
+  if (isPointInsideIndoorRoom(x, z, customVertices)) {
+    return describeIndoorSector(x, z);
   }
-  for (const w of FACILITY_ZONES) {
-    if (w.indoor && x >= w.xMin && x <= w.xMax && z >= w.zMin && z <= w.zMax) return w;
-  }
-  if (isPointWithinCampusBounds(x, z)) {
-    return describeOutdoorSector(x, z);
-  }
-  return null;
+  return describeOutdoorSector(x, z);
 }
 
-/**
- * Extracts merged outer perimeter wall segments of the union of all indoor wings.
- * Internal junctions between branches have zero walls so the room is one open
- * multi-branch space.
- */
-let cachedWalls: WallSegment[] | null = null;
-
-export function computeExteriorWallSegments(): WallSegment[] {
-  if (cachedWalls) return cachedWalls;
-  const cellKey = (gx: number, gz: number) => `${gx},${gz}`;
-  const indoorSet = new Set<string>();
-
-  let minGx = Infinity;
-  let maxGx = -Infinity;
-  let minGz = Infinity;
-  let maxGz = -Infinity;
-
-  for (const w of FACILITY_ZONES) {
-    if (!w.indoor) continue;
-    const gx0 = Math.round(w.xMin / GRID_CELL);
-    const gx1 = Math.round(w.xMax / GRID_CELL);
-    const gz0 = Math.round(w.zMin / GRID_CELL);
-    const gz1 = Math.round(w.zMax / GRID_CELL);
-    minGx = Math.min(minGx, gx0);
-    maxGx = Math.max(maxGx, gx1);
-    minGz = Math.min(minGz, gz0);
-    maxGz = Math.max(maxGz, gz1);
-    for (let gx = gx0; gx < gx1; gx += 1) {
-      for (let gz = gz0; gz < gz1; gz += 1) {
-        indoorSet.add(cellKey(gx, gz));
-      }
-    }
-  }
-
+/** Converts any floorplan vertex loop into 3D wall segments (supports H, V, and Angled walls!). */
+export function computeExteriorWallSegments(
+  customVertices?: FloorVertex[] | null,
+): WallSegment[] {
+  const verts = customVertices && customVertices.length >= 3 ? customVertices : DEFAULT_ROOM_VERTICES;
   const segments: WallSegment[] = [];
-
-  for (let gz = minGz; gz <= maxGz; gz += 1) {
-    let runStart: number | null = null;
-    for (let gx = minGx; gx <= maxGx; gx += 1) {
-      const above = indoorSet.has(cellKey(gx, gz - 1));
-      const below = indoorSet.has(cellKey(gx, gz));
-      const isBoundary = gx < maxGx && above !== below;
-      if (isBoundary) {
-        if (runStart === null) runStart = gx;
-      } else if (runStart !== null) {
-        segments.push({
-          x1: runStart * GRID_CELL,
-          z1: gz * GRID_CELL,
-          x2: gx * GRID_CELL,
-          z2: gz * GRID_CELL,
-          orientation: "H",
-        });
-        runStart = null;
-      }
-    }
+  for (let i = 0; i < verts.length; i += 1) {
+    const a = verts[i];
+    const b = verts[(i + 1) % verts.length];
+    const dx = Math.abs(b.x - a.x);
+    const dz = Math.abs(b.z - a.z);
+    if (dx < 1e-3 && dz < 1e-3) continue;
+    const orientation: "H" | "V" | "A" = dz < 1e-2 ? "H" : dx < 1e-2 ? "V" : "A";
+    segments.push({
+      x1: a.x,
+      z1: a.z,
+      x2: b.x,
+      z2: b.z,
+      orientation,
+      edgeIndex: i,
+    });
   }
-
-  for (let gx = minGx; gx <= maxGx; gx += 1) {
-    let runStart: number | null = null;
-    for (let gz = minGz; gz <= maxGz; gz += 1) {
-      const left = indoorSet.has(cellKey(gx - 1, gz));
-      const right = indoorSet.has(cellKey(gx, gz));
-      const isBoundary = gz < maxGz && left !== right;
-      if (isBoundary) {
-        if (runStart === null) runStart = gz;
-      } else if (runStart !== null) {
-        segments.push({
-          x1: gx * GRID_CELL,
-          z1: runStart * GRID_CELL,
-          x2: gx * GRID_CELL,
-          z2: gz * GRID_CELL,
-          orientation: "V",
-        });
-        runStart = null;
-      }
-    }
-  }
-
-  cachedWalls = segments;
   return segments;
 }
 
-function getWallBox(seg: WallSegment): { xMin: number; xMax: number; zMin: number; zMax: number } {
-  if (seg.orientation === "H") {
-    return {
-      xMin: Math.min(seg.x1, seg.x2) - 0.21,
-      xMax: Math.max(seg.x1, seg.x2) + 0.21,
-      zMin: seg.z1 - WALL_HALF_THICK,
-      zMax: seg.z1 + WALL_HALF_THICK,
-    };
+/** Computes signed shoelace area (and positive m² floor area) of a polygon. */
+export function computePolygonAreaSqM(vertices: FloorVertex[]): number {
+  if (vertices.length < 3) return 0;
+  let sum = 0;
+  for (let i = 0; i < vertices.length; i += 1) {
+    const a = vertices[i];
+    const b = vertices[(i + 1) % vertices.length];
+    sum += a.x * b.z - b.x * a.z;
   }
-  return {
-    xMin: seg.x1 - WALL_HALF_THICK,
-    xMax: seg.x1 + WALL_HALF_THICK,
-    zMin: Math.min(seg.z1, seg.z2) - 0.21,
-    zMax: Math.max(seg.z1, seg.z2) + 0.21,
+  return Number((Math.abs(sum) * 0.5).toFixed(1));
+}
+
+function segmentsProperlyIntersect(
+  a1: FloorVertex,
+  a2: FloorVertex,
+  b1: FloorVertex,
+  b2: FloorVertex,
+): boolean {
+  const cross = (o: FloorVertex, p: FloorVertex, q: FloorVertex) =>
+    (p.x - o.x) * (q.z - o.z) - (p.z - o.z) * (q.x - o.x);
+
+  const d1 = cross(a1, a2, b1);
+  const d2 = cross(a1, a2, b2);
+  const d3 = cross(b1, b2, a1);
+  const d4 = cross(b1, b2, a2);
+
+  if (((d1 > 1e-5 && d2 < -1e-5) || (d1 < -1e-5 && d2 > 1e-5)) &&
+      ((d3 > 1e-5 && d4 < -1e-5) || (d3 < -1e-5 && d4 > 1e-5))) {
+    return true;
+  }
+  return false;
+}
+
+/** Validates a user-edited room floorplan polygon before saving or committing a wall drag. */
+export function validateFloorplanPolygon(
+  vertices: FloorVertex[],
+): { valid: boolean; reason?: string; areaSqM: number } {
+  if (!Array.isArray(vertices) || vertices.length < 3) {
+    return { valid: false, reason: "Room must have at least 3 corner points.", areaSqM: 0 };
+  }
+  if (vertices.length > 80) {
+    return { valid: false, reason: "Room cannot exceed 80 corner points.", areaSqM: 0 };
+  }
+
+  for (let i = 0; i < vertices.length; i += 1) {
+    const v = vertices[i];
+    if (!Number.isFinite(v.x) || !Number.isFinite(v.z)) {
+      return { valid: false, reason: "Invalid vertex coordinates.", areaSqM: 0 };
+    }
+    if (
+      v.x < OUTDOOR_CAMPUS_BOUNDS.xMin + 2 ||
+      v.x > OUTDOOR_CAMPUS_BOUNDS.xMax - 2 ||
+      v.z < OUTDOOR_CAMPUS_BOUNDS.zMin + 2 ||
+      v.z > OUTDOOR_CAMPUS_BOUNDS.zMax - 2
+    ) {
+      return { valid: false, reason: "Room walls must stay inside the site boundaries.", areaSqM: 0 };
+    }
+    const next = vertices[(i + 1) % vertices.length];
+    if (Math.hypot(next.x - v.x, next.z - v.z) < 1.0) {
+      return { valid: false, reason: "Wall segment is too short (minimum 1.0 m).", areaSqM: 0 };
+    }
+  }
+
+  // Non-adjacent edges must not cross each other
+  const n = vertices.length;
+  for (let i = 0; i < n; i += 1) {
+    const a1 = vertices[i];
+    const a2 = vertices[(i + 1) % n];
+    for (let j = i + 2; j < n; j += 1) {
+      if (i === 0 && j === n - 1) continue;
+      const b1 = vertices[j];
+      const b2 = vertices[(j + 1) % n];
+      if (segmentsProperlyIntersect(a1, a2, b1, b2)) {
+        return { valid: false, reason: "Walls cannot cross over each other.", areaSqM: 0 };
+      }
+      // Also prevent non-adjacent vertices from collapsing onto another wall
+      if (projectPointToSegment(a1.x, a1.z, b1.x, b1.z, b2.x, b2.z).dist < 0.45) {
+        return { valid: false, reason: "Wall is too close to another non-adjacent wall.", areaSqM: 0 };
+      }
+    }
+  }
+
+  const areaSqM = computePolygonAreaSqM(vertices);
+  if (areaSqM < 24) {
+    return { valid: false, reason: "Indoor room area must be at least 24 m².", areaSqM };
+  }
+
+  return { valid: true, areaSqM };
+}
+
+/* ------------------------------------------------------------------ */
+/* Interactive 3D Room CAD Editing Operations                         */
+/* ------------------------------------------------------------------ */
+
+/** Moves a single corner vertex with optional grid snapping. */
+export function moveFloorVertex(
+  vertices: FloorVertex[],
+  vertexIndex: number,
+  targetX: number,
+  targetZ: number,
+  snapStep = 0.5,
+): FloorVertex[] {
+  if (vertexIndex < 0 || vertexIndex >= vertices.length) return vertices;
+  const x = Math.min(OUTDOOR_CAMPUS_BOUNDS.xMax - 2.5, Math.max(OUTDOOR_CAMPUS_BOUNDS.xMin + 2.5, snapToPlatformGrid(targetX, snapStep)));
+  const z = Math.min(OUTDOOR_CAMPUS_BOUNDS.zMax - 2.5, Math.max(OUTDOOR_CAMPUS_BOUNDS.zMin + 2.5, snapToPlatformGrid(targetZ, snapStep)));
+  const next = vertices.map((v, idx) => (idx === vertexIndex ? { x, z } : { ...v }));
+  return validateFloorplanPolygon(next).valid ? next : vertices;
+}
+
+/** Pushes/pulls an entire wall segment along its perpendicular normal so you can resize wings smoothly! */
+export function dragFloorWall(
+  vertices: FloorVertex[],
+  edgeIndex: number,
+  targetX: number,
+  targetZ: number,
+  snapStep = 0.5,
+): FloorVertex[] {
+  const n = vertices.length;
+  if (edgeIndex < 0 || edgeIndex >= n) return vertices;
+  const i = edgeIndex;
+  const j = (edgeIndex + 1) % n;
+  const a = vertices[i];
+  const b = vertices[j];
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const len = Math.hypot(dx, dz);
+  if (len < 1e-4) return vertices;
+
+  // Normal vector perpendicular to wall
+  const nx = -dz / len;
+  const nz = dx / len;
+  const midX = (a.x + b.x) / 2;
+  const midZ = (a.z + b.z) / 2;
+  const rawOffset = (targetX - midX) * nx + (targetZ - midZ) * nz;
+  const snappedOffset = snapStep > 0 ? Math.round(rawOffset / snapStep) * snapStep : rawOffset;
+  if (Math.abs(snappedOffset) < 1e-4) return vertices;
+
+  const shiftX = Number((nx * snappedOffset).toFixed(2));
+  const shiftZ = Number((nz * snappedOffset).toFixed(2));
+
+  const candidate = vertices.map((v, idx) => {
+    if (idx === i || idx === j) {
+      return {
+        x: Number((v.x + shiftX).toFixed(2)),
+        z: Number((v.z + shiftZ).toFixed(2)),
+      };
+    }
+    return { ...v };
+  });
+
+  return validateFloorplanPolygon(candidate).valid ? candidate : vertices;
+}
+
+/** Splits a wall segment by inserting a brand-new corner point right where clicked (or at wall midpoint). */
+export function insertVertexOnWall(
+  vertices: FloorVertex[],
+  edgeIndex: number,
+  clickPoint?: { x: number; z: number },
+  snapStep = 0.5,
+): { vertices: FloorVertex[]; insertedIndex: number } | null {
+  const n = vertices.length;
+  if (edgeIndex < 0 || edgeIndex >= n || n >= 78) return null;
+  const a = vertices[edgeIndex];
+  const b = vertices[(edgeIndex + 1) % n];
+  const len = Math.hypot(b.x - a.x, b.z - a.z);
+  if (len < 2.2) return null;
+
+  let t = 0.5;
+  if (clickPoint) {
+    const proj = projectPointToSegment(clickPoint.x, clickPoint.z, a.x, a.z, b.x, b.z);
+    // Keep at least 1.1m from both existing corners
+    const minT = 1.1 / len;
+    t = Math.min(1 - minT, Math.max(minT, proj.t));
+  }
+
+  const newPt: FloorVertex = {
+    x: snapToPlatformGrid(a.x + (b.x - a.x) * t, snapStep || 0.25),
+    z: snapToPlatformGrid(a.z + (b.z - a.z) * t, snapStep || 0.25),
   };
+
+  const next = [...vertices.slice(0, edgeIndex + 1), newPt, ...vertices.slice(edgeIndex + 1)];
+  if (!validateFloorplanPolygon(next).valid) return null;
+  return { vertices: next, insertedIndex: edgeIndex + 1 };
+}
+
+/** Extrudes a new rectangular room wing/alcove outward from any wall segment in a single click! */
+export function extrudeWingOnWall(
+  vertices: FloorVertex[],
+  edgeIndex: number,
+  depth = 4,
+): FloorVertex[] | null {
+  const n = vertices.length;
+  if (edgeIndex < 0 || edgeIndex >= n || n >= 74) return null;
+  const a = vertices[edgeIndex];
+  const b = vertices[(edgeIndex + 1) % n];
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const len = Math.hypot(dx, dz);
+  if (len < 4.5) return null;
+
+  const tx = dx / len;
+  const tz = dz / len;
+  // Determine outward normal (pointing outside the current polygon)
+  let nx = -tz;
+  let nz = tx;
+  const midX = (a.x + b.x) / 2;
+  const midZ = (a.z + b.z) / 2;
+  if (isPointInPolygon(midX + nx * 0.6, midZ + nz * 0.6, vertices)) {
+    nx = -nx;
+    nz = -nz;
+  }
+
+  const inset = Math.min(2.5, len * 0.2);
+  const p1: FloorVertex = {
+    x: snapToPlatformGrid(a.x + tx * inset, 0.5),
+    z: snapToPlatformGrid(a.z + tz * inset, 0.5),
+  };
+  const p4: FloorVertex = {
+    x: snapToPlatformGrid(b.x - tx * inset, 0.5),
+    z: snapToPlatformGrid(b.z - tz * inset, 0.5),
+  };
+  const p2: FloorVertex = {
+    x: snapToPlatformGrid(p1.x + nx * depth, 0.5),
+    z: snapToPlatformGrid(p1.z + nz * depth, 0.5),
+  };
+  const p3: FloorVertex = {
+    x: snapToPlatformGrid(p4.x + nx * depth, 0.5),
+    z: snapToPlatformGrid(p4.z + nz * depth, 0.5),
+  };
+
+  const next = [
+    ...vertices.slice(0, edgeIndex + 1),
+    p1,
+    p2,
+    p3,
+    p4,
+    ...vertices.slice(edgeIndex + 1),
+  ];
+  return validateFloorplanPolygon(next).valid ? next : null;
+}
+
+/** Deletes a corner vertex to merge adjacent walls cleanly (requires >= 4 vertices). */
+export function deleteFloorVertex(
+  vertices: FloorVertex[],
+  vertexIndex: number,
+): FloorVertex[] | null {
+  if (vertices.length <= 3 || vertexIndex < 0 || vertexIndex >= vertices.length) return null;
+  const next = vertices.filter((_, idx) => idx !== vertexIndex);
+  return validateFloorplanPolygon(next).valid ? next : null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Solid Wall Collision & Magnetic Wall-Snap Solver (Arbitrary Walls) */
+/* ------------------------------------------------------------------ */
+
+/** Effective half-extent of the AHU projected along unit direction (nx, nz). */
+function ahuRadiusAlongDirection(nx: number, nz: number, rotationDeg: number): number {
+  const ry = (-rotationDeg * Math.PI) / 180;
+  const localXx = Math.cos(ry);
+  const localXz = -Math.sin(ry);
+  const localZx = Math.sin(ry);
+  const localZz = Math.cos(ry);
+  return (
+    Math.abs(nx * localXx + nz * localXz) * AHU_HALF_LENGTH +
+    Math.abs(nx * localZx + nz * localZz) * AHU_HALF_DEPTH
+  );
 }
 
 /** True if the AHU's oriented 3D bounding plinth physically intersects any exterior wall or column. */
-export function collidesWithAnyWall(x: number, z: number, rotationDeg = 0): boolean {
-  const { hx, hz } = getAhuHalfExtents(rotationDeg);
-  const eps = 0.012;
-  const axMin = x - hx + eps;
-  const axMax = x + hx - eps;
-  const azMin = z - hz + eps;
-  const azMax = z + hz - eps;
+export function collidesWithAnyWall(
+  x: number,
+  z: number,
+  rotationDeg = 0,
+  customVertices?: FloorVertex[] | null,
+): boolean {
+  const eps = 0.015;
+  for (const seg of computeExteriorWallSegments(customVertices)) {
+    const dx = seg.x2 - seg.x1;
+    const dz = seg.z2 - seg.z1;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-4) continue;
+    const tx = dx / len;
+    const tz = dz / len;
+    const nx = -tz;
+    const nz = tx;
 
-  for (const seg of computeExteriorWallSegments()) {
-    const wb = getWallBox(seg);
-    if (axMax > wb.xMin && axMin < wb.xMax && azMax > wb.zMin && azMin < wb.zMax) {
+    const along = (x - seg.x1) * tx + (z - seg.z1) * tz;
+    const perp = Math.abs((x - seg.x1) * nx + (z - seg.z1) * nz);
+
+    const rAlong = ahuRadiusAlongDirection(tx, tz, rotationDeg);
+    const rPerp = ahuRadiusAlongDirection(nx, nz, rotationDeg);
+
+    if (
+      along > -(rAlong + 0.18 - eps) &&
+      along < len + (rAlong + 0.18 - eps) &&
+      perp < WALL_HALF_THICK + rPerp - eps
+    ) {
       return true;
     }
   }
@@ -341,7 +669,7 @@ export function collidesWithAnyWall(x: number, z: number, rotationDeg = 0): bool
 
 /**
  * Checks that the entire oriented AHU mounting plinth sits cleanly either:
- * - wholly inside the multi-branch indoor facility floor, OR
+ * - wholly inside the facility floor polygon, OR
  * - wholly outside on the open outdoor campus grounds,
  * with zero wall overlap.
  */
@@ -349,56 +677,51 @@ export function isFootprintOnPlatform(
   x: number,
   z: number,
   rotationDeg = 0,
+  customVertices?: FloorVertex[] | null,
 ): { ok: boolean; indoor: boolean; zone: WingZone | null } {
-  if (collidesWithAnyWall(x, z, rotationDeg)) {
+  if (collidesWithAnyWall(x, z, rotationDeg, customVertices)) {
     return { ok: false, indoor: false, zone: null };
   }
 
-  const { hx, hz } = getAhuHalfExtents(rotationDeg);
-  const sampleOffsets = [
+  const ry = (-rotationDeg * Math.PI) / 180;
+  const cosR = Math.cos(ry);
+  const sinR = Math.sin(ry);
+  const localCorners = [
     [0, 0],
-    [-hx, -hz],
-    [hx, -hz],
-    [-hx, hz],
-    [hx, hz],
-    [-hx, 0],
-    [hx, 0],
-    [0, -hz],
-    [0, hz],
+    [-AHU_HALF_LENGTH, -AHU_HALF_DEPTH],
+    [AHU_HALF_LENGTH, -AHU_HALF_DEPTH],
+    [-AHU_HALF_LENGTH, AHU_HALF_DEPTH],
+    [AHU_HALF_LENGTH, AHU_HALF_DEPTH],
+    [-AHU_HALF_LENGTH, 0],
+    [AHU_HALF_LENGTH, 0],
+    [0, -AHU_HALF_DEPTH],
+    [0, AHU_HALF_DEPTH],
   ] as const;
 
-  const centerZone = findZoneAt(x, z);
-  if (!centerZone) return { ok: false, indoor: false, zone: null };
+  const worldSamples = localCorners.map(([lx, lz]) => [
+    x + lx * cosR + lz * sinR,
+    z - lx * sinR + lz * cosR,
+  ]);
 
-  if (centerZone.indoor) {
-    const allIndoor = sampleOffsets.every(([dx, dz]) =>
-      FACILITY_ZONES.some(
-        (w) =>
-          w.indoor &&
-          x + dx >= w.xMin - 0.02 &&
-          x + dx <= w.xMax + 0.02 &&
-          z + dz >= w.zMin - 0.02 &&
-          z + dz <= w.zMax + 0.02,
-      ),
-    );
-    return { ok: allIndoor, indoor: true, zone: allIndoor ? centerZone : null };
+  if (!worldSamples.every(([sx, sz]) => isPointWithinCampusBounds(sx, sz))) {
+    return { ok: false, indoor: false, zone: null };
   }
 
-  // Unrestricted outdoor placement anywhere within campus site bounds and outside building walls
-  const allValidOutdoor = sampleOffsets.every(([dx, dz]) => {
-    const sx = x + dx;
-    const sz = z + dz;
-    if (!isPointWithinCampusBounds(sx, sz)) return false;
-    const insideBuilding = FACILITY_ZONES.some(
-      (w) => w.indoor && sx > w.xMin + 0.02 && sx < w.xMax - 0.02 && sz > w.zMin + 0.02 && sz < w.zMax - 0.02,
-    );
-    return !insideBuilding;
-  });
+  const centerIndoor = isPointInsideIndoorRoom(x, z, customVertices);
+  if (centerIndoor) {
+    const allIndoor = worldSamples.every(([sx, sz]) => isPointInsideIndoorRoom(sx, sz, customVertices));
+    return {
+      ok: allIndoor,
+      indoor: true,
+      zone: allIndoor ? describeIndoorSector(x, z) : null,
+    };
+  }
 
+  const allOutdoor = worldSamples.every(([sx, sz]) => !isPointInsideIndoorRoom(sx, sz, customVertices));
   return {
-    ok: allValidOutdoor,
+    ok: allOutdoor,
     indoor: false,
-    zone: allValidOutdoor ? describeOutdoorSector(x, z) : null,
+    zone: allOutdoor ? describeOutdoorSector(x, z) : null,
   };
 }
 
@@ -415,12 +738,11 @@ export interface PlacementValidation {
 }
 
 /**
- * Core solid-wall physics & magnetic flush-to-wall snap solver:
- * 1. Allows placing or moving AHUs anywhere inside the multi-wing building OR anywhere
- *    outside on the open outdoor campus grounds (no yellow-pad restriction).
- * 2. Magnetically snaps the AHU flush against any nearby wall segment (from either the
- *    indoor side OR the outdoor side!) within WALL_SNAP_RANGE.
- * 3. Iteratively resolves AABB wall & corner collisions so 0.00m wall overlap is guaranteed.
+ * Core solid-wall physics & magnetic flush-to-wall snap solver (works on H, V, & Angled walls!):
+ * 1. Allows placing or moving AHUs anywhere inside the custom/default room OR anywhere outdoors.
+ * 2. Magnetically snaps the AHU flush against any nearby wall segment (from inside OR outside)
+ *    within WALL_SNAP_RANGE and aligns rotation parallel to the wall.
+ * 3. Iteratively resolves wall normal push-out so 0.00m wall overlap is guaranteed.
  * 4. Checks safe clearance from all other AHU units.
  */
 export function resolveWallPhysicsAndSnap(
@@ -433,12 +755,14 @@ export function resolveWallPhysicsAndSnap(
     enableWallSnap?: boolean;
     autoAlignRotation?: boolean;
     clampVoidToWall?: boolean;
+    roomVertices?: FloorVertex[] | null;
   },
 ): PlacementValidation {
   const excludeId = options?.excludeId;
   const enableWallSnap = options?.enableWallSnap !== false;
   const autoAlignRotation = options?.autoAlignRotation !== false;
   const clampVoidToWall = options?.clampVoidToWall === true;
+  const roomVertices = options?.roomVertices;
 
   let rotation = normalizeRotation(options?.rotation ?? 0);
 
@@ -459,66 +783,86 @@ export function resolveWallPhysicsAndSnap(
   let workX = Math.min(OUTDOOR_CAMPUS_BOUNDS.xMax - 1.8, Math.max(OUTDOOR_CAMPUS_BOUNDS.xMin + 1.8, rawX));
   let workZ = Math.min(OUTDOOR_CAMPUS_BOUNDS.zMax - 1.8, Math.max(OUTDOOR_CAMPUS_BOUNDS.zMin + 1.8, rawZ));
 
-  const walls = computeExteriorWallSegments();
+  const walls = computeExteriorWallSegments(roomVertices);
   let snappedToWall = false;
   let snappedWall: WallSegment | null = null;
 
-  // Step 1: Magnetic Wall Snap check against all exterior wall segments (works on BOTH indoor & outdoor faces!)
+  // Step 1: Magnetic Wall Snap check against all polygon wall segments (H, V, and Angled!)
   if (enableWallSnap) {
     let bestGap = WALL_SNAP_RANGE;
     let bestCandidate: {
       seg: WallSegment;
+      tx: number;
+      tz: number;
+      nx: number;
+      nz: number;
+      len: number;
+      along: number;
       side: 1 | -1;
       wallRot: number;
     } | null = null;
 
     for (const seg of walls) {
-      if (seg.orientation === "H") {
-        const minX = Math.min(seg.x1, seg.x2);
-        const maxX = Math.max(seg.x1, seg.x2);
-        if (workX < minX + 0.6 || workX > maxX - 0.6) continue;
-        const dz = workZ - seg.z1;
-        const probeSide: 1 | -1 = dz >= 0 ? 1 : -1;
-        const candRot = autoAlignRotation ? (probeSide === 1 ? 0 : 180) : rotation;
-        const { hz } = getAhuHalfExtents(candRot);
-        const faceDist = Math.abs(Math.abs(dz) - WALL_HALF_THICK - hz);
-        if (Math.abs(dz) <= WALL_HALF_THICK + hz + WALL_SNAP_RANGE && faceDist < bestGap) {
-          bestGap = faceDist;
-          bestCandidate = { seg, side: probeSide, wallRot: candRot };
-        }
-      } else {
-        const minZ = Math.min(seg.z1, seg.z2);
-        const maxZ = Math.max(seg.z1, seg.z2);
-        if (workZ < minZ + 0.6 || workZ > maxZ - 0.6) continue;
-        const dx = workX - seg.x1;
-        const probeSide: 1 | -1 = dx >= 0 ? 1 : -1;
-        const candRot = autoAlignRotation ? (probeSide === 1 ? 270 : 90) : rotation;
-        const { hx } = getAhuHalfExtents(candRot);
-        const faceDist = Math.abs(Math.abs(dx) - WALL_HALF_THICK - hx);
-        if (Math.abs(dx) <= WALL_HALF_THICK + hx + WALL_SNAP_RANGE && faceDist < bestGap) {
-          bestGap = faceDist;
-          bestCandidate = { seg, side: probeSide, wallRot: candRot };
-        }
+      const dx = seg.x2 - seg.x1;
+      const dz = seg.z2 - seg.z1;
+      const len = Math.hypot(dx, dz);
+      if (len < 2.2) continue;
+
+      const tx = dx / len;
+      const tz = dz / len;
+      const nx = -tz;
+      const nz = tx;
+
+      const along = (workX - seg.x1) * tx + (workZ - seg.z1) * tz;
+      if (along < 0.6 || along > len - 0.6) continue;
+
+      const signedPerp = (workX - seg.x1) * nx + (workZ - seg.z1) * nz;
+      const side: 1 | -1 = signedPerp >= 0 ? 1 : -1;
+
+      // Compute rotation that places AHU's flat back (-Z local) flush against the wall (-side * normal)
+      const towardWallX = -side * nx;
+      const towardWallZ = -side * nz;
+      const alignedDeg = normalizeRotation((Math.atan2(towardWallX, -towardWallZ) * 180) / Math.PI);
+      const candRot = autoAlignRotation ? alignedDeg : rotation;
+
+      const rPerp = ahuRadiusAlongDirection(nx, nz, candRot);
+      const absPerp = Math.abs(signedPerp);
+      const faceDist = Math.abs(absPerp - WALL_HALF_THICK - rPerp);
+
+      if (absPerp <= WALL_HALF_THICK + rPerp + WALL_SNAP_RANGE && faceDist < bestGap) {
+        bestGap = faceDist;
+        bestCandidate = { seg, tx, tz, nx, nz, len, along, side, wallRot: candRot };
       }
     }
 
     if (bestCandidate) {
       rotation = bestCandidate.wallRot;
-      const { hx, hz } = getAhuHalfExtents(rotation);
-      const seg = bestCandidate.seg;
-      if (seg.orientation === "H") {
-        const minX = Math.min(seg.x1, seg.x2) + hx + 0.24;
-        const maxX = Math.max(seg.x1, seg.x2) - hx - 0.24;
-        workX = minX <= maxX ? Math.min(maxX, Math.max(minX, snapToPlatformGrid(workX, 0.5))) : (seg.x1 + seg.x2) / 2;
-        workZ = Number((seg.z1 + bestCandidate.side * (WALL_HALF_THICK + hz + WALL_FLUSH_GAP)).toFixed(2));
-      } else {
-        const minZ = Math.min(seg.z1, seg.z2) + hz + 0.24;
-        const maxZ = Math.max(seg.z1, seg.z2) - hz - 0.24;
-        workZ = minZ <= maxZ ? Math.min(maxZ, Math.max(minZ, snapToPlatformGrid(workZ, 0.5))) : (seg.z1 + seg.z2) / 2;
-        workX = Number((seg.x1 + bestCandidate.side * (WALL_HALF_THICK + hx + WALL_FLUSH_GAP)).toFixed(2));
-      }
+      const rAlong = ahuRadiusAlongDirection(bestCandidate.tx, bestCandidate.tz, rotation);
+      const rPerp = ahuRadiusAlongDirection(bestCandidate.nx, bestCandidate.nz, rotation);
+      const minAlong = rAlong + 0.24;
+      const maxAlong = bestCandidate.len - rAlong - 0.24;
+      const clampedAlong =
+        minAlong <= maxAlong
+          ? Math.min(maxAlong, Math.max(minAlong, snapToPlatformGrid(bestCandidate.along, 0.5)))
+          : bestCandidate.len / 2;
+      const perpDist = WALL_HALF_THICK + rPerp + WALL_FLUSH_GAP;
+
+      workX = Number(
+        (
+          bestCandidate.seg.x1 +
+          bestCandidate.tx * clampedAlong +
+          bestCandidate.nx * bestCandidate.side * perpDist
+        ).toFixed(2),
+      );
+      workZ = Number(
+        (
+          bestCandidate.seg.z1 +
+          bestCandidate.tz * clampedAlong +
+          bestCandidate.nz * bestCandidate.side * perpDist
+        ).toFixed(2),
+      );
       snappedToWall = true;
-      snappedWall = seg;
+      snappedWall = bestCandidate.seg;
     }
   }
 
@@ -527,35 +871,37 @@ export function resolveWallPhysicsAndSnap(
     workZ = snapToPlatformGrid(workZ, 0.5);
   }
 
-  // Step 2: Iterative Solid Wall AABB Push-Out Solver (guarantees zero wall penetration!)
-  const { hx, hz } = getAhuHalfExtents(rotation);
+  // Step 2: Iterative Solid Wall Normal Push-Out Solver (guarantees zero wall penetration for H/V/Angled walls!)
   for (let iter = 0; iter < 6; iter += 1) {
     let pushed = false;
     for (const seg of walls) {
-      const wb = getWallBox(seg);
-      const expandXMin = wb.xMin - hx - WALL_FLUSH_GAP;
-      const expandXMax = wb.xMax + hx + WALL_FLUSH_GAP;
-      const expandZMin = wb.zMin - hz - WALL_FLUSH_GAP;
-      const expandZMax = wb.zMax + hz + WALL_FLUSH_GAP;
+      const dx = seg.x2 - seg.x1;
+      const dz = seg.z2 - seg.z1;
+      const len = Math.hypot(dx, dz);
+      if (len < 1e-4) continue;
+      const tx = dx / len;
+      const tz = dz / len;
+      const nx = -tz;
+      const nz = tx;
 
-      if (workX > expandXMin && workX < expandXMax && workZ > expandZMin && workZ < expandZMax) {
-        const penLeft = workX - expandXMin;
-        const penRight = expandXMax - workX;
-        const penTop = workZ - expandZMin;
-        const penBottom = expandZMax - workZ;
-        const minPen = Math.min(penLeft, penRight, penTop, penBottom);
+      const along = (workX - seg.x1) * tx + (workZ - seg.z1) * tz;
+      const signedPerp = (workX - seg.x1) * nx + (workZ - seg.z1) * nz;
+      const rAlong = ahuRadiusAlongDirection(tx, tz, rotation);
+      const rPerp = ahuRadiusAlongDirection(nx, nz, rotation);
+      const minPerp = WALL_HALF_THICK + rPerp + WALL_FLUSH_GAP;
 
-        if (minPen === penLeft) workX = Number(expandXMin.toFixed(2));
-        else if (minPen === penRight) workX = Number(expandXMax.toFixed(2));
-        else if (minPen === penTop) workZ = Number(expandZMin.toFixed(2));
-        else workZ = Number(expandZMax.toFixed(2));
+      if (along > -(rAlong + 0.2) && along < len + (rAlong + 0.2) && Math.abs(signedPerp) < minPerp) {
+        const side = signedPerp >= 0 ? 1 : -1;
+        const pushDelta = minPerp - Math.abs(signedPerp);
+        workX = Number((workX + nx * side * pushDelta).toFixed(2));
+        workZ = Number((workZ + nz * side * pushDelta).toFixed(2));
         pushed = true;
       }
     }
     if (!pushed) break;
   }
 
-  const footprint = isFootprintOnPlatform(workX, workZ, rotation);
+  const footprint = isFootprintOnPlatform(workX, workZ, rotation, roomVertices);
   if (!footprint.ok || !footprint.zone) {
     return {
       valid: false,
@@ -571,6 +917,7 @@ export function resolveWallPhysicsAndSnap(
   }
 
   // Step 3: Unit-to-unit solid collision check
+  const { hx, hz } = getAhuHalfExtents(rotation);
   for (const unit of existing) {
     if (excludeId && unit.id === excludeId) continue;
     const otherExt = getAhuHalfExtents(unit.rotation ?? 0);
@@ -611,6 +958,7 @@ export function validatePlatformPlacement(
   existing: Array<{ id: string; x: number; z: number; rotation?: number }>,
   excludeId?: string,
   rotation?: number,
+  roomVertices?: FloorVertex[] | null,
 ): PlacementValidation {
   return resolveWallPhysicsAndSnap(rawX, rawZ, existing, {
     excludeId,
@@ -618,6 +966,7 @@ export function validatePlatformPlacement(
     enableWallSnap: true,
     autoAlignRotation: rotation === undefined,
     clampVoidToWall: false,
+    roomVertices,
   });
 }
 
@@ -625,6 +974,7 @@ export function validatePlatformPlacement(
 export function suggestCleanPlatformSlot(
   existing: Array<{ id: string; x: number; z: number; rotation?: number }>,
   preferIndoor = true,
+  roomVertices?: FloorVertex[] | null,
 ): { x: number; z: number; rotation: number; zone: WingZone; indoor: boolean } {
   const candidates: Array<[number, number, number]> = preferIndoor
     ? [
@@ -659,6 +1009,7 @@ export function suggestCleanPlatformSlot(
       enableWallSnap: true,
       autoAlignRotation: false,
       clampVoidToWall: false,
+      roomVertices,
     });
     if (res.valid && res.zone && res.indoor === preferIndoor) {
       return {
@@ -671,12 +1022,13 @@ export function suggestCleanPlatformSlot(
     }
   }
 
-  for (let x = -30; x <= 30; x += 4) {
-    for (let z = -28; z <= 28; z += 4) {
+  for (let x = -30; x <= 30; x += 3) {
+    for (let z = -28; z <= 28; z += 3) {
       const res = resolveWallPhysicsAndSnap(x, z, existing, {
         enableWallSnap: true,
         autoAlignRotation: true,
         clampVoidToWall: false,
+        roomVertices,
       });
       if (res.valid && res.zone && res.indoor === preferIndoor) {
         return {
@@ -703,6 +1055,7 @@ export function resolveAhuPlacement(
     mapZone?: string | null;
   },
   existingResolved: Array<{ id: string; x: number; z: number; rotation?: number }> = [],
+  roomVertices?: FloorVertex[] | null,
 ): AhuPlacement {
   if (
     typeof ahu.mapX === "number" &&
@@ -710,7 +1063,7 @@ export function resolveAhuPlacement(
     typeof ahu.mapZ === "number" &&
     Number.isFinite(ahu.mapZ)
   ) {
-    const zInfo = findZoneAt(ahu.mapX, ahu.mapZ);
+    const zInfo = findZoneAt(ahu.mapX, ahu.mapZ, roomVertices);
     return {
       id: ahu.id,
       x: ahu.mapX,
@@ -723,7 +1076,7 @@ export function resolveAhuPlacement(
 
   const preset = DEFAULT_AHU_PLACEMENTS[ahu.id];
   if (preset) {
-    const zInfo = findZoneAt(preset.x, preset.z);
+    const zInfo = findZoneAt(preset.x, preset.z, roomVertices);
     return {
       id: ahu.id,
       x: preset.x,
@@ -734,7 +1087,7 @@ export function resolveAhuPlacement(
     };
   }
 
-  const fallback = suggestCleanPlatformSlot(existingResolved, true);
+  const fallback = suggestCleanPlatformSlot(existingResolved, true, roomVertices);
   return {
     id: ahu.id,
     x: fallback.x,
@@ -744,3 +1097,104 @@ export function resolveAhuPlacement(
     indoor: fallback.indoor,
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* Dynamic Randomized Outdoor Landscape Tree Generator & Room Reactor */
+/* ------------------------------------------------------------------ */
+
+export interface OutdoorTreeCandidate {
+  x: number;
+  z: number;
+  scale: number;
+  kind: "canopy" | "pine";
+  rotationY: number;
+}
+
+export const OUTDOOR_TREE_WALL_CLEARANCE = 2.8;
+export const OUTDOOR_TREE_AHU_CLEARANCE = 3.5;
+export const MAX_VISIBLE_OUTDOOR_TREES = 8;
+
+function minDistanceToWalls(x: number, z: number, walls: WallSegment[]): number {
+  let minD = Infinity;
+  for (const w of walls) {
+    const d = projectPointToSegment(x, z, w.x1, w.z1, w.x2, w.z2).dist;
+    if (d < minD) minD = d;
+  }
+  return minD;
+}
+
+/**
+ * Returns true when an outdoor tree candidate at (x, z) is strictly outside the current
+ * room polygon and maintains safe clearance from all room walls and AHU units.
+ */
+export function isOutdoorTreeSpotClear(
+  x: number,
+  z: number,
+  roomVertices: FloorVertex[] = DEFAULT_ROOM_VERTICES,
+  ahuPositions: Array<{ x: number; z: number }> = [],
+): boolean {
+  if (!isPointWithinCampusBounds(x, z)) return false;
+  if (isPointInsideIndoorRoom(x, z, roomVertices)) return false;
+
+  const walls = computeExteriorWallSegments(roomVertices);
+  if (minDistanceToWalls(x, z, walls) < OUTDOOR_TREE_WALL_CLEARANCE) return false;
+
+  for (const u of ahuPositions) {
+    if (Math.hypot(u.x - x, u.z - z) < OUTDOOR_TREE_AHU_CLEARANCE) return false;
+  }
+  return true;
+}
+
+/**
+ * Generates a randomized, Poisson-spaced spatial pool of outdoor tree spots:
+ * - 5 sparse initial outdoor trees around the building courtyard (3.1m–11.5m outside walls),
+ *   so expanding the room automatically swallows & hides trees in its path.
+ * - 6 dormant randomized seeds inside the room wings, so shrinking the room automatically
+ *   reveals & sprouts new trees in the newly opened outdoor space!
+ */
+export function generateRandomTreePool(
+  baseVertices: FloorVertex[] = DEFAULT_ROOM_VERTICES,
+  existingAhus: Array<{ x: number; z: number }> = [],
+  rng: () => number = Math.random,
+): OutdoorTreeCandidate[] {
+  const pool: OutdoorTreeCandidate[] = [];
+  const baseWalls = computeExteriorWallSegments(baseVertices);
+
+  const makeSpec = (x: number, z: number): OutdoorTreeCandidate => ({
+    x: Number(x.toFixed(2)),
+    z: Number(z.toFixed(2)),
+    scale: Number((0.92 + rng() * 0.22).toFixed(2)),
+    kind: rng() < 0.62 ? "canopy" : "pine",
+    rotationY: Number((rng() * Math.PI * 2).toFixed(3)),
+  });
+
+  // Pass 1: 5 sparse, randomly placed visible outdoor trees around the courtyard perimeter
+  const targetInitialOutdoor = 5;
+  for (let attempt = 0; attempt < 420 && pool.length < targetInitialOutdoor; attempt += 1) {
+    const x = -32 + rng() * 64;
+    const z = -30 + rng() * 60;
+    if (!isOutdoorTreeSpotClear(x, z, baseVertices, existingAhus)) continue;
+    const wallDist = minDistanceToWalls(x, z, baseWalls);
+    if (wallDist < 3.1 || wallDist > 11.5) continue;
+    if (pool.some((p) => Math.hypot(p.x - x, p.z - z) < 11.8)) continue;
+    pool.push(makeSpec(x, z));
+  }
+
+  // Pass 2: 6 dormant randomized seeds inside the room wings (sprout automatically when room shrinks!)
+  const targetDormantSeeds = 6;
+  let dormantAdded = 0;
+  for (let attempt = 0; attempt < 420 && dormantAdded < targetDormantSeeds; attempt += 1) {
+    const x = -21 + rng() * 42;
+    const z = -17 + rng() * 36;
+    if (!isPointInsideIndoorRoom(x, z, baseVertices)) continue;
+    const wallDist = minDistanceToWalls(x, z, baseWalls);
+    // Bias toward outer wings (1.5m–7.5m inside walls) so shrinking a wing by a few meters reveals trees!
+    if (wallDist < 1.4 || wallDist > 8.0) continue;
+    if (pool.some((p) => Math.hypot(p.x - x, p.z - z) < 8.8)) continue;
+    pool.push(makeSpec(x, z));
+    dormantAdded += 1;
+  }
+
+  return pool;
+}
+

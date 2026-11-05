@@ -349,6 +349,13 @@ export const syncState = pgTable("sync_state", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const facilityFloorplan = pgTable("facility_floorplan", {
+  id: integer("id").primaryKey().default(1),
+  vertices: jsonb("vertices").$type<Array<{ x: number; z: number }>>().notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /* ------------------------------------------------------------------ */
 /* Shared row & enum types                                            */
 /* ------------------------------------------------------------------ */

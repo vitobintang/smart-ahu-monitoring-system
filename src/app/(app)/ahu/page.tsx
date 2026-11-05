@@ -22,10 +22,12 @@ import ControlPanel from "@/components/ControlPanel";
 import type { FacilityAhuItem, PendingPlacement } from "@/components/AhuFacilityMap3D";
 import { can } from "@/lib/domain";
 import {
+  DEFAULT_ROOM_VERTICES,
   normalizeRotation,
   resolveAhuPlacement,
   resolveWallPhysicsAndSnap,
   suggestCleanPlatformSlot,
+  type FloorVertex,
 } from "@/lib/facility-layout";
 import { Btn, Empty, ErrorNote, Field, Spinner, StatusBadge, cx, inputClass } from "@/components/ui";
 
@@ -74,6 +76,24 @@ export default function AhuIndexPage() {
   const { data, error, loading, reload } = usePoll<{ cards: Card[] }>("/api/overview?lite=1", LOCAL_POLL_MS);
 
   const [selected3dId, setSelected3dId] = useState<string | null>(null);
+  const [roomVertices, setRoomVertices] = useState<FloorVertex[]>(DEFAULT_ROOM_VERTICES);
+  const [isCustomRoom, setIsCustomRoom] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void api<{ vertices: FloorVertex[]; isCustom: boolean }>("/api/facility-layout")
+      .then((res) => {
+        if (!alive || !Array.isArray(res.vertices) || res.vertices.length < 3) return;
+        setRoomVertices(res.vertices);
+        setIsCustomRoom(Boolean(res.isCustom));
+      })
+      .catch(() => {
+        /* fallback to default multi-branch floorplan */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // Add-New-AHU modal + 3D floor / outdoor / wall-snap placement state
   const [addOpen, setAddOpen] = useState(false);
@@ -92,15 +112,15 @@ export default function AhuIndexPage() {
   const existingCoords = useMemo(() => {
     const acc: Array<{ id: string; x: number; z: number; rotation?: number }> = [];
     for (const c of cards) {
-      const p = resolveAhuPlacement(c.ahu, acc);
+      const p = resolveAhuPlacement(c.ahu, acc, roomVertices);
       acc.push({ id: c.ahu.id, x: p.x, z: p.z, rotation: p.rotation });
     }
     return acc;
-  }, [cards]);
+  }, [cards, roomVertices]);
 
   function openAddModal() {
     const suggestedId = suggestNextAhuId(cards.map((c) => c.ahu.id));
-    const slot = suggestCleanPlatformSlot(existingCoords, true);
+    const slot = suggestCleanPlatformSlot(existingCoords, true, roomVertices);
     setNewId(suggestedId);
     setNewName(`${suggestedId} Clean Air Supply`);
     setNewLocation("");
@@ -119,7 +139,7 @@ export default function AhuIndexPage() {
   }
 
   function autoPickSlot(preferIndoor: boolean) {
-    const slot = suggestCleanPlatformSlot(existingCoords, preferIndoor);
+    const slot = suggestCleanPlatformSlot(existingCoords, preferIndoor, roomVertices);
     setPlacement({
       x: slot.x,
       z: slot.z,
@@ -139,6 +159,25 @@ export default function AhuIndexPage() {
         mapRotation: next.rotation,
       }),
     });
+    await reload();
+  }
+
+  async function handleSaveRoomVertices(vertices: FloorVertex[]) {
+    const res = await api<{ vertices: FloorVertex[]; isCustom: boolean }>("/api/facility-layout", {
+      method: "PUT",
+      body: JSON.stringify({ vertices }),
+    });
+    setRoomVertices(res.vertices);
+    setIsCustomRoom(Boolean(res.isCustom));
+    await reload();
+  }
+
+  async function handleResetRoomVertices() {
+    const res = await api<{ vertices: FloorVertex[]; isCustom: boolean }>("/api/facility-layout", {
+      method: "DELETE",
+    });
+    setRoomVertices(res.vertices);
+    setIsCustomRoom(Boolean(res.isCustom));
     await reload();
   }
 
@@ -297,6 +336,7 @@ export default function AhuIndexPage() {
                     enableWallSnap: true,
                     autoAlignRotation: false,
                     clampVoidToWall: true,
+                    roomVertices,
                   });
                   setPlacement({
                     x: check.snappedX,
@@ -317,6 +357,7 @@ export default function AhuIndexPage() {
           <AhuFacilityMap3D
             items={cards}
             mode="placement"
+            roomVertices={roomVertices}
             draftAhuId={newId.trim() || "NEW"}
             draftAhuName={newName.trim() || "New AHU"}
             placement={placement}
@@ -382,6 +423,11 @@ export default function AhuIndexPage() {
           onRequestAddAhu={openAddModal}
           canMoveAhu={canControl || canConfigure}
           onMoveAhuSave={handleMoveAhuSave}
+          roomVertices={roomVertices}
+          isCustomRoom={isCustomRoom}
+          canEditRoom={canControl || canConfigure}
+          onSaveRoomVertices={handleSaveRoomVertices}
+          onResetRoomVertices={handleResetRoomVertices}
         />
       </div>
 

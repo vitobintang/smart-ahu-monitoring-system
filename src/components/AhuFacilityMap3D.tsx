@@ -9,17 +9,23 @@ import {
   Crosshair,
   ExternalLink,
   Eye,
+  Grid,
   Layers,
   LayoutGrid,
   Magnet,
   MapPin,
   Move,
+  PenTool,
   Plus,
+  PlusCircle,
   RotateCcw,
   RotateCw,
   Settings2,
   Sparkles,
+  SquarePlus,
+  Trash2,
   Trees,
+  Undo2,
   X,
   ZoomIn,
   ZoomOut,
@@ -28,11 +34,22 @@ import type { AhuStatus } from "@/db/schema";
 import { StatusBadge, cx } from "@/components/ui";
 import {
   computeExteriorWallSegments,
-  FACILITY_ZONES,
-  isPointInsideIndoorRoom,
+  computePolygonAreaSqM,
+  DEFAULT_ROOM_VERTICES,
+  deleteFloorVertex,
+  dragFloorWall,
+  extrudeWingOnWall,
+  generateRandomTreePool,
+  insertVertexOnWall,
+  isOutdoorTreeSpotClear,
+  MAX_VISIBLE_OUTDOOR_TREES,
+  moveFloorVertex,
   normalizeRotation,
+  projectPointToSegment,
   resolveAhuPlacement,
   resolveWallPhysicsAndSnap,
+  type FloorVertex,
+  type OutdoorTreeCandidate,
   type PlacementValidation,
   type WallSegment,
 } from "@/lib/facility-layout";
@@ -69,6 +86,8 @@ export interface PendingPlacement {
   snappedToWall?: boolean;
 }
 
+type RoomEditTool = "drag" | "split" | "extrude" | "delete";
+
 interface Props {
   items: FacilityAhuItem[];
   mode?: "explore" | "placement";
@@ -80,6 +99,12 @@ interface Props {
   canAddAhu?: boolean;
   canMoveAhu?: boolean;
   onMoveAhuSave?: (ahuId: string, next: PendingPlacement) => Promise<void> | void;
+  /** Editable 3D room floorplan props */
+  roomVertices?: FloorVertex[];
+  isCustomRoom?: boolean;
+  canEditRoom?: boolean;
+  onSaveRoomVertices?: (vertices: FloorVertex[]) => Promise<void> | void;
+  onResetRoomVertices?: () => Promise<void> | void;
   /** Used in placement mode */
   draftAhuId?: string;
   draftAhuName?: string;
@@ -101,46 +126,11 @@ const STATUS_DOT_CLASS: Record<AhuStatus, string> = {
   OFFLINE: "bg-rose-500",
 };
 
-interface TreeSpec {
-  x: number;
-  z: number;
-  scale: number;
-  kind: "canopy" | "pine";
-}
-
-/** Scenic exterior tree placements surrounding the multi-wing building to clearly signify the outdoor grounds. */
-const OUTDOOR_TREE_SPECS: TreeSpec[] = [
-  // West & North-West courtyard / park
-  { x: -15.5, z: -4.2, scale: 1.05, kind: "canopy" },
-  { x: -25.5, z: -5.5, scale: 1.18, kind: "pine" },
-  { x: -26.0, z: -14.5, scale: 1.1, kind: "canopy" },
-  { x: -22.5, z: -22.5, scale: 0.95, kind: "pine" },
-  { x: -13.0, z: -24.0, scale: 1.15, kind: "canopy" },
-  // North exterior boulevard
-  { x: 2.5, z: -19.5, scale: 1.05, kind: "canopy" },
-  { x: 8.5, z: -17.5, scale: 0.92, kind: "pine" },
-  { x: 24.5, z: -17.5, scale: 1.12, kind: "canopy" },
-  { x: 27.5, z: -12.5, scale: 0.98, kind: "pine" },
-  // East garden border
-  { x: 27.5, z: -3.5, scale: 1.15, kind: "canopy" },
-  { x: 24.0, z: 6.2, scale: 1.04, kind: "canopy" },
-  { x: 26.8, z: 14.5, scale: 1.16, kind: "pine" },
-  { x: 22.5, z: 22.5, scale: 1.02, kind: "canopy" },
-  // South & South-West exterior lawn
-  { x: 11.5, z: 25.0, scale: 1.14, kind: "canopy" },
-  { x: 3.5, z: 25.5, scale: 0.96, kind: "pine" },
-  { x: -8.0, z: 15.5, scale: 1.08, kind: "canopy" },
-  { x: -15.5, z: 17.5, scale: 0.95, kind: "pine" },
-  { x: -24.5, z: 15.5, scale: 1.15, kind: "canopy" },
-  { x: -27.0, z: 6.0, scale: 1.05, kind: "canopy" },
-];
-
 /** Procedurally generates a crisp 3D architectural tree (deciduous shade canopy or layered pine) with planter ring. */
-function buildOutdoorTree3D(spec: TreeSpec): { group: THREE.Group; crown: THREE.Group } {
+function buildOutdoorTree3D(spec: OutdoorTreeCandidate): { group: THREE.Group; crown: THREE.Group } {
   const group = new THREE.Group();
   const s = spec.scale;
 
-  // Soft circular grass/planter ring flush with outdoor ground
   const ringPatch = new THREE.Mesh(
     new THREE.CylinderGeometry(1.35 * s, 1.45 * s, 0.06, 20),
     new THREE.MeshStandardMaterial({ color: 0xbbf7d0, roughness: 0.92, metalness: 0.02 }),
@@ -157,7 +147,6 @@ function buildOutdoorTree3D(spec: TreeSpec): { group: THREE.Group; crown: THREE.
   ringCurb.position.set(0, -0.19, 0);
   group.add(ringCurb);
 
-  // Timber trunk
   const trunkHeight = (spec.kind === "pine" ? 1.35 : 1.55) * s;
   const trunk = new THREE.Mesh(
     new THREE.CylinderGeometry(0.14 * s, 0.22 * s, trunkHeight, 10),
@@ -207,9 +196,82 @@ function buildOutdoorTree3D(spec: TreeSpec): { group: THREE.Group; crown: THREE.
     }
   }
 
+  crown.rotation.y = spec.rotationY;
   group.add(crown);
   group.position.set(spec.x, 0, spec.z);
   return { group, crown };
+}
+
+/** Computes clean 2m × 2m indoor floor grid line segments clipped strictly inside any polygon. */
+function buildClippedFloorGridPositions(vertices: FloorVertex[]): Float32Array {
+  if (vertices.length < 3) return new Float32Array(0);
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const v of vertices) {
+    if (v.x < minX) minX = v.x;
+    if (v.x > maxX) maxX = v.x;
+    if (v.z < minZ) minZ = v.z;
+    if (v.z > maxZ) maxZ = v.z;
+  }
+
+  const coords: number[] = [];
+  const y = 0.008;
+  const n = vertices.length;
+
+  // Horizontal grid lines (constant z)
+  const startZ = Math.ceil(minZ / 2) * 2;
+  const endZ = Math.floor(maxZ / 2) * 2;
+  for (let z = startZ; z <= endZ; z += 2) {
+    const zProbe = z + 1e-4; // tiny offset avoids exact vertex double-counting
+    const xs: number[] = [];
+    for (let i = 0; i < n; i += 1) {
+      const a = vertices[i];
+      const b = vertices[(i + 1) % n];
+      if ((a.z <= zProbe && b.z > zProbe) || (b.z <= zProbe && a.z > zProbe)) {
+        const t = (zProbe - a.z) / (b.z - a.z);
+        xs.push(a.x + t * (b.x - a.x));
+      }
+    }
+    xs.sort((p, q) => p - q);
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      coords.push(xs[k], y, z, xs[k + 1], y, z);
+    }
+  }
+
+  // Vertical grid lines (constant x)
+  const startX = Math.ceil(minX / 2) * 2;
+  const endX = Math.floor(maxX / 2) * 2;
+  for (let x = startX; x <= endX; x += 2) {
+    const xProbe = x + 1e-4;
+    const zs: number[] = [];
+    for (let i = 0; i < n; i += 1) {
+      const a = vertices[i];
+      const b = vertices[(i + 1) % n];
+      if ((a.x <= xProbe && b.x > xProbe) || (b.x <= xProbe && a.x > xProbe)) {
+        const t = (xProbe - a.x) / (b.x - a.x);
+        zs.push(a.z + t * (b.z - a.z));
+      }
+    }
+    zs.sort((p, q) => p - q);
+    for (let k = 0; k + 1 < zs.length; k += 2) {
+      coords.push(x, y, zs[k], x, y, zs[k + 1]);
+    }
+  }
+
+  return new Float32Array(coords);
+}
+
+/** Disposes geometries inside a group without destroying shared materials. */
+function clearGroupGeometries(group: THREE.Group) {
+  group.traverse((obj) => {
+    const maybeMesh = obj as THREE.Mesh | THREE.LineSegments;
+    if (maybeMesh.geometry) {
+      maybeMesh.geometry.dispose();
+    }
+  });
+  group.clear();
 }
 
 /** Builds a detailed daylight-lit industrial 3D Air Handling Unit on a raised mounting plinth. */
@@ -243,7 +305,6 @@ function buildAhuModel3D(opts: {
   const baseOpacity = isGhost ? 0.68 : dimmed ? 0.3 : 1;
   const ghostTint = !isGhost ? null : isValidGhost ? 0x10b981 : 0xef4444;
 
-  // 1. Steel vibration-isolation plinth (3.1m x 1.85m)
   const plinthGeo = new THREE.BoxGeometry(3.1, 0.22, 1.85);
   const plinthMat = new THREE.MeshStandardMaterial({
     color: ghostTint ?? (outdoor ? 0x334155 : 0x1e293b),
@@ -269,7 +330,6 @@ function buildAhuModel3D(opts: {
   trim.position.copy(plinth.position);
   group.add(trim);
 
-  // Selection / placement halo ring on floor
   const haloGeo = new THREE.RingGeometry(1.88, 2.18, 44);
   haloGeo.rotateX(-Math.PI / 2);
   const haloMat = new THREE.MeshBasicMaterial({
@@ -282,7 +342,6 @@ function buildAhuModel3D(opts: {
   halo.position.set(0, 0.03, 0);
   group.add(halo);
 
-  // 2. Insulated double-skin powder-coated AHU cabinet sections
   const casingColor = ghostTint ?? (outdoor ? 0xeef4fb : 0xffffff);
   const frameColor = ghostTint ?? 0x334155;
   const casingMat = new THREE.MeshStandardMaterial({
@@ -300,7 +359,6 @@ function buildAhuModel3D(opts: {
     opacity: baseOpacity,
   });
 
-  // Rear wall-interface supply/return duct flanges on local -Z
   const wallFlangeMat = new THREE.MeshStandardMaterial({
     color: ghostTint ?? 0x64748b,
     roughness: 0.42,
@@ -318,7 +376,6 @@ function buildAhuModel3D(opts: {
   rearReturnDuct.userData = { ahuId: id };
   group.add(rearReturnDuct);
 
-  // Section A: Intake / Mixing Box (left)
   const intakeBox = new THREE.Mesh(new THREE.BoxGeometry(0.76, 1.18, 1.38), casingMat);
   intakeBox.position.set(-1.02, 0.81, 0);
   intakeBox.castShadow = !transparent;
@@ -334,7 +391,6 @@ function buildAhuModel3D(opts: {
     group.add(slat);
   }
 
-  // Section B: Filter + Cooling/Heating Coil Bank (center)
   const coilBox = new THREE.Mesh(new THREE.BoxGeometry(1.12, 1.28, 1.44), casingMat);
   coilBox.position.set(-0.04, 0.86, 0);
   coilBox.castShadow = !transparent;
@@ -376,7 +432,6 @@ function buildAhuModel3D(opts: {
     group.add(p2);
   }
 
-  // Section C: Supply Fan Scroll & Discharge Plenum (right)
   const fanBox = new THREE.Mesh(new THREE.BoxGeometry(0.92, 1.36, 1.42), casingMat);
   fanBox.position.set(1.0, 0.9, 0);
   fanBox.castShadow = !transparent;
@@ -406,7 +461,6 @@ function buildAhuModel3D(opts: {
     group.add(roofCap);
   }
 
-  // Circular inspection porthole + 3D spinning supply impeller on front (+Z)
   const portholeRing = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.04, 10, 24), darkFrameMat);
   portholeRing.position.set(1.0, 0.92, 0.72);
   portholeRing.userData = { ahuId: id };
@@ -476,6 +530,11 @@ export default function AhuFacilityMap3D({
   canAddAhu = false,
   canMoveAhu = false,
   onMoveAhuSave,
+  roomVertices = DEFAULT_ROOM_VERTICES,
+  isCustomRoom = false,
+  canEditRoom = false,
+  onSaveRoomVertices,
+  onResetRoomVertices,
   draftAhuId = "AHU-08",
   draftAhuName = "New Air Handling Unit",
   placement = null,
@@ -511,15 +570,41 @@ export default function AhuFacilityMap3D({
   const [savingMove, setSavingMove] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
 
-  // Resolve 3D coordinates for every AHU unit
+  // Interactive 3D Room Editor ("Edit Room") state
+  const [editingRoom, setEditingRoom] = useState(false);
+  const [roomTool, setRoomTool] = useState<RoomEditTool>("drag");
+  const [roomSnapGrid, setRoomSnapGrid] = useState(true);
+  const [roomDraftVertices, setRoomDraftVertices] = useState<FloorVertex[]>(roomVertices);
+  const [roomHistory, setRoomHistory] = useState<FloorVertex[][]>([]);
+  const [hoveredRoomTarget, setHoveredRoomTarget] = useState<
+    { type: "wall" | "vertex"; index: number } | null
+  >(null);
+  const [savingRoom, setSavingRoom] = useState(false);
+  const [roomNotice, setRoomNotice] = useState<string | null>(null);
+  const [roomError, setRoomError] = useState<string | null>(null);
+
+  // Keep draft vertices synced when not actively editing
+  useEffect(() => {
+    if (!editingRoom) {
+      setRoomDraftVertices(roomVertices);
+    }
+  }, [roomVertices, editingRoom]);
+
+  const activeRoomVertices = editingRoom ? roomDraftVertices : roomVertices;
+  const activeRoomAreaSqM = useMemo(
+    () => computePolygonAreaSqM(activeRoomVertices),
+    [activeRoomVertices],
+  );
+
+  // Resolve 3D coordinates for every AHU unit against the active room polygon
   const resolvedUnits = useMemo(() => {
     const acc: Array<{ id: string; x: number; z: number; rotation?: number }> = [];
     return items.map((item) => {
-      const p = resolveAhuPlacement(item.ahu, acc);
+      const p = resolveAhuPlacement(item.ahu, acc, activeRoomVertices);
       acc.push({ id: item.ahu.id, x: p.x, z: p.z, rotation: p.rotation });
       return { item, placement: p };
     });
-  }, [items]);
+  }, [items, activeRoomVertices]);
 
   const existingCoords = useMemo(
     () =>
@@ -542,7 +627,7 @@ export default function AhuFacilityMap3D({
   const [cardVisible, setCardVisible] = useState(false);
 
   useEffect(() => {
-    const active = mode === "explore" && !movingAhuId ? selectedId : null;
+    const active = mode === "explore" && !movingAhuId && !editingRoom ? selectedId : null;
     if (active) {
       setDisplayedCardId(active);
       const raf = requestAnimationFrame(() => setCardVisible(true));
@@ -551,7 +636,7 @@ export default function AhuFacilityMap3D({
     setCardVisible(false);
     const timer = setTimeout(() => setDisplayedCardId(null), 180);
     return () => clearTimeout(timer);
-  }, [selectedId, mode, movingAhuId]);
+  }, [selectedId, mode, movingAhuId, editingRoom]);
 
   const displayedCardUnit = useMemo(
     () => resolvedUnits.find((u) => u.item.ahu.id === displayedCardId) ?? null,
@@ -561,10 +646,95 @@ export default function AhuFacilityMap3D({
   const displayedCardIdRef = useRef(displayedCardId);
   displayedCardIdRef.current = displayedCardId;
 
+  const pushRoomUndo = useCallback((snapshot: FloorVertex[]) => {
+    setRoomHistory((prev) => [...prev.slice(-29), snapshot.map((v) => ({ ...v }))]);
+  }, []);
+
+  const undoRoomEdit = useCallback(() => {
+    setRoomHistory((prev) => {
+      if (prev.length === 0) return prev;
+      const last = prev[prev.length - 1];
+      setRoomDraftVertices(last);
+      setRoomError(null);
+      setRoomNotice("Undid last wall edit.");
+      return prev.slice(0, -1);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!editingRoom) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        undoRoomEdit();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [editingRoom, undoRoomEdit]);
+
+  const startEditingRoom = useCallback(() => {
+    setPickToMove(false);
+    setMovingAhuId(null);
+    setMoveDraft(null);
+    setSelectedId(null);
+    setRoomDraftVertices(roomVertices.map((v) => ({ ...v })));
+    setRoomHistory([]);
+    setRoomTool("drag");
+    setRoomError(null);
+    setRoomNotice(null);
+    setEditingRoom(true);
+  }, [roomVertices, setSelectedId]);
+
+  const cancelEditingRoom = useCallback(() => {
+    setEditingRoom(false);
+    setHoveredRoomTarget(null);
+    setRoomDraftVertices(roomVertices.map((v) => ({ ...v })));
+    setRoomHistory([]);
+    setRoomError(null);
+    setRoomNotice(null);
+  }, [roomVertices]);
+
+  const handleResetRoomToDefault = useCallback(async () => {
+    pushRoomUndo(roomDraftVertices);
+    setRoomDraftVertices(DEFAULT_ROOM_VERTICES.map((v) => ({ ...v })));
+    setRoomError(null);
+    if (isCustomRoom && onResetRoomVertices) {
+      setSavingRoom(true);
+      try {
+        await onResetRoomVertices();
+        setRoomNotice("Room reset to default multi-branch floorplan.");
+      } catch (err) {
+        setRoomError(err instanceof Error ? err.message : "Failed to reset room");
+      } finally {
+        setSavingRoom(false);
+      }
+    } else {
+      setRoomNotice("Previewing default 22-corner multi-branch floorplan.");
+    }
+  }, [isCustomRoom, onResetRoomVertices, pushRoomUndo, roomDraftVertices]);
+
+  const handleSaveRoom = useCallback(async () => {
+    if (!onSaveRoomVertices) return;
+    setSavingRoom(true);
+    setRoomError(null);
+    try {
+      await onSaveRoomVertices(roomDraftVertices);
+      setEditingRoom(false);
+      setHoveredRoomTarget(null);
+      setRoomHistory([]);
+    } catch (err) {
+      setRoomError(err instanceof Error ? err.message : "Failed to save custom room geometry");
+    } finally {
+      setSavingRoom(false);
+    }
+  }, [onSaveRoomVertices, roomDraftVertices]);
+
   const startMovingUnit = useCallback(
     (ahuId: string) => {
       const target = resolvedUnits.find((u) => u.item.ahu.id === ahuId);
       if (!target) return;
+      setEditingRoom(false);
       setPickToMove(false);
       setSelectedId(null);
       setMovingAhuId(ahuId);
@@ -637,6 +807,21 @@ export default function AhuFacilityMap3D({
   const moveDraftRef = useRef(moveDraft);
   moveDraftRef.current = moveDraft;
 
+  const editingRoomRef = useRef(editingRoom);
+  editingRoomRef.current = editingRoom;
+
+  const roomToolRef = useRef(roomTool);
+  roomToolRef.current = roomTool;
+
+  const roomSnapGridRef = useRef(roomSnapGrid);
+  roomSnapGridRef.current = roomSnapGrid;
+
+  const activeRoomVerticesRef = useRef(activeRoomVertices);
+  activeRoomVerticesRef.current = activeRoomVertices;
+
+  const pushRoomUndoRef = useRef(pushRoomUndo);
+  pushRoomUndoRef.current = pushRoomUndo;
+
   const wallSnapRef = useRef(wallSnapEnabled);
   wallSnapRef.current = wallSnapEnabled;
 
@@ -698,18 +883,45 @@ export default function AhuFacilityMap3D({
   }, []);
 
   useEffect(() => {
-    if (mode !== "explore" || !selectedUnit || isTopView) return;
+    if (mode !== "explore" || !selectedUnit || isTopView || editingRoom) return;
     const c = camStateRef.current;
     c.goalTargetX = selectedUnit.placement.x * 0.42;
     c.goalTargetZ = selectedUnit.placement.z * 0.42;
-  }, [mode, selectedUnit, isTopView]);
+  }, [mode, selectedUnit, isTopView, editingRoom]);
 
   const ahuSceneObjectsRef = useRef<{
+    facilityGroup: THREE.Group;
+    roomVertexGizmoGroup: THREE.Group;
+    roomWallGizmoGroup: THREE.Group;
+    splitPreviewOrb: THREE.Mesh;
     ahuRootGroup: THREE.Group;
     ghostGroup: THREE.Group;
     placedDraftGroup: THREE.Group;
     wallSnapLineGroup: THREE.Group;
-    trees: Array<{ group: THREE.Group; crown: THREE.Group; x: number; z: number; phase: number }>;
+    sharedMats: {
+      indoorSlabMat: THREE.MeshStandardMaterial;
+      gridLineMat: THREE.LineBasicMaterial;
+      wallMat: THREE.MeshStandardMaterial;
+      wallHoverMat: THREE.MeshStandardMaterial;
+      wallExtrudeMat: THREE.MeshStandardMaterial;
+      wallCapMat: THREE.MeshStandardMaterial;
+      basePlinthMat: THREE.MeshStandardMaterial;
+      columnMat: THREE.MeshStandardMaterial;
+      vertexGizmoMat: THREE.MeshStandardMaterial;
+      vertexHoverMat: THREE.MeshStandardMaterial;
+      vertexDeleteMat: THREE.MeshStandardMaterial;
+      wallGizmoMat: THREE.MeshStandardMaterial;
+      wallGizmoRingMat: THREE.MeshBasicMaterial;
+    };
+    trees: Array<{
+      group: THREE.Group;
+      crown: THREE.Group;
+      x: number;
+      z: number;
+      phase: number;
+      targetVisible: boolean;
+      currentScale: number;
+    }>;
     rotors: Array<{ rotor: THREE.Group; running: boolean }>;
     halos: Map<string, THREE.Mesh>;
     beacons: Array<{ mat: THREE.MeshStandardMaterial; fault: boolean }>;
@@ -718,19 +930,20 @@ export default function AhuFacilityMap3D({
   const updateWallSnapHighlight = useCallback((seg: WallSegment | null) => {
     const objs = ahuSceneObjectsRef.current;
     if (!objs) return;
-    objs.wallSnapLineGroup.clear();
+    clearGroupGeometries(objs.wallSnapLineGroup);
     if (!seg) {
       objs.wallSnapLineGroup.visible = false;
       return;
     }
-    const len = Math.hypot(seg.x2 - seg.x1, seg.z2 - seg.z1);
+    const dx = seg.x2 - seg.x1;
+    const dz = seg.z2 - seg.z1;
+    const len = Math.hypot(dx, dz);
     const midX = (seg.x1 + seg.x2) / 2;
     const midZ = (seg.z1 + seg.z2) / 2;
-    const wX = seg.orientation === "H" ? len + 0.2 : 0.44;
-    const wZ = seg.orientation === "V" ? len + 0.2 : 0.44;
+    const angleY = -Math.atan2(dz, dx);
 
     const beam = new THREE.Mesh(
-      new THREE.BoxGeometry(wX, 2.96, wZ),
+      new THREE.BoxGeometry(len + 0.2, 2.96, 0.44),
       new THREE.MeshBasicMaterial({
         color: 0x10b981,
         transparent: true,
@@ -738,17 +951,20 @@ export default function AhuFacilityMap3D({
       }),
     );
     beam.position.set(midX, 1.48, midZ);
+    beam.rotation.y = angleY;
     objs.wallSnapLineGroup.add(beam);
 
     const rail = new THREE.Mesh(
-      new THREE.BoxGeometry(wX + 0.08, 0.15, wZ + 0.08),
+      new THREE.BoxGeometry(len + 0.28, 0.15, 0.52),
       new THREE.MeshBasicMaterial({ color: 0x059669 }),
     );
     rail.position.set(midX, 2.95, midZ);
+    rail.rotation.y = angleY;
     objs.wallSnapLineGroup.add(rail);
     objs.wallSnapLineGroup.visible = true;
   }, []);
 
+  // Initialize Three.js WebGL stage once
   useEffect(() => {
     const container = mountRef.current;
     const stageEl = viewportRef.current ?? container;
@@ -780,7 +996,6 @@ export default function AhuFacilityMap3D({
     container.innerHTML = "";
     container.appendChild(domEl);
 
-    // Bright Daylight Architectural Digital Twin Scene
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xeaf1fb);
     scene.fog = new THREE.FogExp2(0xeaf1fb, 0.0033);
@@ -810,135 +1025,154 @@ export default function AhuFacilityMap3D({
     skyFillLight.position.set(-30, 22, -24);
     scene.add(skyFillLight);
 
-    // Open Exterior Grounds (soft sunlit park/plaza turf & stone grid)
+    // Open Exterior Grounds
     const groundGeo = new THREE.PlaneGeometry(190, 190);
     groundGeo.rotateX(-Math.PI / 2);
     const ground = new THREE.Mesh(
       groundGeo,
       new THREE.MeshStandardMaterial({ color: 0xe2ece9, roughness: 0.92, metalness: 0.03 }),
     );
-    ground.position.y = -0.26;
+    ground.position.y = -0.265;
     ground.receiveShadow = true;
     scene.add(ground);
 
     const campusGrid = new THREE.GridHelper(160, 80, 0xc1d3e6, 0xd4e2ef);
-    campusGrid.position.y = -0.24;
+    campusGrid.position.y = -0.245;
     scene.add(campusGrid);
 
     const facilityGroup = new THREE.Group();
+    const roomWallGizmoGroup = new THREE.Group();
+    const roomVertexGizmoGroup = new THREE.Group();
     scene.add(facilityGroup);
+    scene.add(roomWallGizmoGroup);
+    scene.add(roomVertexGizmoGroup);
 
-    // Multi-Wing Indoor Cleanroom Floor Slabs (crisp daylight alabaster-white)
-    const indoorSlabMat = new THREE.MeshStandardMaterial({
-      color: 0xf9fbff,
-      roughness: 0.48,
-      metalness: 0.06,
-    });
+    const splitPreviewOrb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.42, 20, 20),
+      new THREE.MeshStandardMaterial({
+        color: 0x10b981,
+        emissive: 0x059669,
+        emissiveIntensity: 0.65,
+        roughness: 0.2,
+      }),
+    );
+    splitPreviewOrb.visible = false;
+    scene.add(splitPreviewOrb);
 
-    for (const wz of FACILITY_ZONES) {
-      if (!wz.indoor) continue;
-      const w = wz.xMax - wz.xMin;
-      const depth = wz.zMax - wz.zMin;
-      const cxPos = (wz.xMin + wz.xMax) / 2;
-      const czPos = (wz.zMin + wz.zMax) / 2;
+    const sharedMats = {
+      indoorSlabMat: new THREE.MeshStandardMaterial({
+        color: 0xf9fbff,
+        roughness: 0.48,
+        metalness: 0.06,
+      }),
+      gridLineMat: new THREE.LineBasicMaterial({
+        color: 0xbfdbfe,
+        transparent: true,
+        opacity: 0.65,
+      }),
+      wallMat: new THREE.MeshStandardMaterial({
+        color: 0xcbdcf4,
+        roughness: 0.34,
+        metalness: 0.1,
+        transparent: true,
+        opacity: 0.72,
+      }),
+      wallHoverMat: new THREE.MeshStandardMaterial({
+        color: 0x3b82f6,
+        emissive: 0x1d4ed8,
+        emissiveIntensity: 0.35,
+        roughness: 0.25,
+        metalness: 0.15,
+        transparent: true,
+        opacity: 0.85,
+      }),
+      wallExtrudeMat: new THREE.MeshStandardMaterial({
+        color: 0x10b981,
+        emissive: 0x059669,
+        emissiveIntensity: 0.35,
+        roughness: 0.25,
+        metalness: 0.15,
+        transparent: true,
+        opacity: 0.86,
+      }),
+      wallCapMat: new THREE.MeshStandardMaterial({
+        color: 0x2563eb,
+        roughness: 0.32,
+        metalness: 0.35,
+      }),
+      basePlinthMat: new THREE.MeshStandardMaterial({
+        color: 0x64748b,
+        roughness: 0.55,
+        metalness: 0.25,
+      }),
+      columnMat: new THREE.MeshStandardMaterial({
+        color: 0x64748b,
+        roughness: 0.45,
+        metalness: 0.35,
+      }),
+      vertexGizmoMat: new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        emissive: 0x2563eb,
+        emissiveIntensity: 0.38,
+        roughness: 0.2,
+        metalness: 0.1,
+      }),
+      vertexHoverMat: new THREE.MeshStandardMaterial({
+        color: 0x2563eb,
+        emissive: 0x1d4ed8,
+        emissiveIntensity: 0.65,
+        roughness: 0.18,
+      }),
+      vertexDeleteMat: new THREE.MeshStandardMaterial({
+        color: 0xef4444,
+        emissive: 0xb91c1c,
+        emissiveIntensity: 0.55,
+        roughness: 0.2,
+      }),
+      wallGizmoMat: new THREE.MeshStandardMaterial({
+        color: 0x1d6ef2,
+        emissive: 0x1e40af,
+        emissiveIntensity: 0.4,
+        roughness: 0.24,
+      }),
+      wallGizmoRingMat: new THREE.MeshBasicMaterial({
+        color: 0x2563eb,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.72,
+      }),
+    };
 
-      const slab = new THREE.Mesh(new THREE.BoxGeometry(w, 0.26, depth), indoorSlabMat);
-      slab.position.set(cxPos, -0.13, czPos);
-      slab.receiveShadow = true;
-      facilityGroup.add(slab);
-
-      const linePositions: number[] = [];
-      for (let x = wz.xMin; x <= wz.xMax; x += 2) {
-        linePositions.push(x, 0.006, wz.zMin, x, 0.006, wz.zMax);
-      }
-      for (let z = wz.zMin; z <= wz.zMax; z += 2) {
-        linePositions.push(wz.xMin, 0.006, z, wz.xMax, 0.006, z);
-      }
-      const gridGeo = new THREE.BufferGeometry();
-      gridGeo.setAttribute("position", new THREE.Float32BufferAttribute(linePositions, 3));
-      facilityGroup.add(
-        new THREE.LineSegments(
-          gridGeo,
-          new THREE.LineBasicMaterial({
-            color: 0xbfdbfe,
-            transparent: true,
-            opacity: 0.65,
-          }),
-        ),
-      );
-    }
-
-    // Solid Frosted Architectural Perimeter Walls (0.28m thick)
-    const wallSegments = computeExteriorWallSegments();
-    const wallHeight = 2.85;
-    const wallThickness = 0.28;
-    const wallMat = new THREE.MeshStandardMaterial({
-      color: 0xcbdcf4,
-      roughness: 0.34,
-      metalness: 0.1,
-      transparent: true,
-      opacity: 0.72,
-    });
-    const wallCapMat = new THREE.MeshStandardMaterial({
-      color: 0x2563eb,
-      roughness: 0.32,
-      metalness: 0.35,
-    });
-    const basePlinthMat = new THREE.MeshStandardMaterial({
-      color: 0x64748b,
-      roughness: 0.55,
-      metalness: 0.25,
-    });
-    const columnMat = new THREE.MeshStandardMaterial({
-      color: 0x64748b,
-      roughness: 0.45,
-      metalness: 0.35,
-    });
-
-    const cornerSet = new Set<string>();
-    for (const seg of wallSegments) {
-      const length = Math.hypot(seg.x2 - seg.x1, seg.z2 - seg.z1);
-      const midX = (seg.x1 + seg.x2) / 2;
-      const midZ = (seg.z1 + seg.z2) / 2;
-      const wX = seg.orientation === "H" ? length : wallThickness;
-      const wZ = seg.orientation === "V" ? length : wallThickness;
-
-      const wallMesh = new THREE.Mesh(new THREE.BoxGeometry(wX, wallHeight, wZ), wallMat);
-      wallMesh.position.set(midX, wallHeight / 2, midZ);
-      wallMesh.castShadow = true;
-      wallMesh.receiveShadow = true;
-      facilityGroup.add(wallMesh);
-
-      const baseSkirt = new THREE.Mesh(new THREE.BoxGeometry(wX + 0.04, 0.12, wZ + 0.04), basePlinthMat);
-      baseSkirt.position.set(midX, 0.06, midZ);
-      facilityGroup.add(baseSkirt);
-
-      const capMesh = new THREE.Mesh(new THREE.BoxGeometry(wX + 0.05, 0.09, wZ + 0.05), wallCapMat);
-      capMesh.position.set(midX, wallHeight + 0.045, midZ);
-      facilityGroup.add(capMesh);
-
-      for (const [px, pz] of [
-        [seg.x1, seg.z1],
-        [seg.x2, seg.z2],
-      ]) {
-        const key = `${px},${pz}`;
-        if (!cornerSet.has(key)) {
-          cornerSet.add(key);
-          const col = new THREE.Mesh(new THREE.BoxGeometry(0.42, wallHeight + 0.18, 0.42), columnMat);
-          col.position.set(px, (wallHeight + 0.18) / 2, pz);
-          col.castShadow = true;
-          facilityGroup.add(col);
-        }
-      }
-    }
-
-    // Procedural 3D Outdoor Trees surrounding the exterior grounds
+    // Randomized sparse 3D Outdoor Trees + dormant seeds that sprout/disappear automatically as the room shrinks or expands
     const landscapeGroup = new THREE.Group();
-    const treeEntries: Array<{ group: THREE.Group; crown: THREE.Group; x: number; z: number; phase: number }> = [];
-    for (let idx = 0; idx < OUTDOOR_TREE_SPECS.length; idx += 1) {
-      const spec = OUTDOOR_TREE_SPECS[idx];
-      if (isPointInsideIndoorRoom(spec.x, spec.z)) continue;
+    const randomTreePool = generateRandomTreePool(
+      activeRoomVerticesRef.current,
+      existingCoordsRef.current,
+    );
+    const treeEntries: Array<{
+      group: THREE.Group;
+      crown: THREE.Group;
+      x: number;
+      z: number;
+      phase: number;
+      targetVisible: boolean;
+      currentScale: number;
+    }> = [];
+    let initialShown = 0;
+    for (let idx = 0; idx < randomTreePool.length; idx += 1) {
+      const spec = randomTreePool[idx];
       const builtTree = buildOutdoorTree3D(spec);
+      const isClear =
+        initialShown < MAX_VISIBLE_OUTDOOR_TREES &&
+        isOutdoorTreeSpotClear(
+          spec.x,
+          spec.z,
+          activeRoomVerticesRef.current,
+          existingCoordsRef.current,
+        );
+      if (isClear) initialShown += 1;
+      builtTree.group.visible = isClear;
+      builtTree.group.scale.setScalar(isClear ? 1 : 0.001);
       landscapeGroup.add(builtTree.group);
       treeEntries.push({
         group: builtTree.group,
@@ -946,6 +1180,8 @@ export default function AhuFacilityMap3D({
         x: spec.x,
         z: spec.z,
         phase: idx * 0.9,
+        targetVisible: isClear,
+        currentScale: isClear ? 1 : 0,
       });
     }
     scene.add(landscapeGroup);
@@ -964,17 +1200,22 @@ export default function AhuFacilityMap3D({
     scene.add(wallSnapLineGroup);
 
     ahuSceneObjectsRef.current = {
+      facilityGroup,
+      roomVertexGizmoGroup,
+      roomWallGizmoGroup,
+      splitPreviewOrb,
       ahuRootGroup,
       ghostGroup,
       placedDraftGroup,
       wallSnapLineGroup,
+      sharedMats,
       trees: treeEntries,
       rotors: [],
       halos: new Map(),
       beacons: [],
     };
 
-    // Raycaster + Pointer Physics (Orbit / Pan / Direct Model Drag / Wall-Physics Placement)
+    // Raycaster + Pointer Physics (Orbit / Pan / Direct AHU Drag / Direct Wall & Vertex CAD Drag!)
     const raycaster = new THREE.Raycaster();
     const pointerNdc = new THREE.Vector2();
     const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -982,12 +1223,22 @@ export default function AhuFacilityMap3D({
 
     let isDragging = false;
     let isDraggingModelDirectly = false;
+    let draggingRoomElement:
+      | {
+          type: "wall" | "vertex";
+          index: number;
+          startVertices: FloorVertex[];
+          undoRecorded: boolean;
+        }
+      | null = null;
     let dragButton = 0;
     let downX = 0;
     let downY = 0;
     let lastX = 0;
     let lastY = 0;
     let movedDist = 0;
+    let lastWallClickAt = 0;
+    let lastWallClickedIdx = -1;
 
     const updateNdc = (clientX: number, clientY: number) => {
       const rect = domEl.getBoundingClientRect();
@@ -1006,6 +1257,7 @@ export default function AhuFacilityMap3D({
         enableWallSnap: wallSnapRef.current,
         autoAlignRotation: wallSnapRef.current && !manualRotLockedRef.current,
         clampVoidToWall: true,
+        roomVertices: activeRoomVerticesRef.current,
       });
     };
 
@@ -1046,9 +1298,40 @@ export default function AhuFacilityMap3D({
       }
     };
 
+    const findHitRoomVertex = (): number | null => {
+      const objs = ahuSceneObjectsRef.current;
+      if (!objs) return null;
+      const hits = raycaster.intersectObjects(objs.roomVertexGizmoGroup.children, true);
+      for (const h of hits) {
+        if (typeof h.object.userData?.vertexIndex === "number") {
+          return h.object.userData.vertexIndex as number;
+        }
+      }
+      return null;
+    };
+
+    const findHitRoomWall = (): { edgeIndex: number; point: THREE.Vector3 } | null => {
+      const objs = ahuSceneObjectsRef.current;
+      if (!objs) return null;
+      const gizmoHits = raycaster.intersectObjects(objs.roomWallGizmoGroup.children, true);
+      for (const h of gizmoHits) {
+        if (typeof h.object.userData?.edgeIndex === "number") {
+          return { edgeIndex: h.object.userData.edgeIndex as number, point: h.point };
+        }
+      }
+      const wallHits = raycaster.intersectObjects(objs.facilityGroup.children, true);
+      for (const h of wallHits) {
+        if (typeof h.object.userData?.edgeIndex === "number") {
+          return { edgeIndex: h.object.userData.edgeIndex as number, point: h.point };
+        }
+      }
+      return null;
+    };
+
     const handlePointerDown = (e: PointerEvent) => {
       isDragging = true;
       isDraggingModelDirectly = false;
+      draggingRoomElement = null;
       dragButton = e.button;
       downX = e.clientX;
       downY = e.clientY;
@@ -1058,8 +1341,41 @@ export default function AhuFacilityMap3D({
       autoRotateRef.current = false;
       setAutoRotate(false);
 
+      if (editingRoomRef.current && e.button === 0) {
+        updateNdc(e.clientX, e.clientY);
+        raycaster.setFromCamera(pointerNdc, camera);
+        const tool = roomToolRef.current;
+
+        if (tool === "drag") {
+          const vIdx = findHitRoomVertex();
+          if (vIdx !== null) {
+            draggingRoomElement = {
+              type: "vertex",
+              index: vIdx,
+              startVertices: activeRoomVerticesRef.current.map((v) => ({ ...v })),
+              undoRecorded: false,
+            };
+            domEl.style.cursor = "grabbing";
+            domEl.setPointerCapture?.(e.pointerId);
+            return;
+          }
+          const wHit = findHitRoomWall();
+          if (wHit !== null) {
+            draggingRoomElement = {
+              type: "wall",
+              index: wHit.edgeIndex,
+              startVertices: activeRoomVerticesRef.current.map((v) => ({ ...v })),
+              undoRecorded: false,
+            };
+            domEl.style.cursor = "grabbing";
+            domEl.setPointerCapture?.(e.pointerId);
+            return;
+          }
+        }
+      }
+
       const isEditingPlacement = mode === "placement" || Boolean(movingAhuIdRef.current);
-      if (isEditingPlacement && e.button === 0) {
+      if (isEditingPlacement && e.button === 0 && !editingRoomRef.current) {
         updateNdc(e.clientX, e.clientY);
         raycaster.setFromCamera(pointerNdc, camera);
         const objs = ahuSceneObjectsRef.current;
@@ -1084,6 +1400,41 @@ export default function AhuFacilityMap3D({
         lastX = e.clientX;
         lastY = e.clientY;
         movedDist += Math.hypot(dx, dy);
+
+        // Direct 3D Wall or Corner Vertex CAD Dragging!
+        if (draggingRoomElement && editingRoomRef.current) {
+          updateNdc(e.clientX, e.clientY);
+          raycaster.setFromCamera(pointerNdc, camera);
+          if (raycaster.ray.intersectPlane(floorPlane, planeHit)) {
+            const snapStep = roomSnapGridRef.current ? 0.5 : 0.05;
+            const nextVerts =
+              draggingRoomElement.type === "vertex"
+                ? moveFloorVertex(
+                    draggingRoomElement.startVertices,
+                    draggingRoomElement.index,
+                    planeHit.x,
+                    planeHit.z,
+                    snapStep,
+                  )
+                : dragFloorWall(
+                    draggingRoomElement.startVertices,
+                    draggingRoomElement.index,
+                    planeHit.x,
+                    planeHit.z,
+                    snapStep,
+                  );
+
+            if (nextVerts !== draggingRoomElement.startVertices) {
+              if (!draggingRoomElement.undoRecorded) {
+                pushRoomUndoRef.current(draggingRoomElement.startVertices);
+                draggingRoomElement.undoRecorded = true;
+              }
+              setRoomError(null);
+              setRoomDraftVertices(nextVerts);
+            }
+          }
+          return;
+        }
 
         if (isDraggingModelDirectly && isEditingPlacement) {
           updateNdc(e.clientX, e.clientY);
@@ -1115,6 +1466,64 @@ export default function AhuFacilityMap3D({
       updateNdc(e.clientX, e.clientY);
       raycaster.setFromCamera(pointerNdc, camera);
 
+      // Room Editor hover feedback (vertex handles, wall handles, split preview orb)
+      if (editingRoomRef.current) {
+        const objs = ahuSceneObjectsRef.current;
+        const tool = roomToolRef.current;
+        if (objs) objs.splitPreviewOrb.visible = false;
+
+        if (tool === "delete") {
+          const vIdx = findHitRoomVertex();
+          setHoveredRoomTarget(vIdx !== null ? { type: "vertex", index: vIdx } : null);
+          domEl.style.cursor = vIdx !== null ? "pointer" : "grab";
+          return;
+        }
+
+        if (tool === "split") {
+          const wHit = findHitRoomWall();
+          if (wHit && objs) {
+            const verts = activeRoomVerticesRef.current;
+            const a = verts[wHit.edgeIndex];
+            const b = verts[(wHit.edgeIndex + 1) % verts.length];
+            if (a && b) {
+              const proj = projectPointToSegment(wHit.point.x, wHit.point.z, a.x, a.z, b.x, b.z);
+              objs.splitPreviewOrb.position.set(proj.cx, 2.98, proj.cz);
+              objs.splitPreviewOrb.visible = true;
+            }
+            setHoveredRoomTarget({ type: "wall", index: wHit.edgeIndex });
+            domEl.style.cursor = "copy";
+          } else {
+            setHoveredRoomTarget(null);
+            domEl.style.cursor = "grab";
+          }
+          return;
+        }
+
+        if (tool === "extrude") {
+          const wHit = findHitRoomWall();
+          setHoveredRoomTarget(wHit ? { type: "wall", index: wHit.edgeIndex } : null);
+          domEl.style.cursor = wHit ? "cell" : "grab";
+          return;
+        }
+
+        // Default "drag" tool: check vertices first, then walls
+        const vIdx = findHitRoomVertex();
+        if (vIdx !== null) {
+          setHoveredRoomTarget({ type: "vertex", index: vIdx });
+          domEl.style.cursor = "move";
+          return;
+        }
+        const wHit = findHitRoomWall();
+        if (wHit !== null) {
+          setHoveredRoomTarget({ type: "wall", index: wHit.edgeIndex });
+          domEl.style.cursor = "ew-resize";
+          return;
+        }
+        setHoveredRoomTarget(null);
+        domEl.style.cursor = "grab";
+        return;
+      }
+
       if (isEditingPlacement) {
         const objs = ahuSceneObjectsRef.current;
         if (objs && objs.placedDraftGroup.visible) {
@@ -1141,18 +1550,113 @@ export default function AhuFacilityMap3D({
 
     const handlePointerUp = (e: PointerEvent) => {
       const wasDraggingModel = isDraggingModelDirectly;
+      const finishedRoomDrag = draggingRoomElement;
       if (isDragging) {
         isDragging = false;
         isDraggingModelDirectly = false;
+        draggingRoomElement = null;
         domEl.releasePointerCapture?.(e.pointerId);
       }
-      if (wasDraggingModel) {
+
+      const clickDelta = Math.hypot(e.clientX - downX, e.clientY - downY);
+      const isCleanClick = movedDist < 6 && clickDelta < 6 && e.button === 0;
+
+      // Room Editor click actions (Split Wall, Extrude Wing, Delete Corner, or Double-Click Wall to Split!)
+      if (editingRoomRef.current && isCleanClick) {
+        updateNdc(e.clientX, e.clientY);
+        raycaster.setFromCamera(pointerNdc, camera);
+        const tool = roomToolRef.current;
+        const verts = activeRoomVerticesRef.current;
+        const snapStep = roomSnapGridRef.current ? 0.5 : 0.05;
+
+        if (tool === "split") {
+          const wHit = findHitRoomWall();
+          if (wHit) {
+            const res = insertVertexOnWall(
+              verts,
+              wHit.edgeIndex,
+              { x: wHit.point.x, z: wHit.point.z },
+              snapStep,
+            );
+            if (res) {
+              pushRoomUndoRef.current(verts);
+              setRoomDraftVertices(res.vertices);
+              setRoomTool("drag");
+              setRoomError(null);
+              setRoomNotice("New corner point added — drag it or any adjacent wall to sculpt.");
+            } else {
+              setRoomError("Wall segment is too short to split further.");
+            }
+          }
+          return;
+        }
+
+        if (tool === "extrude") {
+          const wHit = findHitRoomWall();
+          if (wHit) {
+            const next = extrudeWingOnWall(verts, wHit.edgeIndex, 4);
+            if (next) {
+              pushRoomUndoRef.current(verts);
+              setRoomDraftVertices(next);
+              setRoomTool("drag");
+              setRoomError(null);
+              setRoomNotice("New room wing extruded — drag its walls to customize dimensions.");
+            } else {
+              setRoomError("Select an exterior wall at least 4.5m long with clear outdoor space.");
+            }
+          }
+          return;
+        }
+
+        if (tool === "delete") {
+          const vIdx = findHitRoomVertex();
+          if (vIdx !== null) {
+            const next = deleteFloorVertex(verts, vIdx);
+            if (next) {
+              pushRoomUndoRef.current(verts);
+              setRoomDraftVertices(next);
+              setHoveredRoomTarget(null);
+              setRoomError(null);
+              setRoomNotice("Corner point removed.");
+            } else {
+              setRoomError("Cannot delete this corner without causing walls to cross.");
+            }
+          }
+          return;
+        }
+
+        // Double-click shortcut on any wall in Drag mode to insert a new corner point!
+        if (tool === "drag" && finishedRoomDrag?.type === "wall") {
+          const now = performance.now();
+          if (now - lastWallClickAt < 340 && lastWallClickedIdx === finishedRoomDrag.index) {
+            const wHit = findHitRoomWall();
+            const res = insertVertexOnWall(
+              verts,
+              finishedRoomDrag.index,
+              wHit ? { x: wHit.point.x, z: wHit.point.z } : undefined,
+              snapStep,
+            );
+            if (res) {
+              pushRoomUndoRef.current(verts);
+              setRoomDraftVertices(res.vertices);
+              setRoomNotice("Corner point created on wall — drag it freely!");
+            }
+            lastWallClickAt = 0;
+            lastWallClickedIdx = -1;
+            return;
+          }
+          lastWallClickAt = now;
+          lastWallClickedIdx = finishedRoomDrag.index;
+        }
+        return;
+      }
+
+      if (finishedRoomDrag || wasDraggingModel) {
         domEl.style.cursor = "grab";
         return;
       }
 
-      const clickDelta = Math.hypot(e.clientX - downX, e.clientY - downY);
-      if (movedDist < 6 && clickDelta < 6 && e.button === 0) {
+      if (isCleanClick) {
         updateNdc(e.clientX, e.clientY);
         raycaster.setFromCamera(pointerNdc, camera);
 
@@ -1195,7 +1699,9 @@ export default function AhuFacilityMap3D({
       if (objs) {
         objs.ghostGroup.visible = false;
         objs.wallSnapLineGroup.visible = false;
+        objs.splitPreviewOrb.visible = false;
       }
+      setHoveredRoomTarget(null);
     };
 
     const handleWheel = (e: WheelEvent) => {
@@ -1242,7 +1748,6 @@ export default function AhuFacilityMap3D({
         c.goalTheta += dt * 0.16;
       }
 
-      // Responsive while user drags manually; smooth cinematic glide when transitioning to Top View / 3D View!
       const speed = isDragging ? 15 : 4.2;
       const damp = 1 - Math.exp(-dt * speed);
       c.theta += (c.goalTheta - c.theta) * damp;
@@ -1265,13 +1770,25 @@ export default function AhuFacilityMap3D({
           if (r.running) r.rotor.rotation.z -= dt * 7.5;
         }
         for (const t of objs.trees) {
+          const goal = t.targetVisible ? 1 : 0;
+          if (Math.abs(t.currentScale - goal) > 0.002) {
+            const rate = goal > t.currentScale ? 9.5 : 12.5;
+            t.currentScale += (goal - t.currentScale) * (1 - Math.exp(-dt * rate));
+            const s = Math.max(0.001, t.currentScale);
+            t.group.scale.setScalar(s);
+            t.group.visible = t.currentScale > 0.015;
+          } else {
+            t.currentScale = goal;
+            t.group.visible = goal > 0.5;
+            if (t.group.visible) t.group.scale.setScalar(1);
+          }
           if (t.group.visible) {
             t.crown.rotation.z = Math.sin(elapsed * 1.25 + t.phase) * 0.016;
           }
         }
         for (const [id, haloMesh] of objs.halos.entries()) {
           const mat = haloMesh.material as THREE.MeshBasicMaterial;
-          const isSel = id === selectedIdRef.current;
+          const isSel = id === selectedIdRef.current && !editingRoomRef.current;
           mat.opacity = isSel ? 0.65 + Math.sin(elapsed * 4) * 0.2 : 0;
         }
         for (const b of objs.beacons) {
@@ -1290,7 +1807,7 @@ export default function AhuFacilityMap3D({
         if (!el) continue;
         const isHidden =
           u.item.ahu.id === movingAhuIdRef.current ||
-          (mode === "explore" && u.item.ahu.id === selectedIdRef.current);
+          (mode === "explore" && !editingRoomRef.current && u.item.ahu.id === selectedIdRef.current);
         if (isHidden) {
           el.style.opacity = "0";
           el.style.pointerEvents = "none";
@@ -1305,8 +1822,9 @@ export default function AhuFacilityMap3D({
         }
         const sx = (projVec.x * 0.5 + 0.5) * cw;
         const sy = (-projVec.y * 0.5 + 0.5) * ch;
-        el.style.opacity = "1";
-        el.style.pointerEvents = mode === "explore" && !movingAhuIdRef.current ? "auto" : "none";
+        el.style.opacity = editingRoomRef.current ? "0.45" : "1";
+        el.style.pointerEvents =
+          mode === "explore" && !movingAhuIdRef.current && !editingRoomRef.current ? "auto" : "none";
         el.style.transform = `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, 0) translate(-50%, -100%)`;
       }
 
@@ -1352,21 +1870,178 @@ export default function AhuFacilityMap3D({
     };
   }, [mode, setSelectedId, updateWallSnapHighlight]);
 
-  // Auto-hide any decorative tree if an AHU is placed right on top of its outdoor spot
+  // Dynamically rebuild the 3D Room Floor Slab, Clipped Grid, Arbitrary-Angle Walls & Interactive CAD Handles!
+  useEffect(() => {
+    const objs = ahuSceneObjectsRef.current;
+    if (!objs || activeRoomVertices.length < 3) return;
+
+    clearGroupGeometries(objs.facilityGroup);
+    clearGroupGeometries(objs.roomWallGizmoGroup);
+    clearGroupGeometries(objs.roomVertexGizmoGroup);
+
+    const { sharedMats } = objs;
+
+    // 1. Extruded Cleanroom Floor Slab for ANY custom polygon
+    const shape = new THREE.Shape();
+    shape.moveTo(activeRoomVertices[0].x, -activeRoomVertices[0].z);
+    for (let i = 1; i < activeRoomVertices.length; i += 1) {
+      shape.lineTo(activeRoomVertices[i].x, -activeRoomVertices[i].z);
+    }
+    shape.closePath();
+
+    const slabGeo = new THREE.ExtrudeGeometry(shape, { depth: 0.26, bevelEnabled: false });
+    slabGeo.rotateX(-Math.PI / 2);
+    const slabMesh = new THREE.Mesh(slabGeo, sharedMats.indoorSlabMat);
+    slabMesh.position.y = -0.26;
+    slabMesh.receiveShadow = true;
+    objs.facilityGroup.add(slabMesh);
+
+    // 2. Clean 2m × 2m floor tile grid clipped to the custom polygon
+    const gridCoords = buildClippedFloorGridPositions(activeRoomVertices);
+    if (gridCoords.length > 0) {
+      const gridGeo = new THREE.BufferGeometry();
+      gridGeo.setAttribute("position", new THREE.BufferAttribute(gridCoords, 3));
+      objs.facilityGroup.add(new THREE.LineSegments(gridGeo, sharedMats.gridLineMat));
+    }
+
+    // 3. Oriented Frosted Architectural Perimeter Walls (supports H, V, & Diagonal walls!)
+    const wallSegments = computeExteriorWallSegments(activeRoomVertices);
+    const wallHeight = 2.85;
+    const wallThickness = 0.28;
+
+    for (const seg of wallSegments) {
+      const edgeIdx = seg.edgeIndex ?? 0;
+      const dx = seg.x2 - seg.x1;
+      const dz = seg.z2 - seg.z1;
+      const length = Math.hypot(dx, dz);
+      const midX = (seg.x1 + seg.x2) / 2;
+      const midZ = (seg.z1 + seg.z2) / 2;
+      const angleY = -Math.atan2(dz, dx);
+
+      const isWallHovered =
+        editingRoom && hoveredRoomTarget?.type === "wall" && hoveredRoomTarget.index === edgeIdx;
+      const chosenWallMat = isWallHovered
+        ? roomTool === "extrude" || roomTool === "split"
+          ? sharedMats.wallExtrudeMat
+          : sharedMats.wallHoverMat
+        : sharedMats.wallMat;
+
+      const wallMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(length, wallHeight, wallThickness),
+        chosenWallMat,
+      );
+      wallMesh.position.set(midX, wallHeight / 2, midZ);
+      wallMesh.rotation.y = angleY;
+      wallMesh.castShadow = true;
+      wallMesh.receiveShadow = true;
+      wallMesh.userData = { edgeIndex: edgeIdx };
+      objs.facilityGroup.add(wallMesh);
+
+      const baseSkirt = new THREE.Mesh(
+        new THREE.BoxGeometry(length + 0.04, 0.12, wallThickness + 0.04),
+        sharedMats.basePlinthMat,
+      );
+      baseSkirt.position.set(midX, 0.06, midZ);
+      baseSkirt.rotation.y = angleY;
+      objs.facilityGroup.add(baseSkirt);
+
+      const capMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(length + 0.05, 0.09, wallThickness + 0.05),
+        sharedMats.wallCapMat,
+      );
+      capMesh.position.set(midX, wallHeight + 0.045, midZ);
+      capMesh.rotation.y = angleY;
+      capMesh.userData = { edgeIndex: edgeIdx };
+      objs.facilityGroup.add(capMesh);
+
+      // Interactive Wall Push/Pull Midpoint Handle when Edit Room is active
+      if (editingRoom && (roomTool === "drag" || roomTool === "extrude") && length >= 1.6) {
+        const puck = new THREE.Mesh(
+          new THREE.BoxGeometry(Math.min(1.3, length * 0.4), 0.34, 0.68),
+          isWallHovered ? sharedMats.wallHoverMat : sharedMats.wallGizmoMat,
+        );
+        puck.position.set(midX, wallHeight + 0.24, midZ);
+        puck.rotation.y = angleY;
+        puck.userData = { edgeIndex: edgeIdx };
+        objs.roomWallGizmoGroup.add(puck);
+
+        // Bidirectional push/pull arrow cones perpendicular to wall
+        const nx = -dz / length;
+        const nz = dx / length;
+        for (const side of [-1, 1]) {
+          const cone = new THREE.Mesh(
+            new THREE.ConeGeometry(0.18, 0.38, 12),
+            sharedMats.wallGizmoMat,
+          );
+          cone.position.set(midX + nx * side * 0.56, wallHeight + 0.24, midZ + nz * side * 0.56);
+          cone.rotation.z = -Math.PI / 2;
+          cone.rotation.y = -Math.atan2(nz * side, nx * side);
+          cone.userData = { edgeIndex: edgeIdx };
+          objs.roomWallGizmoGroup.add(cone);
+        }
+      }
+    }
+
+    // 4. Rounded Corner Columns + Interactive Corner Vertex Handles
+    for (let vIdx = 0; vIdx < activeRoomVertices.length; vIdx += 1) {
+      const v = activeRoomVertices[vIdx];
+      const col = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.22, 0.22, wallHeight + 0.18, 16),
+        sharedMats.columnMat,
+      );
+      col.position.set(v.x, (wallHeight + 0.18) / 2, v.z);
+      col.castShadow = true;
+      objs.facilityGroup.add(col);
+
+      if (editingRoom && (roomTool === "drag" || roomTool === "delete")) {
+        const isVertHovered =
+          hoveredRoomTarget?.type === "vertex" && hoveredRoomTarget.index === vIdx;
+        const handleMat =
+          roomTool === "delete"
+            ? sharedMats.vertexDeleteMat
+            : isVertHovered
+              ? sharedMats.vertexHoverMat
+              : sharedMats.vertexGizmoMat;
+
+        const orb = new THREE.Mesh(
+          new THREE.SphereGeometry(isVertHovered ? 0.52 : 0.42, 20, 20),
+          handleMat,
+        );
+        orb.position.set(v.x, wallHeight + 0.36, v.z);
+        orb.userData = { vertexIndex: vIdx };
+        objs.roomVertexGizmoGroup.add(orb);
+
+        const ringGeo = new THREE.RingGeometry(0.54, 0.72, 24);
+        ringGeo.rotateX(-Math.PI / 2);
+        const ring = new THREE.Mesh(ringGeo, sharedMats.wallGizmoRingMat);
+        ring.position.set(v.x, wallHeight + 0.2, v.z);
+        ring.userData = { vertexIndex: vIdx };
+        objs.roomVertexGizmoGroup.add(ring);
+      }
+    }
+  }, [activeRoomVertices, editingRoom, roomTool, hoveredRoomTarget]);
+
+  // Automatically sprout or hide outdoor trees in real time as the room shrinks/expands or AHUs move!
   useEffect(() => {
     const objs = ahuSceneObjectsRef.current;
     if (!objs) return;
     const activeDraft = mode === "placement" ? placement : moveDraft;
-    for (const t of objs.trees) {
-      const blockedByUnit = resolvedUnits.some(
-        (u) => u.item.ahu.id !== movingAhuId && Math.hypot(u.placement.x - t.x, u.placement.z - t.z) < 3.4,
-      );
-      const blockedByDraft = activeDraft
-        ? Math.hypot(activeDraft.x - t.x, activeDraft.z - t.z) < 3.4
-        : false;
-      t.group.visible = !(blockedByUnit || blockedByDraft);
+    const occupiedAhuPoints = resolvedUnits
+      .filter((u) => u.item.ahu.id !== movingAhuId)
+      .map((u) => ({ x: u.placement.x, z: u.placement.z }));
+    if (activeDraft) {
+      occupiedAhuPoints.push({ x: activeDraft.x, z: activeDraft.z });
     }
-  }, [resolvedUnits, placement, moveDraft, mode, movingAhuId]);
+
+    let shownCount = 0;
+    for (const t of objs.trees) {
+      const clear =
+        shownCount < MAX_VISIBLE_OUTDOOR_TREES &&
+        isOutdoorTreeSpotClear(t.x, t.z, activeRoomVertices, occupiedAhuPoints);
+      if (clear) shownCount += 1;
+      t.targetVisible = clear;
+    }
+  }, [resolvedUnits, placement, moveDraft, mode, movingAhuId, activeRoomVertices]);
 
   // Rebuild 3D AHU models whenever unit statuses, positions, or moving state change
   useEffect(() => {
@@ -1439,6 +2114,7 @@ export default function AhuFacilityMap3D({
         enableWallSnap: wallSnapEnabled,
         autoAlignRotation: false,
         clampVoidToWall: true,
+        roomVertices: activeRoomVertices,
       });
       onPlacementChange({
         x: check.snappedX,
@@ -1456,6 +2132,7 @@ export default function AhuFacilityMap3D({
         enableWallSnap: wallSnapEnabled,
         autoAlignRotation: false,
         clampVoidToWall: true,
+        roomVertices: activeRoomVertices,
       });
       setMoveDraft({
         x: check.snappedX,
@@ -1479,14 +2156,14 @@ export default function AhuFacilityMap3D({
   return (
     <div
       className={cx(
-        "flex flex-col overflow-hidden bg-[#eaf1fb]",
+        "flex flex-col overflow-hidden",
         fullPage
-          ? "absolute inset-0 h-full w-full"
-          : "relative rounded-2xl border border-[#d6e2f2] shadow-[0_18px_42px_-20px_rgba(18,41,77,0.24)]",
+          ? "absolute inset-0 h-full w-full bg-transparent"
+          : "relative rounded-2xl border border-[#d6e2f2] bg-[#eaf1fb] shadow-[0_18px_42px_-20px_rgba(18,41,77,0.24)]",
       )}
     >
-      {/* Clean Frosted-White Architectural Top HUD Bar */}
-      <div className="z-20 flex flex-none flex-wrap items-center justify-between gap-2 border-b border-[#dbe5f2] bg-white/92 px-3.5 py-2.5 shadow-[0_4px_20px_-14px_rgba(18,41,77,0.16)] backdrop-blur-xl sm:px-5">
+      {/* Translucent Frosted Architectural Top HUD Bar (harmonizes with Mountain Topbar above) */}
+      <div className="z-20 flex flex-none flex-wrap items-center justify-between gap-2 border-y border-[#dbe5f2]/90 bg-white/84 px-3.5 py-2.5 shadow-[0_4px_20px_-14px_rgba(18,41,77,0.16)] backdrop-blur-md sm:px-5">
         <div className="flex min-w-0 items-center gap-2.5">
           <span className="grid h-9 w-9 flex-none place-items-center rounded-xl bg-[#eef4ff] text-[#1d6ef2] ring-1 ring-[#bfd6fb]">
             <Layers size={16} />
@@ -1494,29 +2171,35 @@ export default function AhuFacilityMap3D({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="truncate text-[14px] font-bold tracking-tight text-[#12294d] sm:text-[15.5px]">
-                {mode === "placement"
-                  ? "Place New 3D AHU · Indoor or Outdoor"
-                  : movingAhuId
-                    ? `Moving ${movingAhuId} in 3D Facility`
-                    : "AHU Units · 3D Facility Digital Twin"}
+                {editingRoom
+                  ? "3D Room Architect · Edit Walls & Corners"
+                  : mode === "placement"
+                    ? "Place New 3D AHU · Indoor or Outdoor"
+                    : movingAhuId
+                      ? `Moving ${movingAhuId} in 3D Facility`
+                      : "AHU Units · 3D Facility Digital Twin"}
               </h1>
               <span className="hidden rounded-full border border-[#cbe0fd] bg-[#eef5ff] px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#1d6ef2] md:inline-flex">
-                {indoorCount} Indoor · {outdoorCount} Outdoor
+                {editingRoom
+                  ? `${activeRoomAreaSqM} m² · ${activeRoomVertices.length} Corners`
+                  : `${indoorCount} Indoor · ${outdoorCount} Outdoor`}
               </span>
             </div>
             <p className="truncate text-[11px] text-[#475569]">
-              {mode === "placement" || movingAhuId
-                ? "Place inside any wing or anywhere outside · solid walls snap flush & prevent clipping"
-                : pickToMove
-                  ? "Click any 3D AHU model (or its name badge) to drag & move it indoors or anywhere outdoors"
-                  : "Drag to rotate 360° · scroll to zoom · click any 3D AHU to view live status & controls"}
+              {editingRoom
+                ? "Drag any wall or corner orb · double-click a wall to add a point · extrude new wings in 1 click"
+                : mode === "placement" || movingAhuId
+                  ? "Place inside any wing or anywhere outside · solid walls snap flush & prevent clipping"
+                  : pickToMove
+                    ? "Click any 3D AHU model (or its name badge) to drag & move it indoors or anywhere outdoors"
+                    : "Drag to rotate 360° · scroll to zoom · click any 3D AHU to view live status & controls"}
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          {/* Smoothly Open Classic AHU Units List View */}
-          {mode === "explore" && onOpenList ? (
+          {/* Open Classic AHU Units List View */}
+          {mode === "explore" && !editingRoom && onOpenList ? (
             <button
               type="button"
               onClick={onOpenList}
@@ -1576,8 +2259,25 @@ export default function AhuFacilityMap3D({
             </>
           ) : null}
 
+          {/* Edit 3D Room Button */}
+          {mode === "explore" && canEditRoom && !movingAhuId ? (
+            <button
+              type="button"
+              onClick={() => (editingRoom ? cancelEditingRoom() : startEditingRoom())}
+              className={cx(
+                hudBtnBase,
+                editingRoom
+                  ? "border-indigo-600 bg-indigo-600 text-white shadow-[0_8px_18px_-6px_rgba(79,70,229,0.75)]"
+                  : hudBtnNeutral,
+              )}
+              title="Reshape the 3D facility room: drag walls, add/move corners, or extrude wings"
+            >
+              <PenTool size={13} /> {editingRoom ? "Exit Room Editor" : "Edit Room"}
+            </button>
+          ) : null}
+
           {/* Move 3D Model Button */}
-          {mode === "explore" && canMoveAhu && !movingAhuId ? (
+          {mode === "explore" && canMoveAhu && !movingAhuId && !editingRoom ? (
             <button
               type="button"
               onClick={() => {
@@ -1596,7 +2296,7 @@ export default function AhuFacilityMap3D({
             </button>
           ) : null}
 
-          {mode === "explore" && !movingAhuId ? (
+          {mode === "explore" && !movingAhuId && !editingRoom ? (
             <button
               type="button"
               onClick={() => setAutoRotate((v) => !v)}
@@ -1626,7 +2326,7 @@ export default function AhuFacilityMap3D({
             </button>
           </div>
 
-          {mode === "explore" && canAddAhu && onRequestAddAhu && !movingAhuId ? (
+          {mode === "explore" && canAddAhu && onRequestAddAhu && !movingAhuId && !editingRoom ? (
             <button
               type="button"
               onClick={onRequestAddAhu}
@@ -1637,6 +2337,145 @@ export default function AhuFacilityMap3D({
           ) : null}
         </div>
       </div>
+
+      {/* Interactive 3D Room Architect CAD Sub-Toolbar */}
+      {mode === "explore" && editingRoom ? (
+        <div className="z-20 flex flex-none flex-wrap items-center justify-between gap-2 border-b border-indigo-200 bg-indigo-50/95 px-3.5 py-2 text-[11.5px] text-[#12294d] backdrop-blur-md sm:px-5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setRoomTool("drag");
+                setRoomError(null);
+              }}
+              className={cx(
+                "inline-flex items-center gap-1.5 rounded-xl border px-3 py-1 font-bold transition",
+                roomTool === "drag"
+                  ? "border-indigo-600 bg-indigo-600 text-white shadow-sm"
+                  : "border-indigo-200 bg-white text-[#12294d] hover:bg-indigo-100/60",
+              )}
+              title="Drag walls to push/pull wings, or drag corner orbs to reshape angles"
+            >
+              <Move size={12} /> Drag Walls &amp; Corners
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setRoomTool("split");
+                setRoomError(null);
+                setRoomNotice("Click anywhere along a wall to insert a new corner point.");
+              }}
+              className={cx(
+                "inline-flex items-center gap-1.5 rounded-xl border px-3 py-1 font-bold transition",
+                roomTool === "split"
+                  ? "border-emerald-600 bg-emerald-600 text-white shadow-sm"
+                  : "border-indigo-200 bg-white text-[#12294d] hover:bg-indigo-100/60",
+              )}
+              title="Click any wall to split it and create a new draggable corner point"
+            >
+              <PlusCircle size={12} /> + Add Corner
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setRoomTool("extrude");
+                setRoomError(null);
+                setRoomNotice("Click any wall (≥4.5m) to extrude a new 4m room wing outward.");
+              }}
+              className={cx(
+                "inline-flex items-center gap-1.5 rounded-xl border px-3 py-1 font-bold transition",
+                roomTool === "extrude"
+                  ? "border-emerald-600 bg-emerald-600 text-white shadow-sm"
+                  : "border-indigo-200 bg-white text-[#12294d] hover:bg-indigo-100/60",
+              )}
+              title="Click any exterior wall to pop out a new rectangular room wing"
+            >
+              <SquarePlus size={12} /> Extrude Wing
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setRoomTool("delete");
+                setRoomError(null);
+                setRoomNotice("Click any red corner orb to remove that point.");
+              }}
+              className={cx(
+                "inline-flex items-center gap-1.5 rounded-xl border px-3 py-1 font-bold transition",
+                roomTool === "delete"
+                  ? "border-red-600 bg-red-600 text-white shadow-sm"
+                  : "border-indigo-200 bg-white text-[#12294d] hover:bg-indigo-100/60",
+              )}
+              title="Click a corner orb to delete it and merge adjacent walls"
+            >
+              <Trash2 size={12} /> Delete Corner
+            </button>
+
+            <span className="mx-1 hidden h-4 w-px bg-indigo-200 sm:inline-block" />
+
+            <button
+              type="button"
+              onClick={() => setRoomSnapGrid((v) => !v)}
+              className={cx(
+                "inline-flex items-center gap-1 rounded-xl border px-2.5 py-1 font-semibold transition",
+                roomSnapGrid
+                  ? "border-blue-300 bg-blue-100/90 text-[#12294d]"
+                  : "border-slate-300 bg-white text-slate-600",
+              )}
+              title="Snap wall & corner drags to clean 0.5m architectural increments"
+            >
+              <Grid size={12} /> {roomSnapGrid ? "Snap 0.5m" : "Freeform"}
+            </button>
+
+            <button
+              type="button"
+              disabled={roomHistory.length === 0}
+              onClick={undoRoomEdit}
+              className="inline-flex items-center gap-1 rounded-xl border border-indigo-200 bg-white px-2.5 py-1 font-semibold text-[#12294d] transition hover:bg-slate-50 disabled:opacity-40"
+              title="Undo last room edit (Ctrl+Z)"
+            >
+              <Undo2 size={12} /> Undo
+            </button>
+
+            <button
+              type="button"
+              disabled={savingRoom}
+              onClick={() => void handleResetRoomToDefault()}
+              className="inline-flex items-center gap-1 rounded-xl border border-indigo-200 bg-white px-2.5 py-1 font-semibold text-slate-700 transition hover:bg-slate-50"
+              title="Restore default 22-corner multi-branch floorplan"
+            >
+              <RotateCcw size={11} /> Default
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {roomError ? (
+              <span className="font-semibold text-red-600">{roomError}</span>
+            ) : roomNotice ? (
+              <span className="hidden font-medium text-indigo-800 xl:inline">{roomNotice}</span>
+            ) : null}
+
+            <button
+              type="button"
+              disabled={savingRoom}
+              onClick={cancelEditingRoom}
+              className="rounded-xl border border-[#cbd8ea] bg-white px-3 py-1 font-semibold text-[#12294d] transition hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={savingRoom}
+              onClick={() => void handleSaveRoom()}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-1 font-bold text-white shadow-sm transition hover:bg-indigo-700"
+            >
+              <Check size={13} /> {savingRoom ? "Saving…" : "Save Room"}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* Action Bar while Moving an Existing 3D AHU */}
       {mode === "explore" && movingAhuId && moveDraft ? (
@@ -1683,7 +2522,7 @@ export default function AhuFacilityMap3D({
       <div
         ref={viewportRef}
         className={cx(
-          "relative w-full select-none overflow-hidden",
+          "relative w-full select-none overflow-hidden bg-[#eaf1fb]",
           fullPage
             ? "min-h-0 flex-1"
             : mode === "placement"
@@ -1694,7 +2533,7 @@ export default function AhuFacilityMap3D({
         <div ref={mountRef} className="absolute inset-0 h-full w-full touch-none" />
 
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          {/* Compact Floating Name Pills (pure GPU transform + opacity, zero layout reflow!) */}
+          {/* Compact Floating Name Pills */}
           {resolvedUnits.map(({ item, placement: pos }) => {
             const shortName = item.ahu.name.replace(new RegExp(`^${item.ahu.id}\\s*[-·]?\\s*`, "i"), "").trim();
             return (
@@ -1707,7 +2546,7 @@ export default function AhuFacilityMap3D({
                 }}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (mode !== "explore") return;
+                  if (mode !== "explore" || editingRoom) return;
                   if (pickToMove) startMovingUnit(item.ahu.id);
                   else setSelectedId(item.ahu.id);
                 }}
@@ -1868,7 +2707,7 @@ export default function AhuFacilityMap3D({
           ) : null}
         </div>
 
-        {/* Clean Frosted-White Bottom Legend & Live Wall-Physics Status */}
+        {/* Clean Frosted-White Bottom Legend & Live Wall-Physics / Room-Editor Status */}
         <div className="pointer-events-none absolute inset-x-3.5 bottom-3.5 flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-[#d5e1f0] bg-white/92 px-3.5 py-1.5 text-[11px] font-semibold text-[#1e293b] shadow-[0_8px_24px_-12px_rgba(18,41,77,0.22)] backdrop-blur-xl">
             <span className="inline-flex items-center gap-1.5">
@@ -1885,11 +2724,24 @@ export default function AhuFacilityMap3D({
             </span>
             <span className="hidden text-slate-300 sm:inline">|</span>
             <span className="hidden items-center gap-1 text-emerald-700 sm:inline-flex">
-              <Trees size={12} /> Landscaped Exterior = Outdoor Grounds
+              <Trees size={12} /> Exterior = Outdoor Grounds
             </span>
           </div>
 
-          {mode === "placement" || movingAhuId ? (
+          {editingRoom ? (
+            <div className="rounded-xl border border-indigo-300 bg-white/95 px-3.5 py-1.5 text-[11px] font-semibold text-[#12294d] shadow-sm backdrop-blur-xl">
+              <span className="inline-flex items-center gap-1.5">
+                <PenTool size={12} className="text-indigo-600" />
+                {roomTool === "drag"
+                  ? `Floor Area: ${activeRoomAreaSqM} m² (${activeRoomVertices.length} corners) · Drag blue wall handles or white corner orbs · Double-click wall to split`
+                  : roomTool === "split"
+                    ? "Click anywhere on a highlighted green wall to insert a new corner point"
+                    : roomTool === "extrude"
+                      ? "Click any exterior wall (≥4.5m) to extrude a new 4m rectangular room wing"
+                      : "Click any red corner orb to delete that vertex and straighten walls"}
+              </span>
+            </div>
+          ) : mode === "placement" || movingAhuId ? (
             <div
               className={cx(
                 "rounded-xl border px-3.5 py-1.5 text-[11px] font-semibold shadow-sm backdrop-blur-xl",

@@ -290,7 +290,6 @@ export default function AppShell({
 
   const items = NAV.filter((n) => can(currentUser.role, n.activity));
   const isImmersive3dPage = pathname === "/ahu";
-  const is3dRoomHeader = pathname === "/ahu" && search?.get("view") !== "list";
   const unackedAlarms = (feed?.alarms ?? []).filter((a) => !a.acknowledged).length;
   const displayName =
     currentUser.fullName?.trim() ||
@@ -441,9 +440,9 @@ export default function AppShell({
         <header
           className={cx(
             "no-print sticky top-0 z-30 flex-none transition-all duration-200",
-            scrolled || is3dRoomHeader
+            scrolled
               ? "border-b border-[#e2eaf4] bg-white/90 shadow-[0_4px_18px_-12px_rgba(16,24,40,0.2)] backdrop-blur-xl"
-              : "border-b border-transparent bg-white/55 backdrop-blur-md lg:bg-transparent lg:backdrop-blur-none",
+              : "border-b border-transparent bg-white/40 backdrop-blur-[2px] lg:bg-transparent lg:backdrop-blur-none",
           )}
         >
           <div className="flex h-[60px] items-center gap-2 px-3 sm:h-[64px] sm:gap-3 sm:px-6">
