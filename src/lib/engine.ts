@@ -227,10 +227,10 @@ export async function evaluateFaultAlarm(client: Client, ahu: AhuRow, faultCode:
   }
 }
 
-export async function evaluateCommunicationAlarm(ahu: AhuRow, ageSec: number | null) {
+export async function evaluateCommunicationAlarm(ahu: AhuRow, ageSec: number | null, exec: Client = db) {
   const timeout = ahu.commTimeoutSec;
   if (ageSec === null || ageSec > timeout) {
-    await raiseAlarm(db, {
+    await raiseAlarm(exec, {
       ahuId: ahu.id,
       parameter: "COMMUNICATION",
       priority: "HIGH",
@@ -239,12 +239,12 @@ export async function evaluateCommunicationAlarm(ahu: AhuRow, ageSec: number | n
       } (timeout ${timeout} s)`,
     });
   } else {
-    await resolveAlarm(db, ahu.id, "COMMUNICATION");
+    await resolveAlarm(exec, ahu.id, "COMMUNICATION");
   }
 }
 
-export async function hasActiveCriticalAlarm(ahuId: string): Promise<boolean> {
-  const rows = await db
+export async function hasActiveCriticalAlarm(ahuId: string, exec: Client = db): Promise<boolean> {
+  const rows = await exec
     .select({ id: alarms.id })
     .from(alarms)
     .where(and(eq(alarms.ahuId, ahuId), eq(alarms.isActive, true), eq(alarms.priority, "CRITICAL")))
@@ -253,18 +253,18 @@ export async function hasActiveCriticalAlarm(ahuId: string): Promise<boolean> {
 }
 
 /** Recompute and persist FR-04 status for one AHU from its latest telemetry. */
-export async function refreshAhuStatus(ahuId: string, now = new Date()) {
-  const ahuRows = await db.select().from(ahus).where(eq(ahus.id, ahuId)).limit(1);
+export async function refreshAhuStatus(ahuId: string, now = new Date(), exec: Client = db) {
+  const ahuRows = await exec.select().from(ahus).where(eq(ahus.id, ahuId)).limit(1);
   const ahu = ahuRows[0];
   if (!ahu) return null;
-  const last = await db
+  const last = await exec
     .select()
     .from(telemetry)
     .where(and(eq(telemetry.ahuId, ahuId), authoritativeTelemetry()))
     .orderBy(desc(telemetry.timestamp))
     .limit(1);
   const row = last[0];
-  const critical = await hasActiveCriticalAlarm(ahuId);
+  const critical = await hasActiveCriticalAlarm(ahuId, exec);
   const { status, ageSec } = computeAhuStatus({
     lastSeenAt: row?.timestamp ?? null,
     commTimeoutSec: ahu.commTimeoutSec,
@@ -275,11 +275,11 @@ export async function refreshAhuStatus(ahuId: string, now = new Date()) {
     now,
   });
   if (status !== ahu.currentStatus) {
-    await db.update(ahus).set({ currentStatus: status }).where(eq(ahus.id, ahuId));
+    await exec.update(ahus).set({ currentStatus: status }).where(eq(ahus.id, ahuId));
     await publishRealtime("status", ahuId, { ahuId, status, at: now.toISOString() });
   }
   if (status === "FAULT") {
-    await failActiveCommands(db, ahuId, {
+    await failActiveCommands(exec, ahuId, {
       nonStopOnly: true,
       reason: row?.faultCode
         ? `Aborted: controller entered FAULT (${row.faultCode}) during command execution (FR-27)`
@@ -287,7 +287,7 @@ export async function refreshAhuStatus(ahuId: string, now = new Date()) {
       now,
     });
   }
-  await evaluateCommunicationAlarm(ahu, ageSec);
+  await evaluateCommunicationAlarm(ahu, ageSec, exec);
   return { status, ageSec, lastSeenAt: row?.timestamp ?? null };
 }
 
@@ -527,8 +527,8 @@ export async function reconcileAhuSourceTransition(
 /* FR-26 / FR-27: command lifecycle engine                            */
 /* ------------------------------------------------------------------ */
 
-export async function expireStaleCommands(now = new Date()) {
-  return db.transaction(async (tx) => {
+export async function expireStaleCommands(now = new Date(), exec: Client = db) {
+  return exec.transaction(async (tx) => {
     const stale = await tx
       .update(ahuCommands)
       .set({
@@ -742,8 +742,8 @@ export async function createCommand(req: CommandRequest): Promise<CommandOutcome
 }
 
 /** Used by the simulator/controller: REQUESTED -> ACCEPTED. */
-export async function acceptPendingCommands(ahuId: string) {
-  return db.transaction(async (tx) => {
+export async function acceptPendingCommands(ahuId: string, exec: Client = db) {
+  return exec.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${ahuId}, 0))`);
     const [physical] = await tx
       .select({ id: devices.id })
@@ -775,8 +775,8 @@ export async function acceptPendingCommands(ahuId: string) {
 /* FR-22 / FR-23 / NFR-04: telemetry ingestion                        */
 /* ------------------------------------------------------------------ */
 
-export async function ingestTelemetry(token: string, payload: TelemetryPayload): Promise<IngestResult> {
-  const deviceRows = await db.select().from(devices).where(eq(devices.token, token)).limit(1);
+export async function ingestTelemetry(token: string, payload: TelemetryPayload, exec: Client = db): Promise<IngestResult> {
+  const deviceRows = await exec.select().from(devices).where(eq(devices.token, token)).limit(1);
   const device = deviceRows[0];
   if (!device || !device.enabled) {
     return { ok: false, status: 401, body: { error: "Invalid or disabled device bearer token" } };
@@ -805,7 +805,7 @@ export async function ingestTelemetry(token: string, payload: TelemetryPayload):
       body: { error: `AHU identity mismatch: token is provisioned for ${device.ahuId}` },
     };
   }
-  const ahuRows = await db.select().from(ahus).where(eq(ahus.id, ahuId)).limit(1);
+  const ahuRows = await exec.select().from(ahus).where(eq(ahus.id, ahuId)).limit(1);
   const ahu = ahuRows[0];
   if (!ahu) return { ok: false, status: 404, body: { error: `Unregistered AHU identity "${ahuId}"` } };
 
@@ -817,7 +817,7 @@ export async function ingestTelemetry(token: string, payload: TelemetryPayload):
   const messageId = payload.messageId ? String(payload.messageId).slice(0, 120) : null;
   if (payload.messageId !== undefined && messageId === null) errors.push("messageId: must be a non-empty string");
 
-  const thresholds = await db.select().from(sensorThresholds).where(eq(sensorThresholds.ahuId, ahuId));
+  const thresholds = await exec.select().from(sensorThresholds).where(eq(sensorThresholds.ahuId, ahuId));
   const thMap = new Map(thresholds.map((t) => [t.parameter, t]));
   const installed = new Set(ahu.installedSensors);
   const values: Record<string, number | null> = {};
@@ -920,7 +920,7 @@ export async function ingestTelemetry(token: string, payload: TelemetryPayload):
   let historical = false;
   let newStatus: AhuRow["currentStatus"] = ahu.currentStatus;
 
-  await db.transaction(async (tx) => {
+  await exec.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${ahuId}, 0))`);
     const [enabledDevice] = await tx.select({ enabled: devices.enabled }).from(devices).where(eq(devices.id, device.id)).limit(1);
     const [physical] =
@@ -1240,10 +1240,14 @@ export function computeTrendAnalyses(
   return out;
 }
 
-export async function analyseTrends(ahuId: string, now = new Date()): Promise<TrendAnalysis[]> {
+export async function analyseTrends(
+  ahuId: string,
+  now = new Date(),
+  exec: Client = db,
+): Promise<TrendAnalysis[]> {
   const [ahuRows, thresholds] = await Promise.all([
-    db.select().from(ahus).where(eq(ahus.id, ahuId)).limit(1),
-    db
+    exec.select().from(ahus).where(eq(ahus.id, ahuId)).limit(1),
+    exec
       .select()
       .from(sensorThresholds)
       .where(and(eq(sensorThresholds.ahuId, ahuId), eq(sensorThresholds.trendEnabled, true))),
@@ -1263,7 +1267,7 @@ export async function analyseTrends(ahuId: string, now = new Date()): Promise<Tr
             : telemetry[key];
     }
   }
-  const rows = (await db
+  const rows = (await exec
     .select(projection as never)
     .from(telemetry)
     .where(and(eq(telemetry.ahuId, ahuId), gt(telemetry.timestamp, since), authoritativeTelemetry()))
@@ -1339,12 +1343,12 @@ export async function analyseTrendsBatch(
 }
 
 /** FR-18: persist trend warnings (deduplicated per parameter/horizon). */
-export async function runTrendDetection(ahuId: string, now = new Date()) {
-  const analyses = await analyseTrends(ahuId, now);
+export async function runTrendDetection(ahuId: string, now = new Date(), exec: Client = db) {
+  const analyses = await analyseTrends(ahuId, now, exec);
   const created: string[] = [];
   for (const a of analyses) {
     if (!a.horizon || a.minutesToBreach === null || a.minutesToBreach <= 0) continue;
-    const recent = await db
+    const recent = await exec
       .select({ id: trendAlerts.id })
       .from(trendAlerts)
       .where(
@@ -1359,7 +1363,7 @@ export async function runTrendDetection(ahuId: string, now = new Date()) {
     if (recent.length > 0) continue;
 
     const id = randomId();
-    await db.insert(trendAlerts).values({
+    await exec.insert(trendAlerts).values({
       id,
       ahuId,
       parameter: a.parameter,

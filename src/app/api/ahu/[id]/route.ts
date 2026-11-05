@@ -18,7 +18,7 @@ interface Ctx {
 export async function GET(req: Request, ctx: Ctx) {
   try {
     await requireAuth("view");
-    await maybePulseWorkers();
+    maybePulseWorkers();
     const { id } = await ctx.params;
     const url = new URL(req.url);
     const windowMin = Number(url.searchParams.get("window") ?? 15);
@@ -64,17 +64,34 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
     const actor = await requireAuth(hasConfigFields ? "configure" : "control", { mutating: true });
     const { id } = await ctx.params;
-    const before = (await db.select().from(ahus).where(eq(ahus.id, id)).limit(1))[0];
+
+    const rawMapX = typeof body.mapX === "number" && Number.isFinite(body.mapX) ? body.mapX : null;
+    const rawMapZ = typeof body.mapZ === "number" && Number.isFinite(body.mapZ) ? body.mapZ : null;
+    const isMapMove = rawMapX !== null && rawMapZ !== null;
+
+    // The fleet snapshot doubles as map-placement validation input AND the audit "before" row —
+    // one parallel fetch replaces the old separate SELECT (saves a full round trip on every save).
+    let allRows: Array<typeof ahus.$inferSelect> | null = null;
+    let floorplan: Awaited<ReturnType<typeof getActiveFloorplan>> | null = null;
+    let before: typeof ahus.$inferSelect | undefined;
+
+    if (isMapMove) {
+      const [rows, plan] = await Promise.all([
+        db.select().from(ahus).orderBy(asc(ahus.id)),
+        getActiveFloorplan(),
+      ]);
+      allRows = rows;
+      floorplan = plan;
+      before = rows.find((r) => r.id === id);
+    } else {
+      before = (await db.select().from(ahus).where(eq(ahus.id, id)).limit(1))[0];
+    }
     if (!before) return Response.json({ error: `AHU ${id} not found` }, { status: 404 });
 
     const patch: Record<string, unknown> = {};
     const changes: Record<string, { from: unknown; to: unknown }> = {};
 
-    if (typeof body.mapX === "number" && Number.isFinite(body.mapX) && typeof body.mapZ === "number" && Number.isFinite(body.mapZ)) {
-      const [allRows, floorplan] = await Promise.all([
-        db.select().from(ahus).orderBy(asc(ahus.id)),
-        getActiveFloorplan(),
-      ]);
+    if (isMapMove && allRows && floorplan) {
       const existingPlacements: Array<{ id: string; x: number; z: number; rotation?: number }> = [];
       for (const r of allRows) {
         const p = resolveAhuPlacement(r, existingPlacements, floorplan.vertices);
@@ -85,8 +102,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
           ? normalizeRotation(body.mapRotation)
           : undefined;
       const check = validatePlatformPlacement(
-        body.mapX,
-        body.mapZ,
+        rawMapX,
+        rawMapZ,
         existingPlacements,
         id,
         requestedRot,

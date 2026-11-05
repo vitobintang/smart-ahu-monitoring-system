@@ -538,14 +538,53 @@ export default function AhuFacilityMap3D({
   );
 
   // Resolve 3D coordinates for every AHU unit against the active room polygon
+  // Optimistically pins a just-saved AHU at its new 3D coordinates until the polled overview
+  // delivers the persisted row (prevents a visible jump-back without blocking the Save button).
+  const [savedPlacementOverrides, setSavedPlacementOverrides] = useState<
+    Map<string, PendingPlacement>
+  >(new Map());
+
   const resolvedUnits = useMemo(() => {
     const acc: Array<{ id: string; x: number; z: number; rotation?: number }> = [];
     return items.map((item) => {
-      const p = resolveAhuPlacement(item.ahu, acc, activeRoomVertices);
+      const ov = savedPlacementOverrides.get(item.ahu.id);
+      const ahu = ov
+        ? {
+            ...item.ahu,
+            mapX: ov.x,
+            mapZ: ov.z,
+            mapRotation: ov.rotation,
+            mapZone: ov.zoneLabel,
+          }
+        : item.ahu;
+      const p = resolveAhuPlacement(ahu, acc, activeRoomVertices);
       acc.push({ id: item.ahu.id, x: p.x, z: p.z, rotation: p.rotation });
       return { item, placement: p };
     });
-  }, [items, activeRoomVertices]);
+  }, [items, activeRoomVertices, savedPlacementOverrides]);
+
+  // Retire an optimistic override as soon as the polled fleet data confirms the saved position
+  useEffect(() => {
+    setSavedPlacementOverrides((prev) => {
+      if (prev.size === 0) return prev;
+      let changed = false;
+      const next = new Map(prev);
+      for (const [id, ov] of prev) {
+        const card = items.find((i) => i.ahu.id === id);
+        if (
+          card &&
+          card.ahu.mapX != null &&
+          card.ahu.mapZ != null &&
+          Math.abs(card.ahu.mapX - ov.x) < 0.05 &&
+          Math.abs(card.ahu.mapZ - ov.z) < 0.05
+        ) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [items]);
 
   const existingCoords = useMemo(
     () =>
@@ -708,9 +747,12 @@ export default function AhuFacilityMap3D({
     try {
       await onMoveAhuSave(movingAhuId, moveDraft);
       const finishedId = movingAhuId;
+      const savedPlacement = moveDraft;
       setMovingAhuId(null);
       setMoveDraft(null);
       setHoverInfo(null);
+      // Keep the unit visually pinned at its saved spot until the poll confirms it
+      setSavedPlacementOverrides((prev) => new Map(prev).set(finishedId, savedPlacement));
       setSelectedId(finishedId);
     } catch (err) {
       setMoveError(err instanceof Error ? err.message : "Failed to save new 3D position");

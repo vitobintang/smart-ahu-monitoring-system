@@ -1,6 +1,6 @@
 import { and, eq, lt, sql } from "drizzle-orm";
 import { randomId } from "@/lib/ids";
-import { db, isOfflineNetworkError, isTransientDbError, summarizeDbError } from "@/db";
+import { dbWork, isOfflineNetworkError, isTransientDbError, summarizeDbError } from "@/db";
 import { ahus, devices, syncOutbox, telemetry } from "@/db/schema";
 import type { AhuRow, DeviceRow } from "@/db/schema";
 import {
@@ -200,7 +200,7 @@ async function simulateAhu(ahu: AhuRow, device: DeviceRow, tickSec: number) {
   // Only query historical telemetry once when cold-starting simStates for this AHU!
   let lastRow: typeof telemetry.$inferSelect | undefined;
   if (!simStates.has(ahu.id)) {
-    const lastRows = await db
+    const lastRows = await dbWork
       .select()
       .from(telemetry)
       .where(eq(telemetry.ahuId, ahu.id))
@@ -249,7 +249,7 @@ async function simulateAhu(ahu: AhuRow, device: DeviceRow, tickSec: number) {
     faultCode: ov.forcedFault,
     setpoint: ahu.setpoint,
     controlMode: ahu.controlMode,
-  });
+  }, dbWork);
 }
 
 export async function simulationTick() {
@@ -258,12 +258,12 @@ export async function simulationTick() {
   g.__lastSimTickAt = Date.now();
   const tickSec = 5;
   try {
-    const allAhus = await db.select().from(ahus);
-    const devs = await db
+    const allAhus = await dbWork.select().from(ahus);
+    const devs = await dbWork
       .select()
       .from(devices)
       .where(and(eq(devices.sourceType, "SIMULATION"), eq(devices.enabled, true)));
-    const physical = await db
+    const physical = await dbWork
       .select({ ahuId: devices.ahuId })
       .from(devices)
       .where(and(eq(devices.sourceType, "PHYSICAL"), eq(devices.enabled, true)));
@@ -276,18 +276,18 @@ export async function simulationTick() {
       try {
         const ov = getOverride(ahu.id);
         if (ov.rejectCommands && !ov.commLoss) {
-          const rejected = await failActiveCommands(db, ahu.id, {
+          const rejected = await failActiveCommands(dbWork, ahu.id, {
             reason: "Rejected by controller: local selector switch / actuator NACK (FR-26)",
             revertDesiredState: true,
           });
           if (rejected.length > 0) {
-            const [reloaded] = await db.select().from(ahus).where(eq(ahus.id, ahu.id)).limit(1);
+            const [reloaded] = await dbWork.select().from(ahus).where(eq(ahus.id, ahu.id)).limit(1);
             if (reloaded) ahu = reloaded;
           }
         }
         await simulateAhu(ahu, device, tickSec);
         if (!ov.rejectCommands) {
-          await acceptPendingCommands(ahu.id);
+          await acceptPendingCommands(ahu.id, dbWork);
         }
       } catch (err) {
         if (isOfflineNetworkError(err) || isTransientDbError(err)) {
@@ -320,12 +320,12 @@ export async function monitorTick() {
   if (g.__monitorRunning) return;
   g.__monitorRunning = true;
   try {
-    const all = await db.select().from(ahus);
+    const all = await dbWork.select().from(ahus);
     monitorTickCount += 1;
     const doTrends = monitorTickCount % TREND_EVERY_N_TICKS === 0;
 
     try {
-      await expireStaleCommands();
+      await expireStaleCommands(new Date(), dbWork);
     } catch (err) {
       if (isOfflineNetworkError(err) || isTransientDbError(err)) {
         engageDbBackoff("monitor", err);
@@ -336,8 +336,8 @@ export async function monitorTick() {
 
     for (const ahu of all) {
       try {
-        await refreshAhuStatus(ahu.id);
-        if (doTrends) await runTrendDetection(ahu.id);
+        await refreshAhuStatus(ahu.id, new Date(), dbWork);
+        if (doTrends) await runTrendDetection(ahu.id, new Date(), dbWork);
       } catch (err) {
         if (isOfflineNetworkError(err) || isTransientDbError(err)) {
           engageDbBackoff("monitor", err);
@@ -349,7 +349,7 @@ export async function monitorTick() {
 
     try {
       await drainSyncOutbox();
-      await db
+      await dbWork
         .delete(syncOutbox)
         .where(
           and(
@@ -412,12 +412,19 @@ export function startWorkers() {
   );
 }
 
-export async function maybePulseWorkers(minIntervalMs = 4800) {
+/**
+ * Fire-and-forget simulator kick used by interactive API routes: it enqueues a simulation tick on
+ * the serialized worker chain WITHOUT awaiting it, so a dashboard/save request never blocks on a
+ * full telemetry cycle (the 5 s interval keeps its own cadence; this only nudges idle periods).
+ */
+export function maybePulseWorkers(minIntervalMs = 4800): void {
   if (process.env.SIMULATION_ENABLED === "false") return;
   if (isDbCircuitOpen()) return;
   const last = g.__lastSimTickAt ?? 0;
   if (!g.__simRunning && Date.now() - last >= minIntervalMs) {
-    await runSerializedWorker(() => simulationTick());
+    void runSerializedWorker(() => simulationTick()).catch((e) =>
+      console.error("[simulator:pulse]", summarizeDbError(e)),
+    );
   }
 }
 

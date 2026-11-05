@@ -3,7 +3,9 @@ import { Pool, type PoolClient } from "pg";
 
 const globalForDb = globalThis as typeof globalThis & {
   __ahuPostgresqlPool?: Pool;
+  __ahuWorkPostgresqlPool?: Pool;
   __ahuDrizzleDb?: NodePgDatabase;
+  __ahuWorkDrizzleDb?: NodePgDatabase;
 };
 
 const RETRYABLE_PG_PATTERNS = [
@@ -153,7 +155,24 @@ function installTransientPoolRetries(pool: Pool): void {
 }
 
 export function getSharedPool(connectionStringOverride?: string): Pool {
-  if (globalForDb.__ahuPostgresqlPool) return globalForDb.__ahuPostgresqlPool;
+  return getPoolForRole("app", connectionStringOverride);
+}
+
+/**
+ * Two dedicated pools keep interactive saves & dashboard loads off the background worker's
+ * telemetry queue: user API requests draw from the "app" pool, while the simulator / monitor /
+ * telemetry-ingest pipeline draws from the "work" pool. A telemetry burst can therefore never
+ * stall an AHU move-save (or any dashboard request) behind its queries. Combined warm sockets
+ * stay tiny (2 + 2) relative to Supavisor's shared session budget.
+ */
+export function getPoolForRole(
+  role: "app" | "work",
+  connectionStringOverride?: string,
+): Pool {
+  if (role === "app" && globalForDb.__ahuPostgresqlPool) return globalForDb.__ahuPostgresqlPool;
+  if (role === "work" && globalForDb.__ahuWorkPostgresqlPool) {
+    return globalForDb.__ahuWorkPostgresqlPool;
+  }
 
   const databaseUrl = (connectionStringOverride ?? process.env.DATABASE_URL)?.trim();
   if (!databaseUrl) {
@@ -180,22 +199,42 @@ export function getSharedPool(connectionStringOverride?: string): Pool {
   });
 
   installTransientPoolRetries(pool);
-  globalForDb.__ahuPostgresqlPool = pool;
+  if (role === "work") {
+    globalForDb.__ahuWorkPostgresqlPool = pool;
+  } else {
+    globalForDb.__ahuPostgresqlPool = pool;
+  }
   return pool;
 }
 
-function getDb(): NodePgDatabase {
+function getDbInstance(role: "app" | "work"): NodePgDatabase {
+  if (role === "work") {
+    if (globalForDb.__ahuWorkDrizzleDb) return globalForDb.__ahuWorkDrizzleDb;
+    const instance = drizzle(getPoolForRole("work"));
+    globalForDb.__ahuWorkDrizzleDb = instance;
+    return instance;
+  }
   if (globalForDb.__ahuDrizzleDb) return globalForDb.__ahuDrizzleDb;
-  const pool = getSharedPool();
-  const instance = drizzle(pool);
+  const instance = drizzle(getPoolForRole("app"));
   globalForDb.__ahuDrizzleDb = instance;
   return instance;
 }
 
-export const db: NodePgDatabase = new Proxy({} as NodePgDatabase, {
-  get(_target, prop) {
-    const instance = getDb();
-    const value = Reflect.get(instance, prop, instance);
-    return typeof value === "function" ? value.bind(instance) : value;
-  },
-});
+function proxyDb(role: "app" | "work"): NodePgDatabase {
+  return new Proxy({} as NodePgDatabase, {
+    get(_target, prop) {
+      const instance = getDbInstance(role);
+      const value = Reflect.get(instance, prop, instance);
+      return typeof value === "function" ? value.bind(instance) : value;
+    },
+  });
+}
+
+/** Interactive request pool: page/API routes, auth, audit, dashboard queries. */
+export const db: NodePgDatabase = proxyDb("app");
+
+/**
+ * Background worker pool: simulator ticks, monitor sweeps, telemetry ingestion, and trend
+ * analysis run here so they can never occupy every interactive socket during a save.
+ */
+export const dbWork: NodePgDatabase = proxyDb("work");
