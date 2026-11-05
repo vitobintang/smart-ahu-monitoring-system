@@ -82,13 +82,17 @@ export async function POST(req: Request) {
       );
     }
 
-    const existingPlacements: Array<{ id: string; x: number; z: number }> = [];
+    const existingPlacements: Array<{ id: string; x: number; z: number; rotation?: number }> = [];
     for (const r of existingRows) {
       const p = resolveAhuPlacement(r, existingPlacements);
-      existingPlacements.push({ id: r.id, x: p.x, z: p.z });
+      existingPlacements.push({ id: r.id, x: p.x, z: p.z, rotation: p.rotation });
     }
 
-    const placement = validatePlatformPlacement(body.mapX, body.mapZ, existingPlacements);
+    const requestedRot =
+      typeof body.mapRotation === "number" && Number.isFinite(body.mapRotation)
+        ? normalizeRotation(body.mapRotation)
+        : undefined;
+    const placement = validatePlatformPlacement(body.mapX, body.mapZ, existingPlacements, undefined, requestedRot);
     if (!placement.valid || !placement.zone) {
       return Response.json(
         { error: placement.reason ?? "Invalid 3D floor platform position." },
@@ -96,7 +100,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const rotation = normalizeRotation(typeof body.mapRotation === "number" ? body.mapRotation : 0);
+    const rotation = placement.rotation;
     const name =
       typeof body.name === "string" && body.name.trim()
         ? body.name.trim().slice(0, 120)

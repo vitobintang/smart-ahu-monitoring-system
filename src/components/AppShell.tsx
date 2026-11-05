@@ -289,6 +289,7 @@ export default function AppShell({
   }
 
   const items = NAV.filter((n) => can(currentUser.role, n.activity));
+  const isImmersive3dPage = pathname === "/ahu" && search?.get("view") !== "list";
   const unackedAlarms = (feed?.alarms ?? []).filter((a) => !a.acknowledged).length;
   const displayName =
     currentUser.fullName?.trim() ||
@@ -657,17 +658,26 @@ export default function AppShell({
           </div>
         </header>
 
-        <main className="relative min-w-0 flex-1 px-3.5 py-4 sm:px-6 sm:py-6 lg:px-7">
+        <main
+          className={cx(
+            "relative min-w-0 flex-1",
+            isImmersive3dPage
+              ? "flex h-[calc(100dvh-60px)] min-h-0 flex-col overflow-hidden p-0 sm:h-[calc(100dvh-64px)]"
+              : "px-3.5 py-4 sm:px-6 sm:py-6 lg:px-7",
+          )}
+        >
           <SessionUserContext.Provider value={currentUser}>{children}</SessionUserContext.Provider>
         </main>
 
-        <footer className="no-print relative flex flex-col items-start justify-between gap-2 px-4 pb-5 pt-2 text-[11px] text-slate-500 sm:flex-row sm:items-center sm:px-6">
-          <span>© 2026 Smart Monitoring AHU. All rights reserved.</span>
-          <span className="flex flex-wrap items-center gap-1.5">
-            Safer Air <span className="text-slate-400">|</span> Smarter Buildings <span className="text-slate-400">|</span> A Cleaner Tomorrow
-            <Image src="/ahu/leaf.png" alt="" width={26} height={26} className="h-[18px] w-[18px] object-contain mix-blend-multiply" />
-          </span>
-        </footer>
+        {!isImmersive3dPage ? (
+          <footer className="no-print relative flex flex-col items-start justify-between gap-2 px-4 pb-5 pt-2 text-[11px] text-slate-500 sm:flex-row sm:items-center sm:px-6">
+            <span>© 2026 Smart Monitoring AHU. All rights reserved.</span>
+            <span className="flex flex-wrap items-center gap-1.5">
+              Safer Air <span className="text-slate-400">|</span> Smarter Buildings <span className="text-slate-400">|</span> A Cleaner Tomorrow
+              <Image src="/ahu/leaf.png" alt="" width={26} height={26} className="h-[18px] w-[18px] object-contain mix-blend-multiply" />
+            </span>
+          </footer>
+        ) : null}
       </div>
 
       {/* Portal-mounted Account Settings modal */}

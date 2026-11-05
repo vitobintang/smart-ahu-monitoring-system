@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRight,
   Box,
@@ -15,7 +16,6 @@ import {
   Sun,
   X,
 } from "lucide-react";
-import type { AhuStatus } from "@/db/schema";
 import { api, LOCAL_POLL_MS, timeAgo, usePoll } from "@/lib/client";
 import { useSessionUser } from "@/components/AppShell";
 import ControlPanel from "@/components/ControlPanel";
@@ -24,6 +24,7 @@ import { can } from "@/lib/domain";
 import {
   normalizeRotation,
   resolveAhuPlacement,
+  resolveWallPhysicsAndSnap,
   suggestCleanPlatformSlot,
 } from "@/lib/facility-layout";
 import { Btn, Empty, ErrorNote, Field, Spinner, StatusBadge, cx, inputClass } from "@/components/ui";
@@ -31,8 +32,8 @@ import { Btn, Empty, ErrorNote, Field, Spinner, StatusBadge, cx, inputClass } fr
 const AhuFacilityMap3D = dynamic(() => import("@/components/AhuFacilityMap3D"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-[420px] items-center justify-center rounded-2xl border border-[#1d355d] bg-[#09172e] text-slate-300">
-      <Spinner label="Initializing 3D multi-wing facility plant…" />
+    <div className="flex h-full min-h-[420px] w-full flex-1 items-center justify-center bg-[#09172e] text-slate-300">
+      <Spinner label="Initializing 3D multi-wing facility digital twin…" />
     </div>
   ),
 });
@@ -51,17 +52,20 @@ function suggestNextAhuId(existingIds: string[]): string {
   return `AHU-${String(next).padStart(2, "0")}`;
 }
 
-/** FR-03 / FR-05: fleet index of all AHU units + rotatable 3D multi-wing facility digital twin. */
+/** FR-03 / FR-05: full-page 3D facility digital twin + toggleable classic AHU list page. */
 export default function AhuIndexPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const isListView = searchParams?.get("view") === "list";
+
   const user = useSessionUser();
   const canControl = user ? can(user.role, "control") : false;
   const canConfigure = user ? can(user.role, "configure") : false;
   const { data, error, loading, reload } = usePoll<{ cards: Card[] }>("/api/overview?lite=1", LOCAL_POLL_MS);
 
   const [selected3dId, setSelected3dId] = useState<string | null>(null);
-  const [show3dMap, setShow3dMap] = useState(true);
 
-  // Add-New-AHU modal + 3D floor-platform placement state
+  // Add-New-AHU modal + 3D floor-platform / wall-snap placement state
   const [addOpen, setAddOpen] = useState(false);
   const [newId, setNewId] = useState("");
   const [newName, setNewName] = useState("");
@@ -76,10 +80,10 @@ export default function AhuIndexPage() {
   const cards = useMemo(() => data?.cards ?? [], [data?.cards]);
 
   const existingCoords = useMemo(() => {
-    const acc: Array<{ id: string; x: number; z: number }> = [];
+    const acc: Array<{ id: string; x: number; z: number; rotation?: number }> = [];
     for (const c of cards) {
       const p = resolveAhuPlacement(c.ahu, acc);
-      acc.push({ id: c.ahu.id, x: p.x, z: p.z });
+      acc.push({ id: c.ahu.id, x: p.x, z: p.z, rotation: p.rotation });
     }
     return acc;
   }, [cards]);
@@ -96,7 +100,7 @@ export default function AhuIndexPage() {
     setPlacement({
       x: slot.x,
       z: slot.z,
-      rotation: 0,
+      rotation: slot.rotation,
       zoneLabel: slot.zone.label,
       indoor: slot.indoor,
     });
@@ -106,19 +110,32 @@ export default function AhuIndexPage() {
 
   function autoPickSlot(preferIndoor: boolean) {
     const slot = suggestCleanPlatformSlot(existingCoords, preferIndoor);
-    setPlacement((prev) => ({
+    setPlacement({
       x: slot.x,
       z: slot.z,
-      rotation: prev?.rotation ?? 0,
+      rotation: slot.rotation,
       zoneLabel: slot.zone.label,
       indoor: slot.indoor,
-    }));
+      snappedToWall: !preferIndoor,
+    });
+  }
+
+  async function handleMoveAhuSave(ahuId: string, next: PendingPlacement) {
+    await api(`/api/ahu/${encodeURIComponent(ahuId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        mapX: next.x,
+        mapZ: next.z,
+        mapRotation: next.rotation,
+      }),
+    });
+    await reload();
   }
 
   async function submitCreateAhu(e: React.FormEvent) {
     e.preventDefault();
     if (!placement) {
-      setCreateErr("Click on the 3D floor platform to choose where to place the new AHU.");
+      setCreateErr("Click on the 3D floor platform or snap to a wall to place the new AHU.");
       return;
     }
     setCreating(true);
@@ -148,30 +165,238 @@ export default function AhuIndexPage() {
     }
   }
 
-  if (loading && !data) return <Spinner label="Loading AHU fleet…" />;
+  const addModal = addOpen ? (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[#071226]/70 p-3 backdrop-blur-sm sm:p-5"
+      onClick={() => !creating && setAddOpen(false)}
+    >
+      <div
+        className="max-h-[94dvh] w-full max-w-5xl overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4 shadow-[0_32px_90px_-20px_rgba(7,18,38,0.65)] sm:p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3.5">
+          <div>
+            <p className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-[#1d6ef2]">
+              3D Digital Twin Commissioning
+            </p>
+            <h2 className="mt-0.5 text-[18px] font-bold tracking-tight text-[#12294d] sm:text-[20px]">
+              Add New AHU &amp; Place 3D Model in Facility Room
+            </h2>
+            <p className="text-[11.5px] text-slate-500">
+              Drag the 3D AHU or click on any indoor floor wing or outdoor pad. Solid wall physics prevents passing through walls and magnetically snaps flush against walls.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={creating}
+            onClick={() => setAddOpen(false)}
+            aria-label="Close Add AHU modal"
+            className="grid h-9 w-9 flex-none place-items-center rounded-xl border border-slate-200 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+          >
+            <X size={16} />
+          </button>
+        </div>
 
+        <form onSubmit={(e) => void submitCreateAhu(e)} className="mt-4 space-y-4">
+          <ErrorNote message={createErr} />
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="AHU Identifier" hint="e.g. AHU-08">
+              <input
+                required
+                className={cx(inputClass, "font-mono uppercase")}
+                value={newId}
+                onChange={(e) => setNewId(e.target.value.toUpperCase())}
+                placeholder="AHU-08"
+              />
+            </Field>
+            <Field label="Unit Name">
+              <input
+                required
+                className={inputClass}
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="AHU-08 Sterile Suite"
+              />
+            </Field>
+            <Field label="Physical Location" hint="Blank = auto from 3D zone">
+              <input
+                className={inputClass}
+                value={newLocation}
+                onChange={(e) => setNewLocation(e.target.value)}
+                placeholder={placement?.zoneLabel ?? "Auto from selected 3D wing"}
+              />
+            </Field>
+            <Field label="Target Setpoint (°C)">
+              <input
+                type="number"
+                step="0.5"
+                min={15}
+                max={30}
+                className={inputClass}
+                value={newSetpoint}
+                onChange={(e) => setNewSetpoint(e.target.value)}
+              />
+            </Field>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-[#f8fafd] px-3.5 py-2.5 text-[11.5px]">
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="inline-flex cursor-pointer items-center gap-2 font-medium text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={newHasHeater}
+                  onChange={(e) => setNewHasHeater(e.target.checked)}
+                  className="h-4 w-4 accent-[#1d6ef2]"
+                />
+                Heating coil installed
+              </label>
+              <label className="inline-flex cursor-pointer items-center gap-2 font-medium text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={newSimEnabled}
+                  onChange={(e) => setNewSimEnabled(e.target.checked)}
+                  className="h-4 w-4 accent-[#1d6ef2]"
+                />
+                Auto-provision Simulation Controller
+              </label>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => autoPickSlot(true)}
+                className="inline-flex items-center gap-1 rounded-lg border border-[#cbe0fd] bg-[#eef5ff] px-2.5 py-1 text-[11px] font-semibold text-[#1d6ef2] transition hover:bg-[#dfeeff]"
+              >
+                <Box size={12} /> Auto Indoor Slot
+              </button>
+              <button
+                type="button"
+                onClick={() => autoPickSlot(false)}
+                className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800 transition hover:bg-amber-100"
+              >
+                <Sun size={12} /> Auto Outdoor Wall Slot
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!placement) return;
+                  const nextRot = normalizeRotation(placement.rotation + 90);
+                  const check = resolveWallPhysicsAndSnap(placement.x, placement.z, existingCoords, {
+                    rotation: nextRot,
+                    enableWallSnap: true,
+                    autoAlignRotation: false,
+                    clampVoidToWall: true,
+                  });
+                  setPlacement({
+                    x: check.snappedX,
+                    z: check.snappedZ,
+                    rotation: check.rotation,
+                    zoneLabel: check.zone?.label ?? placement.zoneLabel,
+                    indoor: check.indoor,
+                    snappedToWall: check.snappedToWall,
+                  });
+                }}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-100"
+              >
+                <RotateCw size={12} /> Rotate ({placement?.rotation ?? 0}°)
+              </button>
+            </div>
+          </div>
+
+          <AhuFacilityMap3D
+            items={cards}
+            mode="placement"
+            draftAhuId={newId.trim() || "NEW"}
+            draftAhuName={newName.trim() || "New AHU"}
+            placement={placement}
+            onPlacementChange={setPlacement}
+          />
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+            <div className="flex items-center gap-2 text-[12px] text-slate-600">
+              <CheckCircle2 size={15} className="text-emerald-600" />
+              {placement ? (
+                <span>
+                  Selected Position:{" "}
+                  <strong className="text-[#12294d]">{placement.zoneLabel}</strong>{" "}
+                  <span className="font-mono text-[11px] text-slate-500">
+                    (X {placement.x}m, Z {placement.z}m · {placement.rotation}°)
+                  </span>
+                </span>
+              ) : (
+                <span>Click on any indoor branch floor or outdoor wall pad above to set position.</span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Btn type="button" variant="ghost" disabled={creating} onClick={() => setAddOpen(false)}>
+                Cancel
+              </Btn>
+              <Btn type="submit" variant="primary" disabled={creating || !placement}>
+                <Plus size={14} /> {creating ? "Placing & Creating…" : `Place & Create ${newId.trim() || "AHU"}`}
+              </Btn>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  ) : null;
+
+  if (loading && !data) {
+    return (
+      <div className={cx(isListView ? "py-10" : "flex h-full flex-1 items-center justify-center bg-[#09172e]")}>
+        <Spinner label="Loading AHU fleet…" />
+      </div>
+    );
+  }
+
+  // Default: Whole-page 3D Facility Digital Twin
+  if (!isListView) {
+    return (
+      <div className="relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden">
+        {error ? (
+          <div className="z-30 bg-red-950/90 px-4 py-2 text-xs text-red-200">{error}</div>
+        ) : null}
+
+        <AhuFacilityMap3D
+          items={cards}
+          mode="explore"
+          fullPage
+          selectedAhuId={selected3dId}
+          onSelectAhu={setSelected3dId}
+          onOpenList={() => router.replace("/ahu?view=list")}
+          canAddAhu={canConfigure}
+          onRequestAddAhu={openAddModal}
+          canMoveAhu={canControl || canConfigure}
+          onMoveAhuSave={handleMoveAhuSave}
+        />
+
+        {addModal}
+      </div>
+    );
+  }
+
+  // Classic AHU Units List Page (?view=list)
   return (
     <div className="space-y-4 sm:space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-[20px] font-bold tracking-[-0.02em] text-[#12294d] sm:text-[22px]">AHU Units</h1>
+          <h1 className="text-[20px] font-bold tracking-[-0.02em] text-[#12294d] sm:text-[22px]">
+            AHU Units · Fleet List
+          </h1>
           <p className="text-[12px] text-slate-500">
-            All provisioned air handling units · rotatable 3D facility map, live sensors, and control (FR-05)
+            All provisioned air handling units · live status, sensors, and control (FR-05)
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => setShow3dMap((v) => !v)}
-            className={cx(
-              "inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-[12px] font-semibold transition",
-              show3dMap
-                ? "border-[#bfd4f7] bg-[#eef4ff] text-[#1d6ef2]"
-                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
-            )}
+            onClick={() => router.replace("/ahu")}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[#bfd4f7] bg-[#eef4ff] px-3.5 py-2 text-[12px] font-bold text-[#1d6ef2] transition hover:bg-[#e0ecff]"
           >
-            <Box size={14} /> {show3dMap ? "Hide 3D Room" : "Show 3D Room"}
+            <Box size={14} /> Open 3D Facility Room
           </button>
 
           {canConfigure ? (
@@ -188,17 +413,6 @@ export default function AhuIndexPage() {
 
       <ErrorNote message={error} />
 
-      {show3dMap ? (
-        <AhuFacilityMap3D
-          items={cards}
-          mode="explore"
-          selectedAhuId={selected3dId}
-          onSelectAhu={setSelected3dId}
-          canAddAhu={canConfigure}
-          onRequestAddAhu={openAddModal}
-        />
-      ) : null}
-
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
         {cards.map((c) => (
           <div key={c.ahu.id}>
@@ -207,7 +421,6 @@ export default function AhuIndexPage() {
               className={cx(
                 "panel card-hover flex aspect-square flex-col justify-between rounded-2xl p-3 sm:hidden",
                 c.status === "FAULT" && "border-red-200 bg-red-50/30",
-                selected3dId === c.ahu.id && "ring-2 ring-[#2563eb]",
               )}
             >
               <Link href={`/ahu/${c.ahu.id}`} className="block min-w-0">
@@ -264,12 +477,7 @@ export default function AhuIndexPage() {
             </div>
 
             {/* Full Tablet/Desktop Card (>= sm) */}
-            <div
-              className={cx(
-                "panel card-hover hidden h-full flex-col rounded-2xl p-4 sm:flex",
-                selected3dId === c.ahu.id && "ring-2 ring-[#2563eb]",
-              )}
-            >
+            <div className="panel card-hover hidden h-full flex-col rounded-2xl p-4 sm:flex">
               <div className="flex items-start justify-between gap-2">
                 <Link href={`/ahu/${c.ahu.id}`} className="group min-w-0 flex-1">
                   <p className="font-mono text-[14.5px] font-bold text-[#12294d] group-hover:text-[#1d6ef2]">
@@ -355,179 +563,7 @@ export default function AhuIndexPage() {
 
       {cards.length === 0 ? <Empty>No AHU units registered.</Empty> : null}
 
-      {/* Popup Window: Add New AHU + Place 3D Model on Floor Platform */}
-      {addOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[#071226]/70 p-3 backdrop-blur-sm sm:p-5"
-          onClick={() => !creating && setAddOpen(false)}
-        >
-          <div
-            className="max-h-[94dvh] w-full max-w-5xl overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4 shadow-[0_32px_90px_-20px_rgba(7,18,38,0.65)] sm:p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3.5">
-              <div>
-                <p className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-[#1d6ef2]">
-                  3D Digital Twin Commissioning
-                </p>
-                <h2 className="mt-0.5 text-[18px] font-bold tracking-tight text-[#12294d] sm:text-[20px]">
-                  Add New AHU &amp; Place 3D Model in Facility Room
-                </h2>
-                <p className="text-[11.5px] text-slate-500">
-                  Fill in the unit identity below, then rotate the 3D room and click any valid floor platform slab (or outdoor concrete pad) to place your new AHU cleanly.
-                </p>
-              </div>
-              <button
-                type="button"
-                disabled={creating}
-                onClick={() => setAddOpen(false)}
-                aria-label="Close Add AHU modal"
-                className="grid h-9 w-9 flex-none place-items-center rounded-xl border border-slate-200 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <form onSubmit={(e) => void submitCreateAhu(e)} className="mt-4 space-y-4">
-              <ErrorNote message={createErr} />
-
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <Field label="AHU Identifier" hint="e.g. AHU-08">
-                  <input
-                    required
-                    className={cx(inputClass, "font-mono uppercase")}
-                    value={newId}
-                    onChange={(e) => setNewId(e.target.value.toUpperCase())}
-                    placeholder="AHU-08"
-                  />
-                </Field>
-                <Field label="Unit Name">
-                  <input
-                    required
-                    className={inputClass}
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    placeholder="AHU-08 Sterile Suite"
-                  />
-                </Field>
-                <Field label="Physical Location" hint="Blank = auto from 3D zone">
-                  <input
-                    className={inputClass}
-                    value={newLocation}
-                    onChange={(e) => setNewLocation(e.target.value)}
-                    placeholder={placement?.zoneLabel ?? "Auto from selected 3D wing"}
-                  />
-                </Field>
-                <Field label="Target Setpoint (°C)">
-                  <input
-                    type="number"
-                    step="0.5"
-                    min={15}
-                    max={30}
-                    className={inputClass}
-                    value={newSetpoint}
-                    onChange={(e) => setNewSetpoint(e.target.value)}
-                  />
-                </Field>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-[#f8fafd] px-3.5 py-2.5 text-[11.5px]">
-                <div className="flex flex-wrap items-center gap-4">
-                  <label className="inline-flex cursor-pointer items-center gap-2 font-medium text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={newHasHeater}
-                      onChange={(e) => setNewHasHeater(e.target.checked)}
-                      className="h-4 w-4 accent-[#1d6ef2]"
-                    />
-                    Heating coil installed
-                  </label>
-                  <label className="inline-flex cursor-pointer items-center gap-2 font-medium text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={newSimEnabled}
-                      onChange={(e) => setNewSimEnabled(e.target.checked)}
-                      className="h-4 w-4 accent-[#1d6ef2]"
-                    />
-                    Auto-provision Simulation Controller
-                  </label>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => autoPickSlot(true)}
-                    className="inline-flex items-center gap-1 rounded-lg border border-[#cbe0fd] bg-[#eef5ff] px-2.5 py-1 text-[11px] font-semibold text-[#1d6ef2] transition hover:bg-[#dfeeff]"
-                  >
-                    <Box size={12} /> Auto Indoor Wing Slot
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => autoPickSlot(false)}
-                    className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800 transition hover:bg-amber-100"
-                  >
-                    <Sun size={12} /> Auto Outdoor Pad Slot
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      placement &&
-                      setPlacement({
-                        ...placement,
-                        rotation: normalizeRotation(placement.rotation + 90),
-                      })
-                    }
-                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-100"
-                  >
-                    <RotateCw size={12} /> Rotate ({placement?.rotation ?? 0}°)
-                  </button>
-                </div>
-              </div>
-
-              {/* Interactive 3D Floor Platform Placement Viewport */}
-              <AhuFacilityMap3D
-                items={cards}
-                mode="placement"
-                draftAhuId={newId.trim() || "NEW"}
-                draftAhuName={newName.trim() || "New AHU"}
-                placement={placement}
-                onPlacementChange={setPlacement}
-              />
-
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
-                <div className="flex items-center gap-2 text-[12px] text-slate-600">
-                  <CheckCircle2 size={15} className="text-emerald-600" />
-                  {placement ? (
-                    <span>
-                      Selected Floor Platform:{" "}
-                      <strong className="text-[#12294d]">{placement.zoneLabel}</strong>{" "}
-                      <span className="font-mono text-[11px] text-slate-500">
-                        (X {placement.x}m, Z {placement.z}m · {placement.rotation}°)
-                      </span>
-                    </span>
-                  ) : (
-                    <span>Click on any indoor branch floor or outdoor pad above to set position.</span>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <Btn
-                    type="button"
-                    variant="ghost"
-                    disabled={creating}
-                    onClick={() => setAddOpen(false)}
-                  >
-                    Cancel
-                  </Btn>
-                  <Btn type="submit" variant="primary" disabled={creating || !placement}>
-                    <Plus size={14} /> {creating ? "Placing & Creating…" : `Place & Create ${newId.trim() || "AHU"}`}
-                  </Btn>
-                </div>
-              </div>
-            </form>
-          </div>
-        </div>
-      ) : null}
+      {addModal}
     </div>
   );
 }
