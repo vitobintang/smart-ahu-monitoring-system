@@ -1,9 +1,9 @@
-import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ahuCommands, ahus, alarms, devices, sensorThresholds, telemetry, trendAlerts, users } from "@/db/schema";
 import type { AhuRow } from "@/db/schema";
-import { computeAhuStatus, PARAMETERS, type ParamKey } from "@/lib/domain";
-import { analyseTrends } from "@/lib/engine";
+import { computeAhuStatus, PARAMETERS, PARAM_KEYS, type ParamKey } from "@/lib/domain";
+import { computeTrendAnalyses } from "@/lib/engine";
 import { authoritativeTelemetry } from "@/lib/source";
 
 export const COLUMN: Record<ParamKey, string> = {
@@ -36,6 +36,7 @@ export interface AhuCard {
   criticalAlarms: number;
   unackedAlarms: number;
   trendAlerts: number;
+  filterLimits: { low: number | null; high: number | null };
   activeCommand: { id: string; commandType: string; status: string; expiresAt: Date } | null;
 }
 
@@ -64,31 +65,43 @@ export async function getDashboard(): Promise<{
   const ids = ahuRows.map((a) => a.id);
   if (ids.length === 0) return { cards: [], totals: { ahus: 0, online: 0, run: 0, fault: 0, offline: 0, activeAlarms: 0, unackedAlarms: 0, trendAlerts: 0 } };
 
-  const latest = await latestRows(ids);
-  const alarmRows = await db
-    .select({
-      ahuId: alarms.ahuId,
-      active: sql<number>`count(*) filter (where ${alarms.isActive})::int`.as("active"),
-      critical: sql<number>`count(*) filter (where ${alarms.isActive} and ${alarms.priority} = 'CRITICAL')::int`.as("critical"),
-      unacked: sql<number>`count(*) filter (where ${alarms.isActive} and not ${alarms.acknowledged})::int`.as("unacked"),
-    })
-    .from(alarms)
-    .where(inArray(alarms.ahuId, ids))
-    .groupBy(alarms.ahuId);
+  const [latest, alarmRows, trendRows, cmdRows, filterThresholdRows] = await Promise.all([
+    latestRows(ids),
+    db
+      .select({
+        ahuId: alarms.ahuId,
+        active: sql<number>`count(*) filter (where ${alarms.isActive})::int`.as("active"),
+        critical: sql<number>`count(*) filter (where ${alarms.isActive} and ${alarms.priority} = 'CRITICAL')::int`.as("critical"),
+        unacked: sql<number>`count(*) filter (where ${alarms.isActive} and not ${alarms.acknowledged})::int`.as("unacked"),
+      })
+      .from(alarms)
+      .where(inArray(alarms.ahuId, ids))
+      .groupBy(alarms.ahuId),
+    db
+      .select({ ahuId: trendAlerts.ahuId, n: sql<number>`count(*) filter (where not ${trendAlerts.acknowledged})::int` })
+      .from(trendAlerts)
+      .where(inArray(trendAlerts.ahuId, ids))
+      .groupBy(trendAlerts.ahuId),
+    db
+      .select()
+      .from(ahuCommands)
+      .where(and(inArray(ahuCommands.ahuId, ids), inArray(ahuCommands.status, ["REQUESTED", "ACCEPTED"])))
+      .orderBy(desc(ahuCommands.createdAt)),
+    db
+      .select({
+        ahuId: sensorThresholds.ahuId,
+        lowLimit: sensorThresholds.lowLimit,
+        highLimit: sensorThresholds.highLimit,
+      })
+      .from(sensorThresholds)
+      .where(and(inArray(sensorThresholds.ahuId, ids), eq(sensorThresholds.parameter, "filterDiffPressure"))),
+  ]);
+
   const alarmMap = new Map(alarmRows.map((r) => [r.ahuId, r]));
-
-  const trendRows = await db
-    .select({ ahuId: trendAlerts.ahuId, n: sql<number>`count(*) filter (where not ${trendAlerts.acknowledged})::int` })
-    .from(trendAlerts)
-    .where(inArray(trendAlerts.ahuId, ids))
-    .groupBy(trendAlerts.ahuId);
   const trendMap = new Map(trendRows.map((r) => [r.ahuId, r.n]));
-
-  const cmdRows = await db
-    .select()
-    .from(ahuCommands)
-    .where(and(inArray(ahuCommands.ahuId, ids), inArray(ahuCommands.status, ["REQUESTED", "ACCEPTED"])))
-    .orderBy(desc(ahuCommands.createdAt));
+  const filterLimitMap = new Map(
+    filterThresholdRows.map((r) => [r.ahuId, { low: r.lowLimit, high: r.highLimit }]),
+  );
   const cmdMap = new Map<string, (typeof cmdRows)[number]>();
   for (const c of cmdRows) if (!cmdMap.has(c.ahuId)) cmdMap.set(c.ahuId, c);
 
@@ -131,6 +144,7 @@ export async function getDashboard(): Promise<{
       criticalAlarms: alarmMap.get(ahu.id)?.critical ?? 0,
       unackedAlarms: alarmMap.get(ahu.id)?.unacked ?? 0,
       trendAlerts: trendMap.get(ahu.id) ?? 0,
+      filterLimits: filterLimitMap.get(ahu.id) ?? { low: null, high: null },
       activeCommand: cmdMap.has(ahu.id)
         ? {
             id: cmdMap.get(ahu.id)!.id,
@@ -206,17 +220,35 @@ export async function getSeries(ahuId: string, windowMin: number): Promise<{ poi
 }
 
 export async function getAhuDetail(ahuId: string) {
-  const ahuRows = await db.select().from(ahus).where(eq(ahus.id, ahuId)).limit(1);
+  const now = new Date();
+  const since = new Date(now.getTime() - 45 * 60 * 1000);
+  const trendProjection: Record<string, unknown> = { timestamp: telemetry.timestamp };
+  for (const key of PARAM_KEYS) {
+    trendProjection[key] =
+      key === "current"
+        ? sql`case when ${telemetry.isCurrentFallback} then null else ${telemetry.current} end`.as("current")
+        : key === "voltage"
+          ? sql`case when ${telemetry.isVoltageFallback} then null else ${telemetry.voltage} end`.as("voltage")
+          : telemetry[key];
+  }
+
+  const [ahuRows, latest, thresholdRows, deviceRows, alarmRows, cmdRows, trendRows, trendSampleRows] =
+    await Promise.all([
+      db.select().from(ahus).where(eq(ahus.id, ahuId)).limit(1),
+      db.select().from(telemetry).where(and(eq(telemetry.ahuId, ahuId), authoritativeTelemetry())).orderBy(desc(telemetry.timestamp)).limit(1),
+      db.select().from(sensorThresholds).where(eq(sensorThresholds.ahuId, ahuId)),
+      db.select({ id: devices.id, ahuId: devices.ahuId, label: devices.label, sourceType: devices.sourceType, enabled: devices.enabled, createdAt: devices.createdAt }).from(devices).where(eq(devices.ahuId, ahuId)).orderBy(devices.createdAt),
+      db.select().from(alarms).where(eq(alarms.ahuId, ahuId)).orderBy(desc(alarms.triggeredAt)).limit(60),
+      db.select().from(ahuCommands).where(eq(ahuCommands.ahuId, ahuId)).orderBy(desc(ahuCommands.createdAt)).limit(25),
+      db.select().from(trendAlerts).where(eq(trendAlerts.ahuId, ahuId)).orderBy(desc(trendAlerts.createdAt)).limit(25),
+      db
+        .select(trendProjection as never)
+        .from(telemetry)
+        .where(and(eq(telemetry.ahuId, ahuId), gt(telemetry.timestamp, since), authoritativeTelemetry()))
+        .orderBy(telemetry.timestamp) as unknown as Promise<Array<Record<string, unknown>>>,
+    ]);
   const ahu = ahuRows[0];
   if (!ahu) return null;
-  const [latest, thresholdRows, deviceRows, alarmRows, cmdRows, trendRows] = await Promise.all([
-    db.select().from(telemetry).where(and(eq(telemetry.ahuId, ahuId), authoritativeTelemetry())).orderBy(desc(telemetry.timestamp)).limit(1),
-    db.select().from(sensorThresholds).where(eq(sensorThresholds.ahuId, ahuId)),
-    db.select({ id: devices.id, ahuId: devices.ahuId, label: devices.label, sourceType: devices.sourceType, enabled: devices.enabled, createdAt: devices.createdAt }).from(devices).where(eq(devices.ahuId, ahuId)).orderBy(devices.createdAt),
-    db.select().from(alarms).where(eq(alarms.ahuId, ahuId)).orderBy(desc(alarms.triggeredAt)).limit(60),
-    db.select().from(ahuCommands).where(eq(ahuCommands.ahuId, ahuId)).orderBy(desc(ahuCommands.createdAt)).limit(25),
-    db.select().from(trendAlerts).where(eq(trendAlerts.ahuId, ahuId)).orderBy(desc(trendAlerts.createdAt)).limit(25),
-  ]);
   const row = latest[0];
   const computed = computeAhuStatus({
     lastSeenAt: row?.timestamp ?? null,
@@ -226,7 +258,7 @@ export async function getAhuDetail(ahuId: string) {
     fanSpeed: row?.fanSpeed ?? null,
     runState: row?.runState ?? null,
   });
-  const analyses = await analyseTrends(ahuId);
+  const analyses = computeTrendAnalyses(thresholdRows, trendSampleRows, now);
   return { ahu, latest: row ?? null, thresholds: thresholdRows, devices: deviceRows, alarms: alarmRows, commands: cmdRows, trends: trendRows, analyses, computed };
 }
 

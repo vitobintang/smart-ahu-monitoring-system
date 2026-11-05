@@ -19,7 +19,7 @@ interface Card {
 
 /** FR-03 / FR-05: fleet index of all AHU units. */
 export default function AhuIndexPage() {
-  const { data, error, loading } = usePoll<{ cards: Card[] }>("/api/overview", LOCAL_POLL_MS);
+  const { data, error, loading } = usePoll<{ cards: Card[] }>("/api/overview?lite=1", LOCAL_POLL_MS);
 
   if (loading && !data) return <Spinner label="Loading AHU fleet…" />;
 

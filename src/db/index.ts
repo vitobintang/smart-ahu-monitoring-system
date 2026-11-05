@@ -18,21 +18,22 @@ function getDb(): NodePgDatabase {
     globalForDb.__ahuPostgresqlPool ??
     new Pool({
       connectionString: databaseUrl,
-      max: Number(process.env.PG_POOL_MAX ?? 4),
+      max: Number(process.env.PG_POOL_MAX ?? 10),
+      keepAlive: true,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
       statement_timeout: Number(process.env.PG_STATEMENT_TIMEOUT_MS ?? 30_000),
     });
 
-  pool.on("error", (err) => {
-    console.error("[AHU][pg] idle client error:", err.message);
-  });
+  if (!globalForDb.__ahuPostgresqlPool) {
+    pool.on("error", (err) => {
+      console.error("[AHU][pg] idle client error:", err.message);
+    });
+  }
 
   const instance = drizzle(pool);
-  if (process.env.NODE_ENV !== "production") {
-    globalForDb.__ahuPostgresqlPool = pool;
-    globalForDb.__ahuDrizzleDb = instance;
-  }
+  globalForDb.__ahuPostgresqlPool = pool;
+  globalForDb.__ahuDrizzleDb = instance;
   return instance;
 }
 

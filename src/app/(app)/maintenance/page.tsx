@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { RefreshCw, Wrench } from "lucide-react";
 import type { AhuStatus } from "@/db/schema";
-import { api, LOCAL_POLL_MS, timeAgo, usePoll } from "@/lib/client";
+import { LOCAL_POLL_MS, timeAgo, usePoll } from "@/lib/client";
 import { Empty, ErrorNote, Spinner, StatusBadge, cx } from "@/components/ui";
 
 interface OverviewCard {
@@ -14,40 +13,15 @@ interface OverviewCard {
   values: Record<string, number | null>;
   activeAlarms: number;
   trendAlerts: number;
-}
-
-interface UnitDetail {
-  ahu: { id: string };
-  thresholds: { parameter: string; highLimit: number | null; lowLimit: number | null }[];
+  filterLimits?: { low: number | null; high: number | null };
 }
 
 /** Read-only maintenance indicators: filter loading, runtime, comms freshness. */
 export default function MaintenancePage() {
-  const { data, error, loading, reload, paused, setPaused } = usePoll<{ cards: OverviewCard[] }>("/api/overview", LOCAL_POLL_MS);
-  const [limits, setLimits] = useState<Record<string, { high: number | null; low: number | null }>>({});
-  const [busy, setBusy] = useState(false);
-
-  async function loadLimits() {
-    setBusy(true);
-    try {
-      const ids = data?.cards.map((c) => c.ahu.id) ?? [];
-      const details = await Promise.all(ids.map((id) => api<UnitDetail>(`/api/ahu/${id}?window=5`)));
-      const map: Record<string, { high: number | null; low: number | null }> = {};
-      for (const d of details) {
-        const th = d.thresholds.find((t) => t.parameter === "filterDiffPressure");
-        map[d.ahu.id] = { high: th?.highLimit ?? null, low: th?.lowLimit ?? null };
-      }
-      setLimits(map);
-    } catch {
-      /* limits are decorative fallback when unavailable */
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  useEffect(() => {
-    if (data && Object.keys(limits).length === 0) void loadLimits();
-  }, [data]);
+  const { data, error, loading, reload, paused, setPaused } = usePoll<{ cards: OverviewCard[] }>(
+    "/api/overview?lite=1",
+    LOCAL_POLL_MS,
+  );
 
   return (
     <div className="space-y-5">
@@ -66,11 +40,10 @@ export default function MaintenancePage() {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => void loadLimits()}
-            disabled={busy}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[#e6ecf5] bg-white px-3 py-2 text-[11px] font-bold text-slate-500 transition hover:border-[#bfdbfe] hover:text-[#2563eb] disabled:opacity-50"
+            onClick={() => void reload()}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#e6ecf5] bg-white px-3 py-2 text-[11px] font-bold text-slate-500 transition hover:border-[#bfdbfe] hover:text-[#2563eb]"
           >
-            <RefreshCw size={13} className={cx(busy && "animate-spin")} /> Refresh limits
+            <RefreshCw size={13} /> Refresh
           </button>
           <button
             onClick={() => setPaused(!paused)}
@@ -105,7 +78,7 @@ export default function MaintenancePage() {
             <tbody>
               {(data?.cards ?? []).map((c) => {
                 const dp = c.values.filterDiffPressure ?? null;
-                const lim = limits[c.ahu.id];
+                const lim = c.filterLimits;
                 const ratio = dp !== null && lim?.high ? dp / lim.high : null;
                 const cond =
                   dp === null

@@ -1,9 +1,9 @@
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { ahus, trendAlerts } from "@/db/schema";
+import { trendAlerts } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { publishRealtime } from "@/lib/realtime";
-import { analyseTrends, runTrendDetection } from "@/lib/engine";
+import { analyseTrendsBatch } from "@/lib/engine";
 
 export const dynamic = "force-dynamic";
 
@@ -15,22 +15,19 @@ export async function GET(req: Request) {
     const ahuId = url.searchParams.get("ahuId");
     const unackedOnly = url.searchParams.get("unacked") === "1";
 
-    const targets = ahuId ? [ahuId] : (await db.select({ id: ahus.id }).from(ahus)).map((r) => r.id);
-    const analyses: Record<string, Awaited<ReturnType<typeof analyseTrends>>> = {};
-    for (const id of targets) {
-      await runTrendDetection(id);
-      analyses[id] = await analyseTrends(id);
-    }
-
     const conds = [];
     if (ahuId) conds.push(eq(trendAlerts.ahuId, ahuId));
     if (unackedOnly) conds.push(eq(trendAlerts.acknowledged, false));
-    const history = await db
-      .select()
-      .from(trendAlerts)
-      .where(conds.length ? and(...conds) : undefined)
-      .orderBy(desc(trendAlerts.createdAt))
-      .limit(200);
+
+    const [analyses, history] = await Promise.all([
+      analyseTrendsBatch(ahuId ? [ahuId] : undefined),
+      db
+        .select()
+        .from(trendAlerts)
+        .where(conds.length ? and(...conds) : undefined)
+        .orderBy(desc(trendAlerts.createdAt))
+        .limit(200),
+    ]);
 
     return Response.json({ analyses, history });
   } catch (err) {

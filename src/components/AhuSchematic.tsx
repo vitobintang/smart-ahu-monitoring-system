@@ -3,6 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { Boxes, ImageIcon, Info, X } from "lucide-react";
+
+const NextImage =
+  typeof Image === "function"
+    ? Image
+    : ((Image as unknown as { default: typeof Image }).default ?? Image);
 import type { AhuStatus, DataSource } from "@/db/schema";
 import { classifyQuality, type DataQuality, type ParamKey } from "@/lib/domain";
 import { cx, QualityTag, Segmented, StatusBadge } from "@/components/ui";
@@ -38,31 +43,44 @@ const TONE: Record<Stage, { stroke: string; fill: string; text: string; dot: str
 };
 
 const GEO: Record<string, { x: number; y: number; w: number; h: number; mx: number; my: number; cx?: number; cy?: number; r?: number }> = {
-  damper: { x: 88, y: 224, w: 236, h: 456, mx: 12.9, my: 23.5 },
-  filter: { x: 384, y: 228, w: 232, h: 448, mx: 31.3, my: 23.5 },
-  coil: { x: 672, y: 232, w: 256, h: 542, mx: 50, my: 23.5 },
-  heater: { x: 968, y: 228, w: 248, h: 448, mx: 68.3, my: 23.5 },
-  fan: { x: 1273, y: 318, w: 264, h: 264, cx: 1405, cy: 450, r: 130, mx: 87.8, my: 29.5 },
+  damperPosition: { x: 88, y: 224, w: 236, h: 456, mx: 12.9, my: 23.5 },
+  filterDiffPressure: { x: 384, y: 228, w: 232, h: 448, mx: 31.3, my: 23.5 },
+  coilTemp: { x: 672, y: 232, w: 256, h: 420, mx: 50, my: 23.5 },
+  heaterOutput: { x: 968, y: 228, w: 248, h: 448, mx: 68.3, my: 23.5 },
+  fanSpeed: { x: 1273, y: 318, w: 264, h: 264, cx: 1405, cy: 450, r: 130, mx: 87.8, my: 29.5 },
 };
 
-const AIR_PATH =
-  "M 16 464 L 928 464 " +
-  "C 950 464 950 294 985 294 " +
-  "L 1190 294 " +
-  "C 1228 294 1228 464 1190 464 " +
-  "L 985 464 " +
-  "C 958 464 958 612 985 612 " +
-  "L 1190 612 " +
-  "C 1264 612 1324 548 1358 490 L 1380 464";
+const AIR_PATH_WITH_HEATER =
+  "M 16 450 L 948 450 " +
+  "C 976 450 970 272 998 272 " +
+  "L 1188 272 " +
+  "C 1222 272 1222 450 1188 450 " +
+  "L 998 450 " +
+  "C 964 450 964 596 998 596 " +
+  "L 1188 596 " +
+  "C 1256 596 1268 450 1340 450 L 1425 450";
 
+const AIR_PATH_NO_HEATER = "M 16 450 L 1425 450";
+
+/**
+ * Chilled-water serpentine aligned with the horizontal copper tubes and side
+ * U-bend elbows in `public/ahu/side-elevation.jpg` (1600×900 viewBox), staying
+ * above the stainless condensate drain pan.
+ */
 const WATER_PATH =
-  "M 690 632 L 690 302 Q 690 284 708 284 L 722 284 Q 740 284 740 302 L 740 632 " +
-  "Q 740 650 758 650 L 772 650 Q 790 650 790 632 L 790 302 Q 790 284 808 284 " +
-  "L 822 284 Q 840 284 840 302 L 840 632 Q 840 650 858 650 L 872 650 " +
-  "Q 890 650 890 632 L 890 302";
+  "M 884 646 L 884 616 C 884 606 876 606 866 606 L 694 606 " +
+  "C 672 606 672 569 694 569 L 904 569 " +
+  "C 926 569 926 530 904 530 L 694 530 " +
+  "C 672 530 672 491 694 491 L 904 491 " +
+  "C 926 491 926 448 904 448 L 694 448 " +
+  "C 672 448 672 406 694 406 L 904 406 " +
+  "C 926 406 926 366 904 366 L 694 366 " +
+  "C 672 366 672 327 694 327 L 904 327 " +
+  "C 926 327 926 287 904 287 L 694 287 " +
+  "C 672 287 672 248 694 248 L 902 248";
 
 const FLOW_PATHS = { discharge: "M 1534 450 L 1592 450" } as const;
-const FLOW_STOPS = { coilIn: 672, coilOut: 928, heaterOut: 1216, end: 1400 } as const;
+const FLOW_STOPS = { coilIn: 672, coilOut: 956, heaterOut: 1236, end: 1425 } as const;
 
 const ASSESS: Record<Stage, string> = {
   ok: "Operating within configured limits.",
@@ -216,11 +234,11 @@ export default function AhuSchematic({
       {model === "realistic" ? (
         <div className="animate-fade">
           <div className="relative overflow-hidden rounded-xl border border-ink-700 bg-ink-950 ring-1 ring-inset ring-white/5">
-            <Image
+            <NextImage
               src="/ahu/side-elevation.jpg"
               alt="Flat orthographic side elevation of the air handling unit: intake damper, filter stage, cooling coil, heating coil and supply fan scroll"
-              width={2000}
-              height={1125}
+              width={1600}
+              height={900}
               className={cx(
                 "h-auto w-full select-none object-cover transition-[filter] duration-500",
                 offline && "brightness-[0.62] saturate-[0.35]",
@@ -272,7 +290,7 @@ export default function AhuSchematic({
               </defs>
               <g className={cx(!running && "flow-line-paused")} style={{ pointerEvents: "none" }}>
                 <path
-                  d={AIR_PATH}
+                  d={hasHeater ? AIR_PATH_WITH_HEATER : AIR_PATH_NO_HEATER}
                   fill="none"
                   stroke={`url(#flowGrad-${heaterActive ? "heat" : "cool"})`}
                   strokeWidth={15}
@@ -281,14 +299,14 @@ export default function AhuSchematic({
                   opacity={running ? 0.1 + 0.1 * (damperOpen / 100) : 0.05}
                 />
                 <path
-                  d="M 6 455 L 18 464 L 6 473"
+                  d="M 6 441 L 18 450 L 6 459"
                   fill="none"
                   stroke="#9fb2c4"
                   strokeWidth={3}
                   opacity={running ? 0.4 + 0.6 * (damperOpen / 100) : 0.25}
                 />
                 <path
-                  d={AIR_PATH}
+                  d={hasHeater ? AIR_PATH_WITH_HEATER : AIR_PATH_NO_HEATER}
                   fill="none"
                   stroke={`url(#flowGrad-${heaterActive ? "heat" : "cool"})`}
                   strokeWidth={4}
@@ -302,19 +320,23 @@ export default function AhuSchematic({
                     filter: "drop-shadow(0 0 6px rgba(103,232,249,0.55))",
                   }}
                 />
-                <path
-                  d={WATER_PATH}
-                  fill="none"
-                  stroke="#38bdf8"
-                  strokeWidth={2.4}
-                  strokeLinecap="round"
-                  className="flow-line"
-                  style={{
-                    strokeDasharray: "7 11",
-                    animationDuration: `${(flowDur * 2.4).toFixed(2)}s`,
-                    opacity: running ? 0.75 : 0.3,
-                  }}
-                />
+                {coilState !== "missing" ? (
+                  <path
+                    d={WATER_PATH}
+                    fill="none"
+                    stroke="#38bdf8"
+                    strokeWidth={2.5}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="flow-line"
+                    style={{
+                      strokeDasharray: "9 11",
+                      animationDuration: `${(flowDur * 2.4).toFixed(2)}s`,
+                      opacity: running ? 0.85 : 0.32,
+                      filter: "drop-shadow(0 0 4px rgba(56,189,248,0.45))",
+                    }}
+                  />
+                ) : null}
                 <path
                   d={FLOW_PATHS.discharge}
                   fill="none"
