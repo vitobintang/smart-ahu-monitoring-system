@@ -1,12 +1,20 @@
 import { cookies } from "next/headers";
+import { summarizeDbError } from "@/db";
 import { CSRF_COOKIE, getSession, safePublicUser, setCsrfCookie } from "@/lib/auth";
 import { getSyncStatus } from "@/lib/realtime";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const ctx = await getSession();
+  let ctx: Awaited<ReturnType<typeof getSession>> = null;
+  try {
+    ctx = await getSession();
+  } catch (err) {
+    console.warn("[auth/session] transient session check error:", summarizeDbError(err));
+  }
+
   const sync = await getSyncStatus();
+
   if (!ctx) {
     return Response.json(
       { user: null, sync },

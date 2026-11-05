@@ -1,9 +1,16 @@
 import { and, eq, lt, sql } from "drizzle-orm";
 import { randomId } from "@/lib/ids";
-import { db } from "@/db";
-import { ahus, devices, sensorThresholds, syncOutbox, telemetry } from "@/db/schema";
+import { db, isOfflineNetworkError, isTransientDbError, summarizeDbError } from "@/db";
+import { ahus, devices, syncOutbox, telemetry } from "@/db/schema";
 import type { AhuRow, DeviceRow } from "@/db/schema";
-import { acceptPendingCommands, expireStaleCommands, failActiveCommands, ingestTelemetry, refreshAhuStatus, runTrendDetection } from "@/lib/engine";
+import {
+  acceptPendingCommands,
+  expireStaleCommands,
+  failActiveCommands,
+  ingestTelemetry,
+  refreshAhuStatus,
+  runTrendDetection,
+} from "@/lib/engine";
 import { drainSyncOutbox } from "@/lib/realtime";
 import { PARAM_MAP, type ParamKey } from "@/lib/domain";
 
@@ -40,11 +47,50 @@ const g = globalThis as typeof globalThis & {
   __simOverrides?: Map<string, SimOverride>;
   __workersStarted?: boolean;
   __simRunning?: boolean;
+  __monitorRunning?: boolean;
+  __workerChain?: Promise<void>;
   __lastSimTickAt?: number;
+  __dbBackoffUntil?: number;
+  __dbBackoffStreak?: number;
+  __dbDegradedLogged?: boolean;
 };
 
 const simStates: Map<string, SimState> = (g.__simStates ??= new Map());
 export const simOverrides: Map<string, SimOverride> = (g.__simOverrides ??= new Map());
+
+function engageDbBackoff(tag: string, err: unknown): void {
+  const streak = (g.__dbBackoffStreak ?? 0) + 1;
+  g.__dbBackoffStreak = streak;
+  const cooldownMs = Math.min(30_000, 10_000 + streak * 5_000);
+  g.__dbBackoffUntil = Date.now() + cooldownMs;
+  if (!g.__dbDegradedLogged || streak % 4 === 1) {
+    g.__dbDegradedLogged = true;
+    console.warn(
+      `[${tag}] database unavailable (${summarizeDbError(err)}) — pausing background worker for ${Math.round(cooldownMs / 1000)}s`,
+    );
+  }
+}
+
+function clearDbBackoffIfRecovered(): void {
+  if (g.__dbDegradedLogged) {
+    console.log("[AHU][workers] database connectivity restored — resuming normal telemetry & monitoring cadence");
+  }
+  g.__dbBackoffStreak = 0;
+  g.__dbBackoffUntil = 0;
+  g.__dbDegradedLogged = false;
+}
+
+function isDbCircuitOpen(): boolean {
+  return Boolean(g.__dbBackoffUntil && Date.now() < g.__dbBackoffUntil);
+}
+
+/** Runs background worker ticks one-at-a-time so simulator & monitor never contend for pool slots simultaneously. */
+function runSerializedWorker(fn: () => Promise<void>): Promise<void> {
+  const prev = g.__workerChain ?? Promise.resolve();
+  const next = prev.catch(() => undefined).then(fn);
+  g.__workerChain = next;
+  return next;
+}
 
 export function getOverride(ahuId: string): SimOverride {
   const existing = simOverrides.get(ahuId);
@@ -75,7 +121,6 @@ export function resetSimulatorUnit(ahuId: string): void {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const noise = (amp: number) => (Math.random() * 2 - 1) * amp;
-/** mean-reverting random walk */
 const walk = (v: number, target: number, rate: number, amp: number, lo: number, hi: number) =>
   clamp(v + (target - v) * rate + noise(amp), lo, hi);
 
@@ -111,12 +156,9 @@ function buildFrame(ahu: AhuRow, state: SimState, ov: SimOverride, tickSec: numb
     state.fanSpeed = 0;
     state.damper = 0;
   } else if (running) {
-    // Immediate VFD spin-up above 0% on START so feedback confirms cleanly within 1 tick.
     state.fanSpeed = Math.max(22, walk(state.fanSpeed, fanTarget, 0.48, 1.2, 15, 100));
     state.damper = Math.max(18, walk(state.damper, damperTarget, 0.42, 1.0, 12, 100));
   } else {
-    // Active VFD regenerative braking on STOP with zero upward noise:
-    // settles to exact 0 within 1-2 ticks and never bounces to 1% (preventing false OFFLINE).
     state.fanSpeed = state.fanSpeed <= 26 ? 0 : Math.max(0, state.fanSpeed * 0.25 - 8);
     state.damper = state.damper <= 26 ? 0 : Math.max(0, state.damper * 0.25 - 8);
   }
@@ -125,18 +167,16 @@ function buildFrame(ahu: AhuRow, state: SimState, ov: SimOverride, tickSec: numb
   state.coilTemp = walk(state.coilTemp, running ? 7.5 : 16, 0.25, 0.5, 2, 30);
   state.supplyTemp = walk(state.supplyTemp, coolingTarget, 0.28, 0.25, 4, 45);
   state.roomTemp = walk(state.roomTemp, running ? ahu.setpoint + 1.4 : 28.5, 0.05, 0.08, 12, 45);
-  state.returnTemp = walk(state.returnTemp, (state.roomTemp * 0.7 + state.supplyTemp * 0.3), 0.2, 0.15, 5, 45);
+  state.returnTemp = walk(state.returnTemp, state.roomTemp * 0.7 + state.supplyTemp * 0.3, 0.2, 0.15, 5, 45);
 
   const humTarget = ov.humiditySpike ? 88 : running ? 52 : 62;
   state.humidity = walk(state.humidity, humTarget, ov.humiditySpike ? 0.25 : 0.06, 0.6, 5, 99);
 
-  // Filter fouling: slow upward drift so the trend estimator has a real signal
   const fouling = ov.rapidFilterFouling ? 1.6 : 0.12;
   state.filterDp = clamp(state.filterDp + fouling + noise(0.6), 10, 900);
 
   const loadFactor = state.fanSpeed / 100;
   const currentTarget = ov.currentOverload ? 34 : faulted ? 0 : running ? 2.4 + loadFactor * 13.5 : 0.35;
-  // NOTE: never emit the 1 A / 220 V placeholder sentinels (NFR-06.5)
   let current = running || ov.currentOverload ? walk(state.current, currentTarget, 0.3, 0.25, 0, 400) : currentTarget;
   if (Math.abs(current - 1) < 0.02) current = 1.05;
   state.current = Number(current.toFixed(2));
@@ -155,15 +195,21 @@ function buildFrame(ahu: AhuRow, state: SimState, ov: SimOverride, tickSec: numb
 
 async function simulateAhu(ahu: AhuRow, device: DeviceRow, tickSec: number) {
   const ov = getOverride(ahu.id);
-  if (ov.commLoss) return; // heartbeat lost on purpose -> FR-14 COMMUNICATION alarm
+  if (ov.commLoss) return;
 
-  const lastRows = await db
-    .select()
-    .from(telemetry)
-    .where(eq(telemetry.ahuId, ahu.id))
-    .orderBy(sql`${telemetry.timestamp} desc`)
-    .limit(1);
-  const state = await loadState(ahu, lastRows[0]);
+  // Only query historical telemetry once when cold-starting simStates for this AHU!
+  let lastRow: typeof telemetry.$inferSelect | undefined;
+  if (!simStates.has(ahu.id)) {
+    const lastRows = await db
+      .select()
+      .from(telemetry)
+      .where(eq(telemetry.ahuId, ahu.id))
+      .orderBy(sql`${telemetry.timestamp} desc`)
+      .limit(1);
+    lastRow = lastRows[0];
+  }
+
+  const state = await loadState(ahu, lastRow);
   buildFrame(ahu, state, ov, tickSec);
   simStates.set(ahu.id, state);
 
@@ -187,8 +233,6 @@ async function simulateAhu(ahu: AhuRow, device: DeviceRow, tickSec: number) {
     if (installed.has(key)) parameters[key] = all[key];
   }
 
-  // small chance of a dropped parameter -> NULL / UNAVAILABLE demonstration (NFR-06.2)
-  // never drop fanSpeed so runState/fanSpeed feedback never spuriously contradicts
   if (Math.random() < 0.06) {
     const keys = Object.keys(parameters).filter((k) => k !== "fanSpeed");
     if (keys.length > 4) delete parameters[keys[Math.floor(Math.random() * keys.length)]];
@@ -219,14 +263,16 @@ export async function simulationTick() {
       .select()
       .from(devices)
       .where(and(eq(devices.sourceType, "SIMULATION"), eq(devices.enabled, true)));
-    const physical = await db.select({ ahuId: devices.ahuId }).from(devices)
+    const physical = await db
+      .select({ ahuId: devices.ahuId })
+      .from(devices)
       .where(and(eq(devices.sourceType, "PHYSICAL"), eq(devices.enabled, true)));
     const physicalIds = new Set(physical.map((d) => d.ahuId));
+
     for (let ahu of allAhus) {
       if (physicalIds.has(ahu.id)) continue;
       const device = devs.find((d) => d.ahuId === ahu.id);
       if (!device) continue;
-      // A failure on one unit must never abort the remaining units' telemetry.
       try {
         const ov = getOverride(ahu.id);
         if (ov.rejectCommands && !ov.commLoss) {
@@ -239,16 +285,25 @@ export async function simulationTick() {
             if (reloaded) ahu = reloaded;
           }
         }
-        // 1) frame first -> confirms commands ACCEPTED on the previous tick (FR-27)
         await simulateAhu(ahu, device, tickSec);
-        // 2) then accept newly requested commands (FR-26 lifecycle) unless controller is rejecting commands
         if (!ov.rejectCommands) {
           await acceptPendingCommands(ahu.id);
         }
       } catch (err) {
-        console.error(`[simulator] ${ahu.id} tick failed:`, err instanceof Error ? err.message : err);
+        if (isOfflineNetworkError(err) || isTransientDbError(err)) {
+          engageDbBackoff("simulator", err);
+          return;
+        }
+        console.error(`[simulator] ${ahu.id} tick failed:`, summarizeDbError(err));
       }
     }
+    clearDbBackoffIfRecovered();
+  } catch (err) {
+    if (isOfflineNetworkError(err) || isTransientDbError(err)) {
+      engageDbBackoff("simulator", err);
+      return;
+    }
+    throw err;
   } finally {
     g.__simRunning = false;
   }
@@ -258,45 +313,67 @@ export async function simulationTick() {
 /* Monitor tick: comm timeout, command TTL, trend detection, outbox   */
 /* ------------------------------------------------------------------ */
 
-/** Trend detection is a 15/30-minute horizon analysis — a 30 s cadence is ample. */
 const TREND_EVERY_N_TICKS = 3;
 let monitorTickCount = 0;
 
 export async function monitorTick() {
-  const all = await db.select().from(ahus);
-  monitorTickCount += 1;
-  const doTrends = monitorTickCount % TREND_EVERY_N_TICKS === 0;
-
-  // Command TTL sweep is fleet-wide, so run it once per tick (not per AHU).
+  if (g.__monitorRunning) return;
+  g.__monitorRunning = true;
   try {
-    await expireStaleCommands();
-  } catch (err) {
-    console.error("[monitor] command TTL sweep failed:", err instanceof Error ? err.message : err);
-  }
+    const all = await db.select().from(ahus);
+    monitorTickCount += 1;
+    const doTrends = monitorTickCount % TREND_EVERY_N_TICKS === 0;
 
-  for (const ahu of all) {
-    // Isolate failures: one unhealthy unit must not stop monitoring the fleet.
     try {
-      await refreshAhuStatus(ahu.id);
-      if (doTrends) await runTrendDetection(ahu.id);
+      await expireStaleCommands();
     } catch (err) {
-      console.error(`[monitor] ${ahu.id} failed:`, err instanceof Error ? err.message : err);
+      if (isOfflineNetworkError(err) || isTransientDbError(err)) {
+        engageDbBackoff("monitor", err);
+        return;
+      }
+      console.error("[monitor] command TTL sweep failed:", summarizeDbError(err));
     }
-  }
-  try {
-    await drainSyncOutbox();
-    // Housekeeping: the outbox is a transport queue, not the historical record
-    // (FR-09 history lives in `telemetry`), so delivered/expired rows are pruned.
-    await db
-      .delete(syncOutbox)
-      .where(
-        and(
-          lt(syncOutbox.createdAt, new Date(Date.now() - 15 * 60 * 1000)),
-          sql`${syncOutbox.status} <> 'PENDING'`,
-        ),
-      );
+
+    for (const ahu of all) {
+      try {
+        await refreshAhuStatus(ahu.id);
+        if (doTrends) await runTrendDetection(ahu.id);
+      } catch (err) {
+        if (isOfflineNetworkError(err) || isTransientDbError(err)) {
+          engageDbBackoff("monitor", err);
+          return;
+        }
+        console.error(`[monitor] ${ahu.id} failed:`, summarizeDbError(err));
+      }
+    }
+
+    try {
+      await drainSyncOutbox();
+      await db
+        .delete(syncOutbox)
+        .where(
+          and(
+            lt(syncOutbox.createdAt, new Date(Date.now() - 15 * 60 * 1000)),
+            sql`${syncOutbox.status} <> 'PENDING'`,
+          ),
+        );
+    } catch (err) {
+      if (isOfflineNetworkError(err) || isTransientDbError(err)) {
+        engageDbBackoff("monitor", err);
+        return;
+      }
+      console.error("[monitor] outbox maintenance failed:", summarizeDbError(err));
+    }
+
+    clearDbBackoffIfRecovered();
   } catch (err) {
-    console.error("[monitor] outbox maintenance failed:", err instanceof Error ? err.message : err);
+    if (isOfflineNetworkError(err) || isTransientDbError(err)) {
+      engageDbBackoff("monitor", err);
+      return;
+    }
+    throw err;
+  } finally {
+    g.__monitorRunning = false;
   }
 }
 
@@ -305,18 +382,31 @@ export function startWorkers() {
   g.__workersStarted = true;
   const simInterval = Number(process.env.SIMULATION_INTERVAL_MS ?? 5000);
   const monitorInterval = Number(process.env.MONITOR_INTERVAL_MS ?? 10000);
+
   if (process.env.SIMULATION_ENABLED !== "false") {
     const t1 = setInterval(() => {
-      void simulationTick().catch((e) => console.error("[simulator]", e));
+      if (isDbCircuitOpen() || g.__simRunning) return;
+      void runSerializedWorker(() => simulationTick()).catch((e) =>
+        console.error("[simulator]", summarizeDbError(e)),
+      );
     }, simInterval);
     t1.unref?.();
-    void simulationTick().catch((e) => console.error("[simulator:prime]", e));
+    void runSerializedWorker(() => simulationTick()).catch((e) =>
+      console.error("[simulator:prime]", summarizeDbError(e)),
+    );
   }
+
   const t2 = setInterval(() => {
-    void monitorTick().catch((e) => console.error("[monitor]", e));
+    if (isDbCircuitOpen() || g.__monitorRunning) return;
+    void runSerializedWorker(() => monitorTick()).catch((e) =>
+      console.error("[monitor]", summarizeDbError(e)),
+    );
   }, monitorInterval);
   t2.unref?.();
-  void monitorTick().catch((e) => console.error("[monitor:prime]", e));
+  void runSerializedWorker(() => monitorTick()).catch((e) =>
+    console.error("[monitor:prime]", summarizeDbError(e)),
+  );
+
   console.log(
     `[AHU] workers started (simulation ${process.env.SIMULATION_ENABLED === "false" ? "disabled" : `every ${simInterval} ms`}, monitor every ${monitorInterval} ms)`,
   );
@@ -324,9 +414,10 @@ export function startWorkers() {
 
 export async function maybePulseWorkers(minIntervalMs = 4800) {
   if (process.env.SIMULATION_ENABLED === "false") return;
+  if (isDbCircuitOpen()) return;
   const last = g.__lastSimTickAt ?? 0;
   if (!g.__simRunning && Date.now() - last >= minIntervalMs) {
-    await simulationTick();
+    await runSerializedWorker(() => simulationTick());
   }
 }
 
