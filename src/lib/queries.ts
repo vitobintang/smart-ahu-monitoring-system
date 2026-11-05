@@ -288,6 +288,11 @@ export interface ReportBucket {
 export interface ReportResult {
   ahuId: string;
   ahuName: string;
+  ahuLocation: string;
+  controlMode: string;
+  setpoint: number;
+  commTimeoutSec: number;
+  installedSensorCount: number;
   from: Date;
   to: Date;
   source: "ALL" | "PHYSICAL" | "SIMULATION";
@@ -406,6 +411,11 @@ export async function buildReport(input: {
   return {
     ahuId: input.ahuId,
     ahuName: ahu?.name ?? input.ahuId,
+    ahuLocation: ahu?.location ?? "Facility Mechanical Zone",
+    controlMode: ahu?.controlMode ?? "AUTO",
+    setpoint: ahu?.setpoint ?? 22,
+    commTimeoutSec: ahu?.commTimeoutSec ?? 30,
+    installedSensorCount: installed.size,
     from: input.from,
     to: input.to,
     source: input.source,
