@@ -67,16 +67,23 @@
 }
 
 @keyframes flowmove {
-  to { stroke-dashoffset: -250; }
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: var(--flow-offset, -256); }
 }
 .flow-line {
-  stroke-dasharray: 3 22;
+  --flow-offset: -256;
+  stroke-dasharray: 18 14;
+  stroke-dashoffset: 0;
   stroke-linecap: round;
-  animation: flowmove 2s linear infinite;
+  animation: flowmove 3.2s linear infinite;
+  will-change: stroke-dashoffset;
 }
 .flow-line-paused {
-  animation-play-state: paused;
   opacity: 0.22;
+}
+.flow-line-paused,
+.flow-line-paused .flow-line {
+  animation-play-state: paused;
 }
 
 /* ================================================================== */

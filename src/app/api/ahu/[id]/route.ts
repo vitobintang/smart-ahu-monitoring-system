@@ -4,6 +4,7 @@ import { ahus, sensorThresholds } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { getAhuDetail, getSeries } from "@/lib/queries";
 import { PARAM_KEYS, PARAM_MAP, type ParamKey } from "@/lib/domain";
+import { maybePulseWorkers } from "@/lib/workers";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,7 @@ interface Ctx {
 export async function GET(req: Request, ctx: Ctx) {
   try {
     await requireAuth("view");
+    await maybePulseWorkers();
     const { id } = await ctx.params;
     const url = new URL(req.url);
     const windowMin = Number(url.searchParams.get("window") ?? 15);

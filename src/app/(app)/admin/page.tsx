@@ -53,6 +53,8 @@ export default function AdminPage() {
     30000,
     tab === "devices",
   );
+  const ahuList = usePoll<{ ahus: Array<{ id: string }> }>("/api/ahu", 30000, tab === "devices");
+  const registeredAhuIds = ahuList.data?.ahus?.length ? ahuList.data.ahus.map((a) => a.id) : [...AHU_IDS];
 
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -842,7 +844,7 @@ export default function AdminPage() {
               <div className="mt-3 space-y-3">
                 <Field label="AHU identity">
                   <select className={inputClass} value={devAhu} onChange={(e) => setDevAhu(e.target.value)}>
-                    {AHU_IDS.map((id) => (
+                    {registeredAhuIds.map((id) => (
                       <option key={id} value={id}>
                         {id}
                       </option>

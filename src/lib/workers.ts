@@ -40,6 +40,7 @@ const g = globalThis as typeof globalThis & {
   __simOverrides?: Map<string, SimOverride>;
   __workersStarted?: boolean;
   __simRunning?: boolean;
+  __lastSimTickAt?: number;
 };
 
 const simStates: Map<string, SimState> = (g.__simStates ??= new Map());
@@ -106,8 +107,19 @@ function buildFrame(ahu: AhuRow, state: SimState, ov: SimOverride, tickSec: numb
   const fanTarget = faulted ? 0 : running ? (ahu.controlMode === "AUTO" ? 78 : 85) : 0;
   const damperTarget = faulted ? 0 : running ? (ahu.controlMode === "AUTO" ? 72 : 90) : 0;
 
-  state.fanSpeed = walk(state.fanSpeed, fanTarget, 0.35, 1.4, 0, 100);
-  state.damper = walk(state.damper, damperTarget, 0.3, 1.2, 0, 100);
+  if (faulted) {
+    state.fanSpeed = 0;
+    state.damper = 0;
+  } else if (running) {
+    // Immediate VFD spin-up above 0% on START so feedback confirms cleanly within 1 tick.
+    state.fanSpeed = Math.max(22, walk(state.fanSpeed, fanTarget, 0.48, 1.2, 15, 100));
+    state.damper = Math.max(18, walk(state.damper, damperTarget, 0.42, 1.0, 12, 100));
+  } else {
+    // Active VFD regenerative braking on STOP with zero upward noise:
+    // settles to exact 0 within 1-2 ticks and never bounces to 1% (preventing false OFFLINE).
+    state.fanSpeed = state.fanSpeed <= 26 ? 0 : Math.max(0, state.fanSpeed * 0.25 - 8);
+    state.damper = state.damper <= 26 ? 0 : Math.max(0, state.damper * 0.25 - 8);
+  }
 
   const coolingTarget = running ? ahu.setpoint - 2.2 : state.roomTemp;
   state.coilTemp = walk(state.coilTemp, running ? 7.5 : 16, 0.25, 0.5, 2, 30);
@@ -123,9 +135,9 @@ function buildFrame(ahu: AhuRow, state: SimState, ov: SimOverride, tickSec: numb
   state.filterDp = clamp(state.filterDp + fouling + noise(0.6), 10, 900);
 
   const loadFactor = state.fanSpeed / 100;
-  const currentTarget = ov.currentOverload ? 34 : faulted ? 0 : 2.4 + loadFactor * 13.5;
+  const currentTarget = ov.currentOverload ? 34 : faulted ? 0 : running ? 2.4 + loadFactor * 13.5 : 0.35;
   // NOTE: never emit the 1 A / 220 V placeholder sentinels (NFR-06.5)
-  let current = walk(state.current, currentTarget, 0.3, 0.25, 0, 400);
+  let current = running || ov.currentOverload ? walk(state.current, currentTarget, 0.3, 0.25, 0, 400) : currentTarget;
   if (Math.abs(current - 1) < 0.02) current = 1.05;
   state.current = Number(current.toFixed(2));
 
@@ -136,7 +148,7 @@ function buildFrame(ahu: AhuRow, state: SimState, ov: SimOverride, tickSec: numb
   if (running) state.runHours += tickSec / 3600;
 
   const heaterTarget = ahu.hasHeater && running && state.supplyTemp < ahu.setpoint - 1.5 ? 55 : 0;
-  state.heaterOutput = walk(state.heaterOutput, heaterTarget, 0.3, 2, 0, 100);
+  state.heaterOutput = heaterTarget === 0 ? 0 : walk(state.heaterOutput, heaterTarget, 0.3, 2, 0, 100);
 
   return state;
 }
@@ -176,17 +188,20 @@ async function simulateAhu(ahu: AhuRow, device: DeviceRow, tickSec: number) {
   }
 
   // small chance of a dropped parameter -> NULL / UNAVAILABLE demonstration (NFR-06.2)
+  // never drop fanSpeed so runState/fanSpeed feedback never spuriously contradicts
   if (Math.random() < 0.06) {
-    const keys = Object.keys(parameters);
+    const keys = Object.keys(parameters).filter((k) => k !== "fanSpeed");
     if (keys.length > 4) delete parameters[keys[Math.floor(Math.random() * keys.length)]];
   }
+
+  const roundedFan = Math.round(state.fanSpeed);
 
   await ingestTelemetry(device.token, {
     ahuId: ahu.id,
     messageId: randomId(),
     timestamp: new Date().toISOString(),
     parameters,
-    runState: ov.forcedFault ? "STOP" : ahu.desiredRunState === "RUN" && state.fanSpeed > 2 ? "RUN" : "STOP",
+    runState: ov.forcedFault ? "STOP" : roundedFan > 0 ? "RUN" : "STOP",
     faultCode: ov.forcedFault,
     setpoint: ahu.setpoint,
     controlMode: ahu.controlMode,
@@ -196,6 +211,7 @@ async function simulateAhu(ahu: AhuRow, device: DeviceRow, tickSec: number) {
 export async function simulationTick() {
   if (g.__simRunning) return;
   g.__simRunning = true;
+  g.__lastSimTickAt = Date.now();
   const tickSec = 5;
   try {
     const allAhus = await db.select().from(ahus);
@@ -304,6 +320,14 @@ export function startWorkers() {
   console.log(
     `[AHU] workers started (simulation ${process.env.SIMULATION_ENABLED === "false" ? "disabled" : `every ${simInterval} ms`}, monitor every ${monitorInterval} ms)`,
   );
+}
+
+export async function maybePulseWorkers(minIntervalMs = 4800) {
+  if (process.env.SIMULATION_ENABLED === "false") return;
+  const last = g.__lastSimTickAt ?? 0;
+  if (!g.__simRunning && Date.now() - last >= minIntervalMs) {
+    await simulationTick();
+  }
 }
 
 export { PARAM_MAP };

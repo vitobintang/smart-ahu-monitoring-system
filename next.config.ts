@@ -4,6 +4,9 @@ const enforceHttps = process.env.ENFORCE_HTTPS_REDIRECT === "true";
 
 const nextConfig: NextConfig = {
   images: { unoptimized: true },
+  experimental: {
+    optimizePackageImports: ["lucide-react", "recharts", "three"],
+  },
   async headers() {
     return [
       {
@@ -11,7 +14,7 @@ const nextConfig: NextConfig = {
         headers: [
           {
             key: "Cache-Control",
-            value: "public, max-age=86400, stale-while-revalidate=604800",
+            value: "public, max-age=604800, stale-while-revalidate=2592000",
           },
         ],
       },

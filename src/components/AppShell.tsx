@@ -319,14 +319,29 @@ export default function AppShell({
         )}
       >
         <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-[46%]">
-          <Image src="/ahu/plant-room.jpg" alt="" fill sizes="280px" className="object-cover object-center" />
+          <Image
+            src="/ahu/plant-room.jpg"
+            alt=""
+            fill
+            sizes="280px"
+            loading="eager"
+            fetchPriority="high"
+            className="object-cover object-center"
+          />
           <div className="absolute inset-0 bg-gradient-to-b from-[#0b1f3f] via-[#0b1f3f]/45 to-[#081428]/88" />
         </div>
 
         <div className="flex items-center justify-between gap-2 px-5 pb-5 pt-5">
           <div className="flex min-w-0 items-center gap-3">
             <span className="relative h-10 w-10 flex-none overflow-hidden rounded-xl shadow-[0_10px_24px_-8px_rgba(59,130,246,0.95)] ring-1 ring-white/25 sm:h-11 sm:w-11">
-              <Image src="/ahu/logo.png" alt="Smart Monitoring AHU logo" fill sizes="44px" className="object-cover" />
+              <Image
+                src="/ahu/logo.png"
+                alt="Smart Monitoring AHU logo"
+                fill
+                sizes="44px"
+                loading="eager"
+                className="object-cover"
+              />
             </span>
             <span className="min-w-0 leading-tight">
               <span className="block truncate text-[14.5px] font-bold tracking-[-0.01em] text-white sm:text-[15px]">
@@ -409,6 +424,8 @@ export default function AppShell({
             fill
             sizes="100vw"
             className="object-cover object-[center_46%] saturate-[1.1] contrast-[1.02]"
+            loading="eager"
+            fetchPriority="high"
             priority
           />
           <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#eef3fa]/32 to-[#eef3fa]" />
@@ -435,7 +452,7 @@ export default function AppShell({
 
             <Link href="/dashboard" className="flex min-w-0 items-center gap-2 md:hidden">
               <span className="relative h-8 w-8 flex-none overflow-hidden rounded-lg ring-1 ring-slate-200">
-                <Image src="/ahu/logo.png" alt="" fill sizes="32px" className="object-cover" />
+                <Image src="/ahu/logo.png" alt="" fill sizes="32px" loading="eager" className="object-cover" />
               </span>
               <span className="truncate text-[13.5px] font-bold tracking-[-0.01em] text-[#12294d]">
                 Smart AHU

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Save, Settings2, ShieldAlert } from "lucide-react";
 import { api, usePoll } from "@/lib/client";
 import { AHU_IDS, PARAMETERS, type ParamKey } from "@/lib/domain";
@@ -35,10 +36,18 @@ interface Detail {
 }
 
 export default function ConfigPage() {
-  const [selected, setSelected] = useState<string>(AHU_IDS[0]);
+  const searchParams = useSearchParams();
+  const requestedAhu = searchParams?.get("ahu")?.trim() || null;
+  const [selected, setSelected] = useState<string>(requestedAhu || AHU_IDS[0]);
+  const { data: ahuListData } = usePoll<{ ahus: Array<{ id: string; name: string }> }>("/api/ahu", 30000);
+  const unitIds = ahuListData?.ahus?.length ? ahuListData.ahus.map((a) => a.id) : [...AHU_IDS];
   const { data, error, loading, reload } = usePoll<Detail>(`/api/ahu/${selected}`, 30000);
   const { data: session } = usePoll<{ user: { role: string } | null }>("/api/auth/session", 60000);
   const canEdit = session?.user ? ["Admin", "Engineering"].includes(session.user.role) : false;
+
+  useEffect(() => {
+    if (requestedAhu) setSelected(requestedAhu);
+  }, [requestedAhu]);
 
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
@@ -135,7 +144,7 @@ export default function ConfigPage() {
             </Link>
           </div>
           <div className="flex gap-1.5 overflow-x-auto pb-1 lg:block lg:space-y-1 lg:overflow-visible lg:pb-0">
-            {AHU_IDS.map((id) => (
+            {unitIds.map((id) => (
               <div
                 key={id}
                 className={cx(

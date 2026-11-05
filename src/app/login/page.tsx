@@ -132,6 +132,8 @@ export default function LoginPage() {
           alt=""
           fill
           priority
+          loading="eager"
+          fetchPriority="high"
           sizes="100vw"
           className="object-cover object-[center_44%] saturate-[1.16] contrast-[1.04]"
         />
@@ -146,13 +148,21 @@ export default function LoginPage() {
         {/* Mobile & Tablet compact brand header */}
         <div className="relative overflow-hidden px-5 py-4 lg:hidden" style={{ backgroundColor: "#0b1f3f" }}>
           <div aria-hidden className="pointer-events-none absolute inset-0 opacity-35">
-            <Image src="/ahu/plant-room.jpg" alt="" fill sizes="100vw" className="object-cover object-center" />
+            <Image
+              src="/ahu/plant-room.jpg"
+              alt=""
+              fill
+              sizes="100vw"
+              loading="eager"
+              fetchPriority="high"
+              className="object-cover object-center"
+            />
             <div className="absolute inset-0 bg-gradient-to-r from-[#0b1f3f] via-[#0b1f3f]/85 to-[#081428]/90" />
           </div>
           <div className="relative flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
               <span className="relative h-10 w-10 flex-none overflow-hidden rounded-xl shadow-[0_8px_20px_-6px_rgba(47,123,246,0.95)] ring-1 ring-white/30">
-                <Image src="/ahu/logo.png" alt="Smart Monitoring AHU logo" fill sizes="40px" className="object-cover" />
+                <Image src="/ahu/logo.png" alt="Smart Monitoring AHU logo" fill sizes="40px" loading="eager" className="object-cover" />
               </span>
               <div className="min-w-0">
                 <h1 className="truncate text-[15px] font-bold tracking-[-0.01em] text-white">Smart Monitoring AHU</h1>
@@ -163,7 +173,7 @@ export default function LoginPage() {
             </div>
             <span className="hidden items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-semibold text-white backdrop-blur-sm sm:inline-flex">
               <span className="h-2 w-2 rounded-full bg-[#22c55e] shadow-[0_0_8px_rgba(34,197,94,0.9)]" />
-              7 AHU Fleet
+              Live AHU Fleet
             </span>
           </div>
         </div>
@@ -171,7 +181,15 @@ export default function LoginPage() {
         {/* Desktop left showcase column */}
         <div className="relative hidden flex-col justify-between overflow-hidden bg-[#0b1f3f] p-8 lg:flex xl:p-9">
           <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-[58%]">
-            <Image src="/ahu/plant-room.jpg" alt="" fill sizes="520px" className="object-cover object-center opacity-55" />
+            <Image
+              src="/ahu/plant-room.jpg"
+              alt=""
+              fill
+              sizes="520px"
+              loading="eager"
+              fetchPriority="high"
+              className="object-cover object-center opacity-55"
+            />
             <div className="absolute inset-0 bg-gradient-to-b from-[#0b1f3f] via-[#0b1f3f]/72 to-[#071226]/92" />
           </div>
           <div
@@ -183,7 +201,7 @@ export default function LoginPage() {
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3.5">
                 <span className="relative h-12 w-12 overflow-hidden rounded-2xl shadow-[0_10px_26px_-6px_rgba(47,123,246,0.95)] ring-1 ring-white/30">
-                  <Image src="/ahu/logo.png" alt="Smart Monitoring AHU logo" fill sizes="48px" className="object-cover" />
+                  <Image src="/ahu/logo.png" alt="Smart Monitoring AHU logo" fill sizes="48px" loading="eager" className="object-cover" />
                 </span>
                 <div>
                   <h1 className="text-[18px] font-bold tracking-[-0.015em] text-white">Smart Monitoring AHU</h1>

@@ -1,0 +1,233 @@
+import { asc, eq } from "drizzle-orm";
+import { db } from "@/db";
+import { ahus, devices, sensorThresholds } from "@/db/schema";
+import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
+import { PARAMETERS, PARAM_KEYS, SETPOINT_MAX, SETPOINT_MIN, type ParamKey } from "@/lib/domain";
+import {
+  normalizeRotation,
+  resolveAhuPlacement,
+  validatePlatformPlacement,
+} from "@/lib/facility-layout";
+import { randomHex, randomId } from "@/lib/ids";
+import { simulationTick } from "@/lib/workers";
+
+export const dynamic = "force-dynamic";
+
+const AHU_ID_RE = /^[A-Z0-9][A-Z0-9_-]{2,23}$/;
+
+/** Lists all registered AHU units ordered by ID, including resolved 3D floor coordinates. */
+export async function GET() {
+  try {
+    await requireAuth("view");
+    const rows = await db.select().from(ahus).orderBy(asc(ahus.id));
+    const resolved: Array<{ id: string; x: number; z: number }> = [];
+    const units = rows.map((row) => {
+      const p = resolveAhuPlacement(row, resolved);
+      resolved.push({ id: row.id, x: p.x, z: p.z });
+      return {
+        ...row,
+        mapX: p.x,
+        mapZ: p.z,
+        mapRotation: p.rotation,
+        mapZone: p.zone,
+        indoor: p.indoor,
+      };
+    });
+    return Response.json({ ahus: units });
+  } catch (err) {
+    return jsonError(err);
+  }
+}
+
+/** Creates a new AHU unit and places its 3D model onto the facility floor platform. */
+export async function POST(req: Request) {
+  try {
+    const actor = await requireAuth("configure", { mutating: true });
+    const ip = await getClientIp();
+    const body = (await req.json()) as {
+      id?: string;
+      name?: string;
+      location?: string;
+      setpoint?: number;
+      commTimeoutSec?: number;
+      hasHeater?: boolean;
+      installedSensors?: string[];
+      desiredRunState?: "RUN" | "STOP";
+      provisionSimulator?: boolean;
+      mapX?: number;
+      mapZ?: number;
+      mapRotation?: number;
+    };
+
+    const rawId = typeof body.id === "string" ? body.id.trim().toUpperCase() : "";
+    if (!AHU_ID_RE.test(rawId)) {
+      return Response.json(
+        { error: "AHU ID must be 3–24 uppercase characters (e.g. AHU-08)." },
+        { status: 400 },
+      );
+    }
+
+    const existingRows = await db.select().from(ahus).orderBy(asc(ahus.id));
+    if (existingRows.some((r) => r.id.toUpperCase() === rawId)) {
+      return Response.json(
+        { error: `AHU ${rawId} already exists.` },
+        { status: 409 },
+      );
+    }
+
+    if (typeof body.mapX !== "number" || !Number.isFinite(body.mapX) || typeof body.mapZ !== "number" || !Number.isFinite(body.mapZ)) {
+      return Response.json(
+        { error: "Please select a floor platform position in the 3D facility room." },
+        { status: 400 },
+      );
+    }
+
+    const existingPlacements: Array<{ id: string; x: number; z: number }> = [];
+    for (const r of existingRows) {
+      const p = resolveAhuPlacement(r, existingPlacements);
+      existingPlacements.push({ id: r.id, x: p.x, z: p.z });
+    }
+
+    const placement = validatePlatformPlacement(body.mapX, body.mapZ, existingPlacements);
+    if (!placement.valid || !placement.zone) {
+      return Response.json(
+        { error: placement.reason ?? "Invalid 3D floor platform position." },
+        { status: 400 },
+      );
+    }
+
+    const rotation = normalizeRotation(typeof body.mapRotation === "number" ? body.mapRotation : 0);
+    const name =
+      typeof body.name === "string" && body.name.trim()
+        ? body.name.trim().slice(0, 120)
+        : `${rawId} Air Handling Unit`;
+    const location =
+      typeof body.location === "string" && body.location.trim()
+        ? body.location.trim().slice(0, 160)
+        : placement.zone.label;
+
+    const setpoint =
+      typeof body.setpoint === "number" && Number.isFinite(body.setpoint)
+        ? Math.min(SETPOINT_MAX, Math.max(SETPOINT_MIN, Number(body.setpoint.toFixed(1))))
+        : 22.0;
+    const commTimeoutSec =
+      typeof body.commTimeoutSec === "number" && Number.isFinite(body.commTimeoutSec)
+        ? Math.min(3600, Math.max(5, Math.round(body.commTimeoutSec)))
+        : 30;
+    const hasHeater = Boolean(body.hasHeater);
+    const desiredRunState = body.desiredRunState === "STOP" ? "STOP" : "RUN";
+    const provisionSimulator = body.provisionSimulator !== false;
+
+    let sensors: ParamKey[] = Array.isArray(body.installedSensors)
+      ? body.installedSensors.filter((s): s is ParamKey => PARAM_KEYS.includes(s as ParamKey))
+      : PARAMETERS.map((p) => p.key).filter((k) => hasHeater || k !== "heaterOutput");
+    if (!hasHeater) sensors = sensors.filter((k) => k !== "heaterOutput");
+    if (sensors.length === 0) {
+      sensors = PARAMETERS.map((p) => p.key).filter((k) => hasHeater || k !== "heaterOutput");
+    }
+
+    await db.transaction(async (tx) => {
+      await tx.insert(ahus).values({
+        id: rawId,
+        name,
+        location,
+        commTimeoutSec,
+        hasHeater,
+        installedSensors: sensors,
+        currentStatus: "OFFLINE",
+        controlMode: "AUTO",
+        desiredRunState,
+        setpoint,
+        physicalControlEnabled: false,
+        mapX: placement.snappedX,
+        mapZ: placement.snappedZ,
+        mapRotation: rotation,
+        mapZone: placement.zone!.label,
+      });
+
+      await tx.insert(sensorThresholds).values(
+        PARAMETERS.map((p) => {
+          const isInstalled = sensors.includes(p.key);
+          return {
+            id: `${rawId}:${p.key}`,
+            ahuId: rawId,
+            parameter: p.key,
+            enabled: isInstalled && (p.defaultLow !== null || p.defaultHigh !== null),
+            lowLimit: p.defaultLow,
+            highLimit: p.defaultHigh,
+            delaySec: p.key === "current" ? 10 : 5,
+            priority: p.defaultPriority,
+            validMin: p.validMin,
+            validMax: p.validMax,
+            unit: p.unit,
+            label: p.label,
+            trendEnabled: isInstalled && p.trendByDefault,
+          };
+        }),
+      );
+
+      if (provisionSimulator) {
+        await tx.insert(devices).values({
+          id: randomId(),
+          ahuId: rawId,
+          label: `${rawId} Simulation Controller`,
+          token: `sim_${rawId.toLowerCase().replace(/[^a-z0-9]/g, "")}_${randomHex(8)}`,
+          sourceType: "SIMULATION",
+          enabled: true,
+        });
+      }
+
+      await writeAudit(
+        {
+          userId: actor.user.id,
+          userEmail: actor.user.email,
+          action: "AHU_CREATED",
+          entity: `ahu:${rawId}`,
+          ipAddress: ip,
+          details: {
+            id: rawId,
+            name,
+            location,
+            hasHeater,
+            setpoint,
+            provisionSimulator,
+            mapX: placement.snappedX,
+            mapZ: placement.snappedZ,
+            mapRotation: rotation,
+            mapZone: placement.zone!.label,
+          },
+        },
+        tx,
+      );
+    });
+
+    // Clear short overview cache so the newly added AHU appears immediately
+    const g = globalThis as typeof globalThis & {
+      __ahuOverviewCache?: Map<string, unknown>;
+    };
+    g.__ahuOverviewCache?.clear();
+
+    if (provisionSimulator && process.env.SIMULATION_ENABLED !== "false") {
+      await simulationTick();
+      g.__ahuOverviewCache?.clear();
+    }
+
+    return Response.json(
+      {
+        ok: true,
+        ahu: {
+          id: rawId,
+          name,
+          location,
+          mapX: placement.snappedX,
+          mapZ: placement.snappedZ,
+          mapRotation: rotation,
+          mapZone: placement.zone.label,
+        },
+      },
+      { status: 201 },
+    );
+  } catch (err) {
+    return jsonError(err);
+  }
+}

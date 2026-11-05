@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import Image from "next/image";
 import { Boxes, ImageIcon, Info, X } from "lucide-react";
 
@@ -188,11 +188,31 @@ export default function AhuSchematic({
   });
 
   const stageByKey = useMemo(() => new Map(stages.map((s) => [s.key as string, s])), [stages]);
-  const fanPct = fan ?? 0;
-  const flowDur = Math.max(0.7, 3.4 - (fanPct / 100) * 2.6);
-  const spinDur = fanPct > 0 ? Math.max(0.5, 2.4 - (fanPct / 100) * 1.9) : 0;
-  const damperOpen = damper === null ? 0 : damper;
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // Keep effective fan speed steady while status === "RUN" even if a single telemetry sample omits fanSpeed
+  const effectiveFanPct = running ? (fan !== null && fan > 0 ? fan : 75) : 0;
+  const playbackRate = running ? Math.max(0.55, 0.55 + (effectiveFanPct / 100) * 1.45) : 1;
+  const damperOpen = damper === null ? (running ? 70 : 0) : damper;
   const heaterActive = (heater ?? 0) > 3;
+
+  // Adjust animation speed via Web Animations playbackRate instead of mutating CSS animationDuration,
+  // so 5-second telemetry polls never reset or snap the keyframe phase.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof el.getAnimations !== "function") return;
+    for (const anim of el.getAnimations({ subtree: true })) {
+      const cssAnim = anim as Animation & { animationName?: string };
+      if (cssAnim.animationName === "flowmove" || cssAnim.animationName === "spin") {
+        if (Math.abs(anim.playbackRate - playbackRate) > 0.04) {
+          if (typeof anim.updatePlaybackRate === "function") {
+            anim.updatePlaybackRate(playbackRate);
+          } else {
+            anim.playbackRate = playbackRate;
+          }
+        }
+      }
+    }
+  }, [playbackRate, model, running]);
 
   const qualityOf = (s: StageDef): DataQuality =>
     classifyQuality({
@@ -208,7 +228,7 @@ export default function AhuSchematic({
   const selTh = selected ? thresholdMap[selected] : null;
 
   return (
-    <div className="rounded-xl border border-ink-700/70 bg-ink-950/40 p-3">
+    <div ref={rootRef} className="rounded-xl border border-ink-700/70 bg-ink-950/40 p-3">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="eyebrow">{ahuId} · airflow path · FR-07</p>
@@ -244,6 +264,8 @@ export default function AhuSchematic({
                 offline && "brightness-[0.62] saturate-[0.35]",
               )}
               sizes="(max-width: 1024px) 100vw, 940px"
+              loading="eager"
+              fetchPriority="high"
               priority
               draggable={false}
             />
@@ -313,12 +335,15 @@ export default function AhuSchematic({
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   className="flow-line"
-                  style={{
-                    strokeDasharray: "18 14",
-                    animationDuration: `${flowDur.toFixed(2)}s`,
-                    opacity: running ? 0.55 + 0.45 * (damperOpen / 100) : undefined,
-                    filter: "drop-shadow(0 0 6px rgba(103,232,249,0.55))",
-                  }}
+                  style={
+                    {
+                      "--flow-offset": "-256",
+                      strokeDasharray: "18 14",
+                      animationDuration: "3.2s",
+                      opacity: running ? 0.55 + 0.45 * (damperOpen / 100) : undefined,
+                      filter: "drop-shadow(0 0 6px rgba(103,232,249,0.55))",
+                    } as CSSProperties
+                  }
                 />
                 {coilState !== "missing" ? (
                   <path
@@ -329,12 +354,15 @@ export default function AhuSchematic({
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     className="flow-line"
-                    style={{
-                      strokeDasharray: "9 11",
-                      animationDuration: `${(flowDur * 2.4).toFixed(2)}s`,
-                      opacity: running ? 0.85 : 0.32,
-                      filter: "drop-shadow(0 0 4px rgba(56,189,248,0.45))",
-                    }}
+                    style={
+                      {
+                        "--flow-offset": "-160",
+                        strokeDasharray: "9 11",
+                        animationDuration: "5.6s",
+                        opacity: running ? 0.85 : 0.32,
+                        filter: "drop-shadow(0 0 4px rgba(56,189,248,0.45))",
+                      } as CSSProperties
+                    }
                   />
                 ) : null}
                 <path
@@ -344,7 +372,13 @@ export default function AhuSchematic({
                   strokeWidth={4}
                   strokeLinecap="round"
                   className="flow-line"
-                  style={{ strokeDasharray: "14 10", animationDuration: `${(flowDur * 0.6).toFixed(2)}s` }}
+                  style={
+                    {
+                      "--flow-offset": "-192",
+                      strokeDasharray: "14 10",
+                      animationDuration: "2.2s",
+                    } as CSSProperties
+                  }
                 />
                 <path d="M1580 434 L1599 450 L1580 466 Z" fill="#67e8f9" opacity={running ? 0.95 : 0.25} />
               </g>
@@ -354,7 +388,7 @@ export default function AhuSchematic({
                   <g
                     style={{
                       transformOrigin: "1405px 450px",
-                      animation: running && spinDur ? `spin ${spinDur}s linear infinite` : undefined,
+                      animation: running ? "spin 1.15s linear infinite" : undefined,
                       opacity: running ? 0.97 : 0.8,
                     }}
                   >
@@ -466,7 +500,9 @@ export default function AhuSchematic({
             </div>
             <div className="pointer-events-none absolute bottom-3 left-3 rounded-md border border-white/15 bg-[#0b1f3f]/88 px-2 py-1 backdrop-blur-md">
               <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-[#e2e8f0]">
-                {running ? `airflow → · fan ${fanPct.toFixed(0)} % · ${(1 / Math.max(spinDur, 0.01)).toFixed(1)} rev/s` : "airflow stopped"}
+                {running
+                  ? `airflow → · fan ${effectiveFanPct.toFixed(0)} % · ${(playbackRate / 1.15).toFixed(1)} rev/s`
+                  : "airflow stopped"}
               </p>
             </div>
           </div>
@@ -564,8 +600,6 @@ export default function AhuSchematic({
           hasHeater={hasHeater}
           damper={damper}
           heater={heater}
-          fanSpeed={fan}
-          flowDur={flowDur}
           selected={selected}
           onSelect={setSelected}
         />
@@ -586,25 +620,20 @@ function SchematicBranch({
   hasHeater,
   damper,
   heater,
-  fanSpeed,
   selected,
   onSelect,
-  flowDur,
 }: {
   stages: StageDef[];
   running: boolean;
   hasHeater: boolean;
   damper: number | null;
   heater: number | null;
-  fanSpeed: number | null;
   selected: string | null;
   onSelect: (k: string | null) => void;
-  flowDur: number;
 }) {
   const byKey = new Map(stages.map((s) => [s.key as string, s]));
   const open = Math.max(6, Math.min(94, damper ?? 0));
   const heaterOn = (heater ?? 0) > 3;
-  const spinDur = (fanSpeed ?? 0) > 0 ? Math.max(0.5, 2.4 - ((fanSpeed ?? 0) / 100) * 1.9) : 0;
 
   const AREAS: Record<string, { x: number; y: number; w: number; h: number }> = {
     damperPosition: { x: 40, y: 52, w: 154, h: 208 },
@@ -742,7 +771,7 @@ function SchematicBranch({
             <g
               style={{
                 transformOrigin: "866px 152px",
-                animation: running && spinDur ? `spin ${spinDur}s linear infinite` : undefined,
+                animation: running ? "spin 1.15s linear infinite" : undefined,
               }}
             >
               {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
@@ -765,11 +794,38 @@ function SchematicBranch({
             ))}
           </g>
           <g className={cx(!running && "flow-line-paused")} style={{ pointerEvents: "none" }}>
-            <path d="M 30 156 L 742 156" fill="none" stroke="#38bdf8" strokeWidth={3} className="flow-line" style={{ strokeDasharray: "14 12", animationDuration: `${flowDur}s`, opacity: running ? 0.85 : undefined }} />
+            <path
+              d="M 30 156 L 742 156"
+              fill="none"
+              stroke="#38bdf8"
+              strokeWidth={3}
+              className="flow-line"
+              style={
+                {
+                  "--flow-offset": "-208",
+                  strokeDasharray: "14 12",
+                  animationDuration: "2.8s",
+                  opacity: running ? 0.85 : undefined,
+                } as CSSProperties
+              }
+            />
             {[198, 358, 578, 738].map((x) => (
               <path key={x} d={`M ${x - 7} 148 L ${x + 5} 156 L ${x - 7} 164 Z`} fill="#38bdf8" opacity={running ? 0.9 : 0.3} />
             ))}
-            <path d="M 986 152 L 1024 152" fill="none" stroke="#38bdf8" strokeWidth={3.4} className="flow-line" style={{ strokeDasharray: "12 10", animationDuration: `${(flowDur * 0.6).toFixed(2)}s` }} />
+            <path
+              d="M 986 152 L 1024 152"
+              fill="none"
+              stroke="#38bdf8"
+              strokeWidth={3.4}
+              className="flow-line"
+              style={
+                {
+                  "--flow-offset": "-176",
+                  strokeDasharray: "12 10",
+                  animationDuration: "2.0s",
+                } as CSSProperties
+              }
+            />
             <path d="M 1016 144 L 1032 152 L 1016 160 Z" fill="#38bdf8" opacity={running ? 0.95 : 0.3} />
           </g>
           {stages.map((s) => {
