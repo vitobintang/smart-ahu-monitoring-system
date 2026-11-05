@@ -343,7 +343,7 @@ export default function AppShell({
             type="button"
             onClick={() => setMobileOpen(false)}
             aria-label="Close navigation menu"
-            className="grid h-9 w-9 flex-none place-items-center rounded-xl border border-white/15 bg-white/8 text-slate-200 transition hover:bg-white/15 lg:hidden"
+            className="grid h-9 w-9 flex-none place-items-center rounded-xl border border-white/15 bg-white/10 text-white transition hover:bg-white/20 lg:hidden"
           >
             <X size={17} />
           </button>
@@ -644,10 +644,10 @@ export default function AppShell({
           <SessionUserContext.Provider value={currentUser}>{children}</SessionUserContext.Provider>
         </main>
 
-        <footer className="no-print relative flex flex-col items-start justify-between gap-2 px-4 pb-5 pt-2 text-[11px] text-slate-400 sm:flex-row sm:items-center sm:px-6">
+        <footer className="no-print relative flex flex-col items-start justify-between gap-2 px-4 pb-5 pt-2 text-[11px] text-slate-500 sm:flex-row sm:items-center sm:px-6">
           <span>© 2026 Smart Monitoring AHU. All rights reserved.</span>
           <span className="flex flex-wrap items-center gap-1.5">
-            Safer Air <span className="text-slate-300">|</span> Smarter Buildings <span className="text-slate-300">|</span> A Cleaner Tomorrow
+            Safer Air <span className="text-slate-400">|</span> Smarter Buildings <span className="text-slate-400">|</span> A Cleaner Tomorrow
             <Image src="/ahu/leaf.png" alt="" width={26} height={26} className="h-[18px] w-[18px] object-contain mix-blend-multiply" />
           </span>
         </footer>

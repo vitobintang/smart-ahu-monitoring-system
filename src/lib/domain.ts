@@ -85,12 +85,12 @@ export const QUALITY_LABEL: Record<DataQuality, string> = {
 };
 
 export const QUALITY_STYLE: Record<DataQuality, string> = {
-  OK: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
-  UNINSTALLED: "bg-slate-500/15 text-slate-400 ring-slate-500/30",
-  NULL_UNAVAILABLE: "bg-sky-500/15 text-sky-300 ring-sky-500/30",
-  STALE: "bg-amber-500/15 text-amber-300 ring-amber-500/30",
-  SIMULATED: "bg-violet-500/15 text-violet-300 ring-violet-500/30",
-  ESTIMATED_FALLBACK: "bg-fuchsia-500/15 text-fuchsia-300 ring-fuchsia-500/30",
+  OK: "bg-emerald-50 text-emerald-700 ring-emerald-300",
+  UNINSTALLED: "bg-slate-100 text-slate-600 ring-slate-300",
+  NULL_UNAVAILABLE: "bg-sky-50 text-sky-700 ring-sky-300",
+  STALE: "bg-amber-50 text-amber-800 ring-amber-300",
+  SIMULATED: "bg-violet-50 text-violet-700 ring-violet-300",
+  ESTIMATED_FALLBACK: "bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-300",
 };
 
 export const FALLBACK_PARAMS: ParamKey[] = ["current", "voltage"];
@@ -188,45 +188,45 @@ export function commandFeedbackMatches(
 
 export const STATUS_STYLE: Record<AhuStatus, { badge: string; dot: string; label: string }> = {
   RUN: {
-    badge: "bg-emerald-500/15 text-emerald-300 ring-emerald-400/40",
-    dot: "bg-emerald-400 animate-pulse shadow-[0_0_10px_2px_rgba(16,185,129,0.7)]",
+    badge: "bg-emerald-50 text-emerald-700 ring-emerald-300",
+    dot: "bg-emerald-500 animate-pulse shadow-[0_0_10px_2px_rgba(16,185,129,0.7)]",
     label: "RUN",
   },
   STOP: {
-    badge: "bg-slate-500/15 text-slate-300 ring-slate-400/40",
-    dot: "bg-slate-400",
+    badge: "bg-slate-100 text-slate-700 ring-slate-300",
+    dot: "bg-slate-500",
     label: "STOP",
   },
   FAULT: {
-    badge: "bg-red-500/15 text-red-300 ring-red-400/50",
+    badge: "bg-red-50 text-red-700 ring-red-300",
     dot: "bg-red-500 animate-ping-slow shadow-[0_0_10px_2px_rgba(239,68,68,0.8)]",
     label: "FAULT",
   },
   OFFLINE: {
-    badge: "bg-rose-900/40 text-rose-300 ring-rose-500/40",
-    dot: "bg-rose-500/70",
+    badge: "bg-rose-50 text-rose-700 ring-rose-300",
+    dot: "bg-rose-500",
     label: "OFFLINE",
   },
 };
 
 export const PRIORITY_STYLE: Record<string, string> = {
-  CRITICAL: "bg-red-500/20 text-red-300 ring-red-400/40",
-  HIGH: "bg-orange-500/20 text-orange-300 ring-orange-400/40",
-  MEDIUM: "bg-amber-500/20 text-amber-300 ring-amber-400/40",
-  LOW: "bg-sky-500/20 text-sky-300 ring-sky-400/40",
+  CRITICAL: "bg-red-50 text-red-700 ring-red-300",
+  HIGH: "bg-orange-50 text-orange-700 ring-orange-300",
+  MEDIUM: "bg-amber-50 text-amber-800 ring-amber-300",
+  LOW: "bg-sky-50 text-sky-700 ring-sky-300",
 };
 
 export const COMMAND_STATUS_STYLE: Record<string, string> = {
-  REQUESTED: "bg-sky-500/20 text-sky-300 ring-sky-400/40",
-  ACCEPTED: "bg-amber-500/20 text-amber-300 ring-amber-400/40",
-  SUCCEEDED: "bg-emerald-500/20 text-emerald-300 ring-emerald-400/40",
-  FAILED: "bg-red-500/20 text-red-300 ring-red-400/40",
-  EXPIRED: "bg-slate-500/20 text-slate-300 ring-slate-400/40",
+  REQUESTED: "bg-sky-50 text-sky-700 ring-sky-300",
+  ACCEPTED: "bg-amber-50 text-amber-800 ring-amber-300",
+  SUCCEEDED: "bg-emerald-50 text-emerald-700 ring-emerald-300",
+  FAILED: "bg-red-50 text-red-700 ring-red-300",
+  EXPIRED: "bg-slate-100 text-slate-700 ring-slate-300",
 };
 
 export const SOURCE_STYLE: Record<DataSource, string> = {
-  PHYSICAL: "bg-cyan-500/15 text-cyan-300 ring-cyan-400/40",
-  SIMULATION: "bg-violet-500/15 text-violet-300 ring-violet-400/40",
+  PHYSICAL: "bg-cyan-50 text-cyan-800 ring-cyan-300",
+  SIMULATION: "bg-violet-50 text-violet-700 ring-violet-300",
 };
 
 /* ------------------------------------------------------------------ */

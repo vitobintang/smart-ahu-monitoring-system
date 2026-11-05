@@ -126,9 +126,7 @@ export default function AlarmsPage() {
                     {a.ahuId}
                   </Link>
                   <span className="font-mono text-[11px] text-slate-400">{a.parameter}</span>
-                  <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[9.5px] font-bold uppercase text-slate-200">
-                    {a.priority}
-                  </span>
+                  <PriorityBadge priority={a.priority} />
                 </div>
                 <span className="font-mono text-[10.5px] text-slate-500">{timeAgo(a.triggeredAt)}</span>
               </div>

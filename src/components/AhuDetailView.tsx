@@ -424,7 +424,7 @@ export default function AhuDetailView({
                       <div className="flex flex-col items-start gap-1">
                         <CommandStatusBadge status={c.status} />
                         {c.rejectionReason ? (
-                          <span className="max-w-xs text-[10px] leading-snug text-rose-300/90">
+                          <span className="max-w-xs text-[10px] leading-snug text-rose-700">
                             {c.rejectionReason}
                           </span>
                         ) : null}
@@ -518,13 +518,13 @@ function TrendCard({ analysis: a }: { analysis: Analysis }) {
               type="number"
               domain={["dataMin", "dataMax"]}
               tickFormatter={(t) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
-              stroke="#334155"
+              stroke="#64748b"
               fontSize={9}
               tickLine={false}
             />
-            <YAxis stroke="#334155" fontSize={9} tickLine={false} domain={["auto", "auto"]} />
+            <YAxis stroke="#64748b" fontSize={9} tickLine={false} domain={["auto", "auto"]} />
             <Tooltip
-              contentStyle={{ backgroundColor: "rgba(5,11,20,0.96)", border: "1px solid rgba(30,58,85,0.9)", borderRadius: 8, fontSize: 10 }}
+              contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 10, color: "#0f172a" }}
               labelFormatter={(v) => new Date(Number(v)).toLocaleTimeString("en-GB")}
             />
             {a.limit !== null ? <ReferenceLine y={a.limit} stroke="#ef4444" strokeDasharray="4 4" /> : null}

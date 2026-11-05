@@ -271,15 +271,15 @@ export default function AdminPage() {
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="flex items-center gap-2 text-[20px] font-bold tracking-tight text-slate-50 sm:text-2xl">
-            <Users size={20} className="text-cyan-300" /> Users &amp; AHU Monitoring Modules
+          <h1 className="flex items-center gap-2 text-[20px] font-bold tracking-tight text-[#12294d] sm:text-[22px]">
+            <Users size={20} className="text-[#1d6ef2]" /> Users &amp; AHU Monitoring Modules
           </h1>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-[#475569]">
             FR-20 user accounts (Email or Username + Password across all roles) · FR-21 AHU monitoring module tokens
           </p>
         </div>
 
-        <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-slate-700/80 bg-slate-900/70 p-1 sm:flex">
+        <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-[#d8e2ef] bg-white/90 p-1 shadow-xs sm:flex">
           <Btn
             size="sm"
             variant={tab === "users" ? "primary" : "ghost"}
@@ -301,7 +301,7 @@ export default function AdminPage() {
 
       <ErrorNote message={error || users.error || devices.error} />
       {notice ? (
-        <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5 text-xs text-emerald-200">
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-medium text-emerald-900">
           {notice}
         </div>
       ) : null}
@@ -310,47 +310,53 @@ export default function AdminPage() {
         <div className="grid gap-5 xl:grid-cols-[1fr_22rem]">
           {/* Registered Users list (responsive cards on < md, table on >= md) */}
           <div className="panel overflow-hidden rounded-2xl">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e4eaf3] bg-[#f8fafd] px-4 py-3">
               <div>
-                <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                <h2 className="text-xs font-bold uppercase tracking-wider text-[#12294d]">
                   Registered User Accounts ({allUsers.length})
                 </h2>
-                <p className="text-[11px] text-slate-400">
+                <p className="text-[11px] text-[#475569]">
                   All roles sign in with Email or Username + Password · no user tokens required
                 </p>
               </div>
             </div>
 
             {/* Mobile / small-tablet stacked cards */}
-            <div className="divide-y divide-slate-800/70 md:hidden">
+            <div className="divide-y divide-[#eef2f7] md:hidden">
               {allUsers.map((u) => {
                 const isSelf = u.id === currentUserId;
                 const isLastAdmin = isAdminRole(u.role) && adminCount <= 1;
                 const removeDisabled = busy || isSelf || isLastAdmin;
+                const roleLocked = busy || (isAdminRole(u.role) && (isSelf || isLastAdmin));
                 const isEditing = editingUserId === u.id;
 
                 return (
                   <div key={u.id} className="space-y-2.5 p-4">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-bold text-slate-100">
+                        <p className="truncate text-sm font-bold text-[#12294d]">
                           {u.fullName || u.username || u.email}
                           {isSelf ? (
-                            <span className="ml-1.5 rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[9.5px] uppercase text-cyan-300">
+                            <span className="ml-1.5 rounded bg-[#dbeafe] px-1.5 py-0.5 font-mono text-[9.5px] font-bold uppercase text-[#1d6ef2]">
                               you
                             </span>
                           ) : null}
                         </p>
-                        <p className="truncate font-mono text-xs text-cyan-300">
+                        <p className="truncate font-mono text-xs font-semibold text-[#1d6ef2]">
                           {u.username ? `@${u.username}` : "no username"}
                         </p>
-                        <p className="truncate font-mono text-[11px] text-slate-400">{u.email}</p>
+                        <p className="truncate font-mono text-[11px] text-[#475569]">{u.email}</p>
                       </div>
                       <select
                         aria-label={`Role for ${displayUserLabel(u)}`}
-                        className="rounded-lg border border-slate-700/80 bg-slate-900/80 px-2.5 py-1.5 font-mono text-xs uppercase text-cyan-300 outline-none focus:border-cyan-400/60 disabled:opacity-50"
+                        className={cx(
+                          "rounded-lg border px-2.5 py-1.5 font-mono text-xs font-bold uppercase outline-none transition",
+                          roleLocked
+                            ? "border-[#dbe7fb] bg-[#f4f8ff] text-[#1d6ef2]"
+                            : "border-[#cbd5e1] bg-white text-[#12294d] focus:border-[#2563eb]",
+                        )}
                         value={u.role}
-                        disabled={busy || (isAdminRole(u.role) && (isSelf || isLastAdmin))}
+                        disabled={roleLocked}
                         onChange={(e) => void changeUserRole(u, e.target.value)}
                       >
                         {ROLES.map((r) => (
@@ -362,7 +368,7 @@ export default function AdminPage() {
                     </div>
 
                     {isEditing ? (
-                      <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/50 p-3">
+                      <div className="space-y-2 rounded-xl border border-[#e4eaf3] bg-[#f8fafd] p-3">
                         <Field label="Display name">
                           <input
                             className={inputClass}
@@ -390,7 +396,7 @@ export default function AdminPage() {
                       </div>
                     ) : (
                       <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                        <span className="font-mono text-[10.5px] text-slate-500">
+                        <span className="font-mono text-[10.5px] text-[#475569]">
                           Joined {fmtDateTime(u.createdAt).split(",")[0]}
                         </span>
                         <div className="flex items-center gap-1.5">
@@ -421,7 +427,7 @@ export default function AdminPage() {
             {/* Tablet / Desktop table */}
             <div className="hidden overflow-x-auto md:block">
               <table className="w-full text-left text-xs">
-                <thead className="border-b border-slate-800/80 text-[10px] uppercase tracking-wider text-slate-400">
+                <thead className="border-b border-[#e4eaf3] bg-[#f8fafd] text-[10px] font-bold uppercase tracking-wider text-[#475569]">
                   <tr>
                     <th className="px-4 py-2.5">User</th>
                     <th className="px-4 py-2.5">Username</th>
@@ -431,16 +437,17 @@ export default function AdminPage() {
                     <th className="px-4 py-2.5 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60">
+                <tbody className="divide-y divide-[#eef2f7]">
                   {allUsers.map((u) => {
                     const isSelf = u.id === currentUserId;
                     const isLastAdmin = isAdminRole(u.role) && adminCount <= 1;
                     const removeDisabled = busy || isSelf || isLastAdmin;
+                    const roleLocked = busy || (isAdminRole(u.role) && (isSelf || isLastAdmin));
                     const isEditing = editingUserId === u.id;
 
                     return (
-                      <tr key={u.id} className="hover:bg-slate-900/40">
-                        <td className="px-4 py-2.5 font-medium text-slate-200">
+                      <tr key={u.id} className="hover:bg-[#f6f9fd]">
+                        <td className="px-4 py-2.5 font-semibold text-[#12294d]">
                           {isEditing ? (
                             <input
                               className={cx(inputClass, "py-1 text-xs")}
@@ -452,14 +459,14 @@ export default function AdminPage() {
                             <>
                               {u.fullName || "—"}
                               {isSelf ? (
-                                <span className="ml-1.5 rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[9.5px] uppercase text-cyan-300">
+                                <span className="ml-1.5 rounded bg-[#dbeafe] px-1.5 py-0.5 font-mono text-[9.5px] font-bold uppercase text-[#1d6ef2]">
                                   you
                                 </span>
                               ) : null}
                             </>
                           )}
                         </td>
-                        <td className="px-4 py-2.5 font-mono text-[11.5px] text-cyan-300">
+                        <td className="px-4 py-2.5 font-mono text-[11.5px] font-semibold text-[#1d6ef2]">
                           {isEditing ? (
                             <input
                               className={cx(inputClass, "py-1 font-mono text-xs")}
@@ -470,16 +477,21 @@ export default function AdminPage() {
                           ) : u.username ? (
                             `@${u.username}`
                           ) : (
-                            <span className="text-slate-400">—</span>
+                            <span className="text-[#64748b]">—</span>
                           )}
                         </td>
-                        <td className="px-4 py-2.5 font-mono text-[11px] text-slate-300">{u.email}</td>
+                        <td className="px-4 py-2.5 font-mono text-[11.5px] text-[#334155]">{u.email}</td>
                         <td className="px-4 py-2.5">
                           <select
                             aria-label={`Role for ${displayUserLabel(u)}`}
-                            className="rounded-md border border-slate-700/80 bg-slate-900/80 px-2 py-1 font-mono text-[11px] uppercase text-cyan-300 outline-none focus:border-cyan-400/60 disabled:opacity-50"
+                            className={cx(
+                              "rounded-md border px-2 py-1 font-mono text-[11px] font-bold uppercase outline-none transition",
+                              roleLocked
+                                ? "border-[#dbe7fb] bg-[#f4f8ff] text-[#1d6ef2]"
+                                : "border-[#cbd5e1] bg-white text-[#12294d] focus:border-[#2563eb]",
+                            )}
                             value={u.role}
-                            disabled={busy || (isAdminRole(u.role) && (isSelf || isLastAdmin))}
+                            disabled={roleLocked}
                             title={
                               isSelf && isAdminRole(u.role)
                                 ? "Cannot demote your own active Admin account"
@@ -496,7 +508,7 @@ export default function AdminPage() {
                             ))}
                           </select>
                         </td>
-                        <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">
+                        <td className="px-4 py-2.5 font-mono text-[11px] text-[#475569]">
                           {fmtDateTime(u.createdAt)}
                         </td>
                         <td className="px-4 py-2.5 text-right">
@@ -514,7 +526,7 @@ export default function AdminPage() {
                               <>
                                 <Btn
                                   size="sm"
-                                  variant="ghost"
+                                  variant="default"
                                   disabled={busy}
                                   onClick={() => startEditUser(u)}
                                   title="Edit display name or username"
@@ -556,10 +568,10 @@ export default function AdminPage() {
           {/* Right column: Create User + Reset Password */}
           <div className="space-y-4">
             <form onSubmit={createUser} className="panel h-max rounded-2xl p-4">
-              <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-100">
-                <Plus size={14} className="text-cyan-300" /> Create User Account
+              <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#12294d]">
+                <Plus size={14} className="text-[#1d6ef2]" /> Create User Account
               </h2>
-              <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+              <p className="mt-1 text-[11px] leading-relaxed text-[#475569]">
                 Creates an Email + Username + Password login for any role (Admin, Engineering, Operator, or Viewer).
               </p>
 
@@ -590,7 +602,7 @@ export default function AdminPage() {
                   hint="Substitute for email on sign-in · 3–32 chars (letters, numbers, ., _, -)"
                 >
                   <div className="relative">
-                    <AtSign size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <AtSign size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b]" />
                     <input
                       required
                       maxLength={32}
@@ -636,8 +648,8 @@ export default function AdminPage() {
 
             {allUsers.length > 0 ? (
               <form onSubmit={updateUserPassword} className="panel h-max rounded-2xl p-4">
-                <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-100">
-                  <KeyRound size={14} className="text-cyan-300" /> Reset User Password
+                <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#12294d]">
+                  <KeyRound size={14} className="text-[#1d6ef2]" /> Reset User Password
                 </h2>
                 <div className="mt-3 space-y-3">
                   <Field label="User account">
@@ -676,28 +688,30 @@ export default function AdminPage() {
         <div className="grid gap-5 xl:grid-cols-[1fr_22rem]">
           {/* Provisioned AHU Monitoring Modules */}
           <div className="panel overflow-hidden rounded-2xl">
-            <div className="border-b border-slate-800/80 px-4 py-3">
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+            <div className="border-b border-[#e4eaf3] bg-[#f8fafd] px-4 py-3">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-[#12294d]">
                 Provisioned AHU Monitoring Modules ({devices.data?.devices.length ?? 0})
               </h2>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] text-[#475569]">
                 Bearer tokens are dedicated exclusively to AHU telemetry ingestion gateways (FR-21)
               </p>
             </div>
 
             {/* Mobile stacked module cards */}
-            <div className="divide-y divide-slate-800/70 md:hidden">
+            <div className="divide-y divide-[#eef2f7] md:hidden">
               {(devices.data?.devices ?? []).map((d) => (
                 <div key={d.id} className="space-y-2 p-4">
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <p className="font-mono text-sm font-bold text-slate-100">{d.ahuId}</p>
-                      <p className="text-xs text-slate-300">{d.label}</p>
+                      <p className="font-mono text-sm font-bold text-[#12294d]">{d.ahuId}</p>
+                      <p className="text-xs font-medium text-[#334155]">{d.label}</p>
                     </div>
                     <span
                       className={cx(
-                        "rounded-md px-2 py-0.5 font-mono text-[10px] font-semibold uppercase",
-                        d.enabled ? "bg-emerald-500/15 text-emerald-400" : "bg-slate-800 text-slate-400",
+                        "rounded-md px-2 py-0.5 font-mono text-[10px] font-bold uppercase ring-1 ring-inset",
+                        d.enabled
+                          ? "bg-emerald-50 text-emerald-700 ring-emerald-300"
+                          : "bg-slate-100 text-slate-600 ring-slate-300",
                       )}
                     >
                       {d.enabled ? "enabled" : "disabled"}
@@ -706,7 +720,7 @@ export default function AdminPage() {
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                     <div className="flex items-center gap-1.5">
                       <QualityTag quality={d.sourceType === "SIMULATION" ? "SIMULATED" : "OK"} title={d.sourceType} />
-                      <span className="font-mono text-[10.5px] text-slate-400">{d.sourceType}</span>
+                      <span className="font-mono text-[10.5px] font-semibold text-[#475569]">{d.sourceType}</span>
                     </div>
                     <Btn size="sm" variant="default" onClick={() => void toggleDevice(d)} disabled={busy}>
                       {d.enabled ? "Disable" : "Enable"}
@@ -724,7 +738,7 @@ export default function AdminPage() {
             {/* Desktop / Tablet module table */}
             <div className="hidden overflow-x-auto md:block">
               <table className="w-full text-left text-xs">
-                <thead className="border-b border-slate-800/80 text-[10px] uppercase tracking-wider text-slate-400">
+                <thead className="border-b border-[#e4eaf3] bg-[#f8fafd] text-[10px] font-bold uppercase tracking-wider text-[#475569]">
                   <tr>
                     <th className="px-4 py-2.5">AHU</th>
                     <th className="px-4 py-2.5">Module Label</th>
@@ -732,27 +746,34 @@ export default function AdminPage() {
                     <th className="px-4 py-2.5">Token</th>
                     <th className="px-4 py-2.5">State</th>
                     <th className="px-4 py-2.5">Created</th>
-                    <th className="px-4 py-2.5 text-right" />
+                    <th className="px-4 py-2.5 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60">
+                <tbody className="divide-y divide-[#eef2f7]">
                   {(devices.data?.devices ?? []).map((d) => (
-                    <tr key={d.id} className="hover:bg-slate-900/40">
-                      <td className="px-4 py-2.5 font-mono font-semibold text-slate-200">{d.ahuId}</td>
-                      <td className="px-4 py-2.5 text-slate-300">{d.label}</td>
+                    <tr key={d.id} className="hover:bg-[#f6f9fd]">
+                      <td className="px-4 py-2.5 font-mono font-bold text-[#12294d]">{d.ahuId}</td>
+                      <td className="px-4 py-2.5 font-medium text-[#334155]">{d.label}</td>
                       <td className="px-4 py-2.5">
                         <QualityTag quality={d.sourceType === "SIMULATION" ? "SIMULATED" : "OK"} title={d.sourceType} />
-                        <span className="ml-1.5 font-mono text-[10px] text-slate-400">{d.sourceType}</span>
+                        <span className="ml-1.5 font-mono text-[10.5px] font-semibold text-[#475569]">{d.sourceType}</span>
                       </td>
-                      <td className="px-4 py-2.5 text-slate-500">Hidden after issuance</td>
+                      <td className="px-4 py-2.5 text-[#475569]">Hidden after issuance</td>
                       <td className="px-4 py-2.5">
-                        <span className={cx("font-mono text-[10px] uppercase", d.enabled ? "text-emerald-400" : "text-slate-500")}>
+                        <span
+                          className={cx(
+                            "rounded px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ring-1 ring-inset",
+                            d.enabled
+                              ? "bg-emerald-50 text-emerald-700 ring-emerald-300"
+                              : "bg-slate-100 text-slate-600 ring-slate-300",
+                          )}
+                        >
                           {d.enabled ? "enabled" : "disabled"}
                         </span>
                       </td>
-                      <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">{fmtDateTime(d.createdAt)}</td>
+                      <td className="px-4 py-2.5 font-mono text-[11px] text-[#475569]">{fmtDateTime(d.createdAt)}</td>
                       <td className="px-4 py-2.5 text-right">
-                        <Btn size="sm" variant="ghost" onClick={() => void toggleDevice(d)} disabled={busy}>
+                        <Btn size="sm" variant="default" onClick={() => void toggleDevice(d)} disabled={busy}>
                           {d.enabled ? "Disable" : "Enable"}
                         </Btn>
                       </td>
@@ -770,10 +791,10 @@ export default function AdminPage() {
 
           <div className="space-y-4">
             <form onSubmit={provisionDevice} className="panel h-max rounded-2xl p-4">
-              <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-100">
-                <KeyRound size={14} className="text-cyan-300" /> Register AHU Module
+              <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#12294d]">
+                <KeyRound size={14} className="text-[#1d6ef2]" /> Register AHU Module
               </h2>
-              <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+              <p className="mt-1 text-[11px] leading-relaxed text-[#475569]">
                 Issues a dedicated bearer token for an AHU monitoring module to push live telemetry.
               </p>
               <div className="mt-3 space-y-3">
@@ -811,9 +832,9 @@ export default function AdminPage() {
             </form>
 
             {issuedToken ? (
-              <div className="panel rounded-2xl border-emerald-500/40 p-4">
+              <div className="panel rounded-2xl border-emerald-200 bg-emerald-50/70 p-4">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
                     Issued AHU Module Token
                   </p>
                   <Btn size="sm" variant="default" onClick={() => void copyTokenToClipboard(issuedToken)}>
@@ -821,20 +842,21 @@ export default function AdminPage() {
                     {copiedToken ? "Copied" : "Copy"}
                   </Btn>
                 </div>
-                <code className="mt-2 block break-all rounded-lg border border-slate-800 bg-slate-950/50 p-2 font-mono text-[11px] text-emerald-300">
+                <code className="mt-2 block break-all rounded-lg border border-emerald-200 bg-white p-2 font-mono text-[11px] font-semibold text-emerald-900">
                   {issuedToken}
                 </code>
-                <p className="mt-2 text-[10.5px] leading-relaxed text-slate-400">
+                <p className="mt-2 text-[10.5px] leading-relaxed text-[#334155]">
                   Save this token now (shown once). Send as{" "}
-                  <span className="font-mono">Authorization: Bearer &lt;token&gt;</span> on{" "}
-                  <span className="font-mono">POST /api/telemetry</span>.
+                  <span className="font-mono font-semibold text-[#0f172a]">Authorization: Bearer &lt;token&gt;</span> on{" "}
+                  <span className="font-mono font-semibold text-[#0f172a]">POST /api/telemetry</span>.
                 </p>
               </div>
             ) : null}
 
-            <div className="panel rounded-2xl border-amber-500/30 p-4 text-[11px] leading-relaxed text-amber-200/90">
-              <p className="flex items-center gap-2 font-semibold uppercase tracking-wide">
-                <ShieldAlert size={13} /> Physical control {devices.data?.physicalControlUnlocked ? "unlocked" : "locked"}
+            <div className="panel rounded-2xl border-amber-200 bg-amber-50/90 p-4 text-[11px] leading-relaxed text-amber-950">
+              <p className="flex items-center gap-2 font-bold uppercase tracking-wide text-amber-900">
+                <ShieldAlert size={13} className="text-amber-600" /> Physical control{" "}
+                {devices.data?.physicalControlUnlocked ? "unlocked" : "locked"}
               </p>
               <p className="mt-1">
                 Physical commands are disabled until a commissioned physical controller integration is verified. Local

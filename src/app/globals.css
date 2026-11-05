@@ -172,10 +172,10 @@ body {
 
 .eyebrow {
   font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.09em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #8794a8;
+  color: #475569;
 }
 
 /* ================================================================== */
@@ -195,10 +195,10 @@ body {
   background: #f7fafc;
   backdrop-filter: blur(6px);
   font-size: 10px;
-  font-weight: 650;
+  font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: #64748b;
+  color: #475569;
   padding: 9px 14px;
   border-bottom: 1px solid #e4eaf3;
   white-space: nowrap;
@@ -248,19 +248,20 @@ input[type="range"]::-moz-range-thumb {
 input[type="range"]:disabled { opacity: 0.4; cursor: not-allowed; }
 input[type="checkbox"] { cursor: pointer; }
 
-/* Light-theme remap */
-.text-slate-50, .text-slate-100 { color: #0b1526; }
+/* Light-theme remap — high-contrast slate & semantic hues on light surfaces */
+.text-slate-50, .text-slate-100 { color: #0f172a; }
 .text-slate-200 { color: #1e293b; }
-.text-slate-300 { color: #33415c; }
+.text-slate-300 { color: #26354a; }
+.text-slate-600 { color: #334155; }
+.text-slate-500 { color: #475569; }
 .text-slate-400 { color: #52627a; }
-.text-slate-500 { color: #7a8aa0; }
-.text-slate-600 { color: #9aa9bd; }
-.text-cyan-300, .text-cyan-200, .text-brand-300, .text-brand-200 { color: #0e7490; }
-.text-cyan-100, .text-brand-100, .text-brand-50 { color: #155e75; }
-.text-emerald-300, .text-emerald-200, .text-signal-400 { color: #059669; }
-.text-emerald-100 { color: #047857; }
+.text-cyan-300, .text-cyan-200, .text-brand-300, .text-brand-200 { color: #0369a1; }
+.text-cyan-100, .text-brand-100, .text-brand-50 { color: #075985; }
+.text-emerald-400, .text-emerald-300, .text-emerald-200, .text-signal-400 { color: #047857; }
+.text-emerald-100 { color: #065f46; }
 .text-red-300, .text-red-200 { color: #dc2626; }
 .text-red-100 { color: #b91c1c; }
+.text-rose-300, .text-rose-200 { color: #be123c; }
 .text-amber-300, .text-amber-200 { color: #b45309; }
 .text-amber-100 { color: #92400e; }
 .text-violet-300, .text-violet-200, .text-violet-100 { color: #6d28d9; }

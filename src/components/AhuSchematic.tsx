@@ -35,11 +35,11 @@ interface Props {
 type Stage = "ok" | "warn" | "alarm" | "off" | "missing";
 
 const TONE: Record<Stage, { stroke: string; fill: string; text: string; dot: string; pill: string }> = {
-  ok: { stroke: "#10b981", fill: "rgba(16,185,129,0.13)", text: "#6ee7b7", dot: "bg-emerald-400", pill: "border-emerald-500/40 bg-emerald-500/12 text-emerald-100" },
-  warn: { stroke: "#f59e0b", fill: "rgba(245,158,11,0.15)", text: "#fcd34d", dot: "bg-amber-400", pill: "border-amber-500/40 bg-amber-500/12 text-amber-100" },
-  alarm: { stroke: "#ef4444", fill: "rgba(239,68,68,0.17)", text: "#fca5a5", dot: "bg-red-500", pill: "border-red-500/45 bg-red-500/14 text-red-100" },
-  missing: { stroke: "#475569", fill: "rgba(51,65,85,0.14)", text: "#64748b", dot: "bg-slate-600", pill: "border-slate-600/50 bg-slate-800/30 text-slate-400" },
-  off: { stroke: "#64748b", fill: "rgba(71,85,105,0.1)", text: "#94a3b8", dot: "bg-slate-500", pill: "border-slate-600/45 bg-slate-800/40 text-slate-300" },
+  ok: { stroke: "#10b981", fill: "rgba(16,185,129,0.13)", text: "#6ee7b7", dot: "bg-emerald-500", pill: "border-emerald-300 bg-emerald-50/90 text-emerald-900" },
+  warn: { stroke: "#f59e0b", fill: "rgba(245,158,11,0.15)", text: "#fcd34d", dot: "bg-amber-500", pill: "border-amber-300 bg-amber-50/90 text-amber-900" },
+  alarm: { stroke: "#ef4444", fill: "rgba(239,68,68,0.17)", text: "#fca5a5", dot: "bg-red-500", pill: "border-red-300 bg-red-50/90 text-red-900" },
+  missing: { stroke: "#475569", fill: "rgba(51,65,85,0.14)", text: "#64748b", dot: "bg-slate-400", pill: "border-[#cbd5e1] bg-[#f8fafc] text-[#475569]" },
+  off: { stroke: "#64748b", fill: "rgba(71,85,105,0.1)", text: "#94a3b8", dot: "bg-slate-500", pill: "border-[#cbd5e1] bg-white text-[#1e293b]" },
 };
 
 const GEO: Record<string, { x: number; y: number; w: number; h: number; mx: number; my: number; cx?: number; cy?: number; r?: number }> = {
@@ -442,7 +442,7 @@ export default function AhuSchematic({
                   onClick={() => setSelected((cur) => (cur === s.key ? null : (s.key as string)))}
                   className={cx(
                     "absolute grid h-7 w-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 font-mono text-[11px] font-bold backdrop-blur-md transition-transform hover:scale-110",
-                    na ? "border-dashed bg-ink-950/75 text-slate-400" : "bg-ink-950/82 text-white",
+                    na ? "border-dashed bg-[#0b1f3f]/80 text-[#cbd5e1]" : "bg-[#0b1f3f]/90 text-white",
                     isSel && "ring-2 ring-brand-400/70",
                   )}
                   style={{
@@ -459,13 +459,13 @@ export default function AhuSchematic({
                 </button>
               );
             })}
-            <div className="pointer-events-none absolute left-3 top-3 rounded-md border border-white/12 bg-ink-950/75 px-2 py-1 backdrop-blur-md">
-              <p className="font-mono text-[8.5px] uppercase tracking-[0.16em] text-brand-200">
+            <div className="pointer-events-none absolute left-3 top-3 rounded-md border border-white/15 bg-[#0b1f3f]/88 px-2 py-1 backdrop-blur-md">
+              <p className="font-mono text-[8.5px] uppercase tracking-[0.16em] text-[#93c5fd]">
                 AI side-elevation model · live telemetry overlay
               </p>
             </div>
-            <div className="pointer-events-none absolute bottom-3 left-3 rounded-md border border-white/10 bg-ink-950/72 px-2 py-1 backdrop-blur-md">
-              <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-slate-400">
+            <div className="pointer-events-none absolute bottom-3 left-3 rounded-md border border-white/15 bg-[#0b1f3f]/88 px-2 py-1 backdrop-blur-md">
+              <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-[#e2e8f0]">
                 {running ? `airflow → · fan ${fanPct.toFixed(0)} % · ${(1 / Math.max(spinDur, 0.01)).toFixed(1)} rev/s` : "airflow stopped"}
               </p>
             </div>
