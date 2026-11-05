@@ -166,12 +166,6 @@ export function timeAgo(input: string | number | Date | null | undefined, now = 
   return `${Math.floor(s / 86400)} d ago`;
 }
 
-export function fmtTime(input: string | number | Date | null | undefined): string {
-  if (!input) return "—";
-  const d = new Date(input);
-  return d.toLocaleTimeString("en-GB", { hour12: false });
-}
-
 export function fmtDateTime(input: string | number | Date | null | undefined): string {
   if (!input) return "—";
   const d = new Date(input);

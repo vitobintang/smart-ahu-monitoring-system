@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { MonitoringUnit } from "../db/monitoring";
 import { parseMonitoringResponse } from "../lib/monitoring-client";

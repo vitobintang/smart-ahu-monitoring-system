@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 
 type ExampleState = "ACTIVE" | "RESOLVED";
 type ExampleUnit = "AHU-01" | "AHU-02";

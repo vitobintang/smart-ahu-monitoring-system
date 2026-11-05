@@ -33,7 +33,6 @@ import {
 import type { AhuStatus } from "@/db/schema";
 import { StatusBadge, cx } from "@/components/ui";
 import {
-  computeExteriorWallSegments,
   computePolygonAreaSqM,
   DEFAULT_ROOM_VERTICES,
   deleteFloorVertex,
@@ -49,6 +48,7 @@ import {
   resolveAhuPlacement,
   resolveWallPhysicsAndSnap,
   ROOM_GRID_SNAP_STEP,
+  snapToPlatformGrid,
   type FloorVertex,
   type OutdoorTreeCandidate,
   type PlacementValidation,
@@ -502,6 +502,17 @@ export default function AhuFacilityMap3D({
   const [manualRotLocked, setManualRotLocked] = useState(false);
   const [hoverInfo, setHoverInfo] = useState<PlacementValidation | null>(null);
   const [webglError, setWebglError] = useState<string | null>(null);
+  // Emits hover state ONLY when the rendered chip content would actually change — during AHU
+  // drags this reduces per-frame React re-renders to zero until a cell/zone/validity flips.
+  const lastHoverSigRef = useRef<string>("\u0000");
+  const pushHoverInfo = useCallback((check: PlacementValidation | null) => {
+    const sig = check
+      ? `${check.valid ? 1 : 0}|${check.indoor ? 1 : 0}|${check.snappedToWall ? 1 : 0}|${check.snappedX}|${check.snappedZ}|${check.rotation}|${check.valid ? "" : check.reason ?? ""}`
+      : "";
+    if (sig === lastHoverSigRef.current) return;
+    lastHoverSigRef.current = sig;
+    setHoverInfo(check);
+  }, []);
 
   // Interactive Move-3D-Model state (explore mode)
   const [pickToMove, setPickToMove] = useState(false);
@@ -736,9 +747,9 @@ export default function AhuFacilityMap3D({
     setPickToMove(false);
     setMovingAhuId(null);
     setMoveDraft(null);
-    setHoverInfo(null);
+    pushHoverInfo(null);
     setMoveError(null);
-  }, []);
+  }, [pushHoverInfo]);
 
   const confirmMoveSave = useCallback(async () => {
     if (!movingAhuId || !moveDraft || !onMoveAhuSave) return;
@@ -750,7 +761,7 @@ export default function AhuFacilityMap3D({
       const savedPlacement = moveDraft;
       setMovingAhuId(null);
       setMoveDraft(null);
-      setHoverInfo(null);
+      pushHoverInfo(null);
       // Keep the unit visually pinned at its saved spot until the poll confirms it
       setSavedPlacementOverrides((prev) => new Map(prev).set(finishedId, savedPlacement));
       setSelectedId(finishedId);
@@ -1277,7 +1288,7 @@ export default function AhuFacilityMap3D({
     };
 
     const applyGhostPreview = (check: PlacementValidation) => {
-      setHoverInfo(check);
+      pushHoverInfo(check);
       updateWallSnapHighlight(check.snappedToWall ? check.snappedWall : null);
       const objs = ahuSceneObjectsRef.current;
       if (!objs) return;
@@ -1513,9 +1524,19 @@ export default function AhuFacilityMap3D({
             const verts = activeRoomVerticesRef.current;
             const a = verts[wHit.edgeIndex];
             const b = verts[(wHit.edgeIndex + 1) % verts.length];
-            if (a && b) {
+            const len = a && b ? Math.hypot(b.x - a.x, b.z - a.z) : 0;
+            if (a && b && len >= 2.2) {
+              // Preview the EXACT insertion point: clamped along the wall, then snapped onto
+              // the visible 2m floor-grid intersections — identical to insertVertexOnWall().
               const proj = projectPointToSegment(wHit.point.x, wHit.point.z, a.x, a.z, b.x, b.z);
-              objs.splitPreviewOrb.position.set(proj.cx, 2.98, proj.cz);
+              const minT = 1.1 / len;
+              const t = Math.min(1 - minT, Math.max(minT, proj.t));
+              const snapStep = roomSnapGridRef.current ? ROOM_GRID_SNAP_STEP : 0.05;
+              objs.splitPreviewOrb.position.set(
+                snapToPlatformGrid(a.x + (b.x - a.x) * t, snapStep),
+                2.98,
+                snapToPlatformGrid(a.z + (b.z - a.z) * t, snapStep),
+              );
               objs.splitPreviewOrb.visible = true;
             }
             nextHover = { type: "wall", index: wHit.edgeIndex };
@@ -1710,7 +1731,7 @@ export default function AhuFacilityMap3D({
         if (isEditingPlacement) {
           if (raycaster.ray.intersectPlane(floorPlane, planeHit)) {
             const check = evaluatePhysicsAtRay();
-            setHoverInfo(check);
+            pushHoverInfo(check);
             updateWallSnapHighlight(check.snappedToWall ? check.snappedWall : null);
             commitPlacementFromCheck(check);
           }
@@ -1871,7 +1892,7 @@ export default function AhuFacilityMap3D({
         raycaster.setFromCamera(pointerNdc, camera);
         if (raycaster.ray.intersectPlane(floorPlane, planeHit)) {
           const check = evaluatePhysicsAtRay();
-          setHoverInfo(check);
+          pushHoverInfo(check);
           updateWallSnapHighlight(check.snappedToWall ? check.snappedWall : null);
           commitPlacementFromCheck(check);
         }
@@ -2045,34 +2066,42 @@ export default function AhuFacilityMap3D({
     }
   }, [resolvedUnits, movingAhuId]);
 
-  // Sync placed draft 3D AHU model (both in Add-AHU placement mode AND in Move-AHU mode)
+  // Sync placed draft 3D AHU model (both in Add-AHU placement mode AND in Move-AHU mode).
+  // Rebuilds the model ONLY when its look changes (unit / indoor / status); while dragging it
+  // merely repositions the existing group in place — zero allocations per frame.
   useEffect(() => {
     const objs = ahuSceneObjectsRef.current;
     if (!objs) return;
-    disposeGroupDeep(objs.placedDraftGroup);
     const activeDraft = mode === "placement" ? placement : moveDraft;
     const activeId = mode === "placement" ? draftAhuId : movingAhuId;
     if (!activeDraft || !activeId) {
       objs.placedDraftGroup.visible = false;
       objs.ghostGroup.visible = false;
       objs.wallSnapLineGroup.visible = false;
+      objs.placedDraftGroup.userData.modelKey = "";
       return;
     }
     const movingSource = resolvedUnits.find((u) => u.item.ahu.id === activeId);
-    const built = buildAhuModel3D({
-      id: activeId,
-      status: movingSource?.item.status ?? "RUN",
-      hasHeater: movingSource?.item.ahu.hasHeater ?? true,
-      outdoor: !activeDraft.indoor,
-    });
-    built.halo.material = new THREE.MeshBasicMaterial({
-      color: 0x10b981,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.88,
-    });
-    built.group.rotation.y = (-activeDraft.rotation * Math.PI) / 180;
-    objs.placedDraftGroup.add(built.group);
+    const status = movingSource?.item.status ?? "RUN";
+    const modelKey = `${mode}|${activeId}|${activeDraft.indoor ? 1 : 0}|${status}`;
+    if (objs.placedDraftGroup.userData.modelKey !== modelKey || objs.placedDraftGroup.children.length === 0) {
+      disposeGroupDeep(objs.placedDraftGroup);
+      const built = buildAhuModel3D({
+        id: activeId,
+        status,
+        hasHeater: movingSource?.item.ahu.hasHeater ?? true,
+        outdoor: !activeDraft.indoor,
+      });
+      built.halo.material = new THREE.MeshBasicMaterial({
+        color: 0x10b981,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.88,
+      });
+      objs.placedDraftGroup.add(built.group);
+      objs.placedDraftGroup.userData.modelKey = modelKey;
+    }
+    objs.placedDraftGroup.children[0].rotation.y = (-activeDraft.rotation * Math.PI) / 180;
     objs.placedDraftGroup.position.set(activeDraft.x, 0, activeDraft.z);
     objs.placedDraftGroup.visible = true;
   }, [mode, placement, moveDraft, draftAhuId, movingAhuId, resolvedUnits]);

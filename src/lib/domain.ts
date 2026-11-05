@@ -116,11 +116,6 @@ export function classifyQuality(opts: {
   return "OK";
 }
 
-export function formatValue(value: number | null | undefined, param: ParamKey): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return "—";
-  return value.toFixed(PARAM_MAP[param].decimals);
-}
-
 /* ------------------------------------------------------------------ */
 /* FR-04: AHU status computation                                      */
 /* ------------------------------------------------------------------ */

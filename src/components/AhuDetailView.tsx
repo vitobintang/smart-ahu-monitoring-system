@@ -25,7 +25,7 @@ import {
 import AhuSchematic from "@/components/AhuSchematic";
 import LiveCharts, { type ChartPoint } from "@/components/LiveCharts";
 import ControlPanel from "@/components/ControlPanel";
-import { Btn, CommandStatusBadge, Empty, ErrorNote, Metric, PriorityBadge, QualityTag, SourceTag, Spinner, StatusBadge, cx } from "@/components/ui";
+import { Btn, CommandStatusBadge, Empty, ErrorNote, Metric, PriorityBadge, SourceTag, Spinner, StatusBadge, cx } from "@/components/ui";
 
 interface Threshold {
   id: string;

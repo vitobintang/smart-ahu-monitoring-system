@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import { JSDOM } from "jsdom";
-import React, { act, createElement } from "react";
+import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 
 import ProtectedUnitList from "../src/components/ProtectedUnitList";

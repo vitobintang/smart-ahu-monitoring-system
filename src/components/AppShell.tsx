@@ -423,7 +423,7 @@ export default function AppShell({
           isImmersive3dPage ? "h-dvh overflow-hidden" : "min-h-dvh",
         )}
       >
-        <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 z-0 h-[440px]">
+        <div aria-hidden className="no-print pointer-events-none fixed inset-x-0 top-0 z-0 h-[440px]">
           <Image
             src="/ahu/mountains.jpg"
             alt=""

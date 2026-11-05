@@ -1,4 +1,3 @@
-import React from "react";
 
 import { SENSOR_PARAMETERS, type SensorKey } from "../lib/ahu";
 
