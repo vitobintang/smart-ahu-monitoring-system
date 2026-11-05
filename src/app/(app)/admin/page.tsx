@@ -75,10 +75,10 @@ export default function AdminPage() {
   const [resetUserId, setResetUserId] = useState("");
   const [resetPassword, setResetPassword] = useState("");
 
-  // AHU monitoring module provisioning form
+  // AHU monitoring module provisioning form (defaults to PHYSICAL since all 7 AHUs already have built-in simulation controllers)
   const [devAhu, setDevAhu] = useState<string>(AHU_IDS[0]);
   const [devLabel, setDevLabel] = useState("");
-  const [devSource, setDevSource] = useState<"PHYSICAL" | "SIMULATION">("SIMULATION");
+  const [devSource, setDevSource] = useState<"PHYSICAL" | "SIMULATION">("PHYSICAL");
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState(false);
 
@@ -259,6 +259,26 @@ export default function AdminPage() {
       await devices.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Module update failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeDevice(d: DeviceRow) {
+    const confirmed = window.confirm(
+      `Remove module "${d.label}" from ${d.ahuId}?\n\nIts bearer token will be permanently revoked.`,
+    );
+    if (!confirmed) return;
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api(`/api/devices?deviceId=${encodeURIComponent(d.id)}`, { method: "DELETE" });
+      setNotice(`Removed module "${d.label}" (${d.ahuId}).`);
+      await devices.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove module");
     } finally {
       setBusy(false);
     }
@@ -722,9 +742,20 @@ export default function AdminPage() {
                       <QualityTag quality={d.sourceType === "SIMULATION" ? "SIMULATED" : "OK"} title={d.sourceType} />
                       <span className="font-mono text-[10.5px] font-semibold text-[#475569]">{d.sourceType}</span>
                     </div>
-                    <Btn size="sm" variant="default" onClick={() => void toggleDevice(d)} disabled={busy}>
-                      {d.enabled ? "Disable" : "Enable"}
-                    </Btn>
+                    <div className="flex items-center gap-1.5">
+                      <Btn size="sm" variant="default" onClick={() => void toggleDevice(d)} disabled={busy}>
+                        {d.enabled ? "Disable" : "Enable"}
+                      </Btn>
+                      <Btn
+                        size="sm"
+                        variant="danger"
+                        onClick={() => void removeDevice(d)}
+                        disabled={busy}
+                        title={`Remove ${d.label}`}
+                      >
+                        <Trash2 size={12} /> Remove
+                      </Btn>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -773,9 +804,20 @@ export default function AdminPage() {
                       </td>
                       <td className="px-4 py-2.5 font-mono text-[11px] text-[#475569]">{fmtDateTime(d.createdAt)}</td>
                       <td className="px-4 py-2.5 text-right">
-                        <Btn size="sm" variant="default" onClick={() => void toggleDevice(d)} disabled={busy}>
-                          {d.enabled ? "Disable" : "Enable"}
-                        </Btn>
+                        <div className="inline-flex items-center justify-end gap-1.5">
+                          <Btn size="sm" variant="default" onClick={() => void toggleDevice(d)} disabled={busy}>
+                            {d.enabled ? "Disable" : "Enable"}
+                          </Btn>
+                          <Btn
+                            size="sm"
+                            variant="danger"
+                            onClick={() => void removeDevice(d)}
+                            disabled={busy}
+                            title={`Remove ${d.label}`}
+                          >
+                            <Trash2 size={12} /> Remove
+                          </Btn>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -821,8 +863,8 @@ export default function AdminPage() {
                     value={devSource}
                     onChange={(e) => setDevSource(e.target.value as "PHYSICAL" | "SIMULATION")}
                   >
-                    <option value="SIMULATION">SIMULATION</option>
-                    <option value="PHYSICAL">PHYSICAL</option>
+                    <option value="PHYSICAL">PHYSICAL (Hardware Gateway)</option>
+                    <option value="SIMULATION">SIMULATION (Virtual Controller)</option>
                   </select>
                 </Field>
                 <Btn type="submit" variant="primary" disabled={busy} className="w-full py-2">
