@@ -67,14 +67,14 @@ export default function AlarmsPage() {
         </Btn>
       </div>
 
-      <div className="panel flex flex-wrap items-center gap-2 rounded-2xl p-3">
-        <div className="flex overflow-hidden rounded-lg border border-ink-600">
+      <div className="panel flex flex-col gap-2.5 rounded-2xl p-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+        <div className="grid grid-cols-3 overflow-hidden rounded-lg border border-ink-600 sm:flex">
           {(["active", "resolved", "all"] as const).map((s) => (
             <button
               key={s}
               onClick={() => setState(s)}
               className={cx(
-                "px-3 py-1.5 font-mono text-[11px] font-semibold uppercase tracking-wide",
+                "px-2.5 py-1.5 font-mono text-[11px] font-semibold uppercase tracking-wide sm:px-3",
                 state === s ? "bg-cyan-500/25 text-cyan-100" : "bg-ink-900/60 text-slate-400 hover:text-slate-200",
               )}
             >
@@ -83,25 +83,27 @@ export default function AlarmsPage() {
             </button>
           ))}
         </div>
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500">
-          <Filter size={12} /> filters
-        </span>
-        <select value={ahuId} onChange={(e) => setAhuId(e.target.value)} className="rounded-lg border border-ink-600 bg-ink-950/80 px-2 py-1.5 text-xs text-slate-200">
-          <option value="">All AHUs</option>
-          {AHU_IDS.map((id) => (
-            <option key={id} value={id}>
-              {id}
-            </option>
-          ))}
-        </select>
-        <select value={priority} onChange={(e) => setPriority(e.target.value)} className="rounded-lg border border-ink-600 bg-ink-950/80 px-2 py-1.5 text-xs text-slate-200">
-          <option value="">All priorities</option>
-          {["CRITICAL", "HIGH", "MEDIUM", "LOW"].map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+          <span className="hidden items-center gap-1.5 text-[11px] text-slate-500 sm:inline-flex">
+            <Filter size={12} /> filters
+          </span>
+          <select value={ahuId} onChange={(e) => setAhuId(e.target.value)} className="w-full rounded-lg border border-ink-600 bg-ink-950/80 px-2.5 py-1.5 text-xs text-slate-200 sm:w-auto">
+            <option value="">All AHUs</option>
+            {AHU_IDS.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </select>
+          <select value={priority} onChange={(e) => setPriority(e.target.value)} className="w-full rounded-lg border border-ink-600 bg-ink-950/80 px-2.5 py-1.5 text-xs text-slate-200 sm:w-auto">
+            <option value="">All priorities</option>
+            {["CRITICAL", "HIGH", "MEDIUM", "LOW"].map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {notice ? <p className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-[11px] text-cyan-200">{notice}</p> : null}
@@ -109,7 +111,54 @@ export default function AlarmsPage() {
       {loading && !data ? <Spinner label="Loading alarms…" /> : null}
 
       <div className="panel overflow-hidden rounded-2xl">
-        <div className="overflow-x-auto">
+        {/* Mobile alarm cards */}
+        <div className="divide-y divide-ink-800/70 md:hidden">
+          {rows.length === 0 ? (
+            <div className="p-6">
+              <Empty>No alarms match the current filter.</Empty>
+            </div>
+          ) : null}
+          {rows.map((a) => (
+            <div key={a.id} className="space-y-2 p-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Link href={`/ahu/${a.ahuId}`} className="font-mono text-xs font-bold text-cyan-300 hover:underline">
+                    {a.ahuId}
+                  </Link>
+                  <span className="font-mono text-[11px] text-slate-400">{a.parameter}</span>
+                  <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[9.5px] font-bold uppercase text-slate-200">
+                    {a.priority}
+                  </span>
+                </div>
+                <span className="font-mono text-[10.5px] text-slate-500">{timeAgo(a.triggeredAt)}</span>
+              </div>
+              <p className="text-xs leading-snug text-slate-300">{a.message}</p>
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  {a.isActive ? (
+                    <span className="inline-flex items-center gap-1 rounded bg-red-500/15 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-red-300">
+                      <TriangleAlert size={10} /> active
+                    </span>
+                  ) : (
+                    <span className="rounded bg-emerald-500/15 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-emerald-300">
+                      resolved
+                    </span>
+                  )}
+                  <span className="text-[10.5px] text-slate-400">
+                    {a.acknowledged ? `Acked ${fmtDateTime(a.acknowledgedAt)}` : "Unacknowledged"}
+                  </span>
+                </div>
+                {a.isActive && !a.acknowledged ? (
+                  <Btn size="sm" variant="default" onClick={() => void ack(a.id)} disabled={busy === a.id || canAck === false}>
+                    <Check size={11} /> Ack
+                  </Btn>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[900px] text-left text-xs">
             <thead className="bg-ink-900/60 text-[10px] uppercase tracking-wider text-slate-500">
               <tr>

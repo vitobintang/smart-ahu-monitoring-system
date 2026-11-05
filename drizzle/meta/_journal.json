@@ -22,6 +22,13 @@
       "when": 1793695863390,
       "tag": "0002_nebulous_exiles",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793847155471,
+      "tag": "0003_add_users_username",
+      "breakpoints": true
     }
   ]
 }

@@ -43,6 +43,7 @@ const MIGRATION_FILES = [
   "0000_cuddly_sabretooth.sql",
   "0001_numerous_lucky_pierre.sql",
   "0002_nebulous_exiles.sql",
+  "0003_add_users_username.sql",
 ];
 
 async function createMigratedTestDb() {
@@ -502,30 +503,42 @@ test("FR-20 / FR-29: user lifecycle management updates member roles, revokes ses
       expiresAt: new Date(now.getTime() + 86_400_000),
     });
 
-    // 1. Update role Operator -> Engineering
+    // 1. Update role Operator -> Engineering and assign username
     const promoted = await updateManagedUser(
       {
         actor: primaryAdmin,
         targetUserId: "member-op",
         role: "Engineering",
+        username: "Shift.Op",
         ipAddress: "127.0.0.1",
       },
       testDb,
     );
     assert.equal(promoted.ok, true);
-    if (promoted.ok) assert.equal(promoted.data.user.role, "Engineering");
+    if (promoted.ok) {
+      assert.equal(promoted.data.user.role, "Engineering");
+      assert.equal(promoted.data.user.username, "shift.op");
+    }
 
-    // 2. Reject promoting token-only member directly to Admin
-    const illegalAdminPromo = await updateManagedUser(
+    // 2. Enforce case-insensitive username uniqueness across accounts
+    await updateManagedUser(
       {
         actor: primaryAdmin,
-        targetUserId: "member-op",
-        role: "Admin",
+        targetUserId: primaryAdmin.id,
+        username: "vizobintang",
       },
       testDb,
     );
-    assert.equal(illegalAdminPromo.ok, false);
-    if (!illegalAdminPromo.ok) assert.equal(illegalAdminPromo.status, 400);
+    const duplicateUsername = await updateManagedUser(
+      {
+        actor: primaryAdmin,
+        targetUserId: "member-op",
+        username: "VizoBintang",
+      },
+      testDb,
+    );
+    assert.equal(duplicateUsername.ok, false);
+    if (!duplicateUsername.ok) assert.equal(duplicateUsername.status, 409);
 
     // 3. Reject self-demotion & self-removal of active Admin
     const selfDemote = await updateManagedUser(

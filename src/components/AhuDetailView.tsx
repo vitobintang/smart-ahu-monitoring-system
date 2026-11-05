@@ -161,9 +161,9 @@ export default function AhuDetailView({
     <div className="space-y-5">
       {/* FR-05 identity header */}
       <div className="panel rounded-2xl p-4 sm:p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-col gap-3.5 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <Link href="/dashboard" className="font-mono text-[11px] uppercase tracking-wider text-slate-500 hover:text-cyan-300">
                 ← Dashboard
               </Link>
@@ -172,7 +172,7 @@ export default function AhuDetailView({
               <SourceTag source={source} />
             </div>
             <p className="mt-1 text-sm font-medium text-slate-100">{ahu.name}</p>
-            <p className="mt-0.5 flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
+            <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
               <span className="inline-flex items-center gap-1">
                 <MapPin size={11} /> {ahu.location}
               </span>
@@ -188,7 +188,7 @@ export default function AhuDetailView({
               {lastSync ? <span className="font-mono text-[10px]">view synced {timeAgo(lastSync)}</span> : null}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <ControlPanel
               ahuId={ahu.id}
               status={computed.status}

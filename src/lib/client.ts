@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export interface SessionUser {
   id: string;
   email: string;
+  username: string | null;
   fullName: string | null;
   role: "Admin" | "Engineering" | "Operator" | "Viewer";
   createdAt: string;

@@ -46,11 +46,17 @@ export const users = pgTable(
   {
     id: text("id").primaryKey(),
     email: text("email").notNull(),
+    username: text("username"),
     fullName: text("full_name"),
     role: roleEnum("role").notNull().default("Viewer"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex("users_email_uidx").on(table.email)],
+  (table) => [
+    uniqueIndex("users_email_uidx").on(table.email),
+    uniqueIndex("users_username_uidx")
+      .on(sql`lower(${table.username})`)
+      .where(sql`username IS NOT NULL`),
+  ],
 );
 
 /** Shared login throttling across server instances. */

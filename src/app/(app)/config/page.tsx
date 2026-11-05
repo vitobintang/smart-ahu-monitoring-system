@@ -128,24 +128,34 @@ export default function ConfigPage() {
 
       <div className="grid gap-4 lg:grid-cols-[16rem_1fr]">
         <div className="panel h-max rounded-2xl p-3">
-          <p className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Units</p>
-          <div className="space-y-1">
+          <div className="mb-2 flex items-center justify-between gap-2 px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Units</p>
+            <Link href={`/ahu/${selected}`} className="font-mono text-[10.5px] font-semibold uppercase tracking-wide text-cyan-300 hover:underline lg:hidden">
+              view {selected} →
+            </Link>
+          </div>
+          <div className="flex gap-1.5 overflow-x-auto pb-1 lg:block lg:space-y-1 lg:overflow-visible lg:pb-0">
             {AHU_IDS.map((id) => (
-              <button
+              <div
                 key={id}
-                onClick={() => setSelected(id)}
                 className={cx(
-                  "flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-xs transition",
+                  "flex flex-none items-center justify-between rounded-lg border px-3 py-2 text-left text-xs transition lg:w-full",
                   selected === id
                     ? "border-cyan-500/50 bg-cyan-500/12 text-cyan-100"
-                    : "border-transparent text-slate-400 hover:border-ink-600 hover:text-slate-200",
+                    : "border-ink-700/60 text-slate-400 hover:border-ink-600 hover:text-slate-200 lg:border-transparent",
                 )}
               >
-                <span className="font-mono font-semibold">{id}</span>
-                <Link href={`/ahu/${id}`} className="text-[10px] uppercase tracking-wide opacity-70 hover:opacity-100">
+                <button
+                  type="button"
+                  onClick={() => setSelected(id)}
+                  className="flex-1 text-left font-mono font-semibold"
+                >
+                  {id}
+                </button>
+                <Link href={`/ahu/${id}`} className="ml-2 hidden text-[10px] uppercase tracking-wide opacity-70 hover:opacity-100 lg:inline">
                   view
                 </Link>
-              </button>
+              </div>
             ))}
           </div>
         </div>

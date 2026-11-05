@@ -1,29 +1,27 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { accessDevices, users } from "@/db/schema";
 import type { Role, UserRow } from "@/db/schema";
 import { invalidateSessionCache, safePublicUser, writeAudit } from "@/lib/auth";
 import { ROLES } from "@/lib/domain";
-import { isAdminRole } from "@/lib/role-auth";
+import { isAdminRole, normalizeUsername } from "@/lib/role-auth";
 
 type DbClient = typeof db;
-
-export const NON_ADMIN_ROLES: readonly Role[] = ["Engineering", "Operator", "Viewer"];
 
 export type UserLifecycleResult<T> =
   | { ok: true; status: number; data: T }
   | { ok: false; status: number; error: string };
 
 /**
- * FR-20 / FR-29: Update a user's role (across Engineering / Operator / Viewer)
- * and/or display name, invalidating cached sessions immediately and recording
- * an immutable audit entry.
+ * FR-20 / FR-29: Update any user's role (Admin, Engineering, Operator, Viewer),
+ * username, and/or display name with strict self-demotion and last-Admin guards.
  */
 export async function updateManagedUser(
   input: {
     actor: Pick<UserRow, "id" | "email">;
     targetUserId: string;
     role?: string;
+    username?: string;
     fullName?: string;
     ipAddress?: string | null;
   },
@@ -42,6 +40,15 @@ export async function updateManagedUser(
     nextRole = input.role as Role;
   }
 
+  let nextUsername: string | undefined;
+  if (input.username !== undefined) {
+    const parsed = normalizeUsername(input.username);
+    if (!parsed.ok) {
+      return { ok: false, status: 400, error: parsed.error };
+    }
+    nextUsername = parsed.username;
+  }
+
   let nextFullName: string | null | undefined;
   if (input.fullName !== undefined) {
     const trimmed = input.fullName.trim();
@@ -51,7 +58,7 @@ export async function updateManagedUser(
     nextFullName = trimmed || null;
   }
 
-  if (nextRole === undefined && nextFullName === undefined) {
+  if (nextRole === undefined && nextUsername === undefined && nextFullName === undefined) {
     return { ok: false, status: 400, error: "No user changes specified" };
   }
 
@@ -63,6 +70,7 @@ export async function updateManagedUser(
     }
 
     const effectiveRole = nextRole ?? target.role;
+    const effectiveUsername = nextUsername !== undefined ? nextUsername : target.username;
     const effectiveFullName = nextFullName !== undefined ? nextFullName : target.fullName;
 
     if (isAdminRole(target.role) && !isAdminRole(effectiveRole)) {
@@ -73,35 +81,39 @@ export async function updateManagedUser(
           error: "You cannot demote your own active Administrator account.",
         };
       }
-      return {
-        ok: false,
-        status: 400,
-        error:
-          "Administrator accounts sign in with email and password and cannot be converted to token-only roles. Create a non-Admin token member instead.",
-      };
+      const admins = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.role, "Admin"));
+      if (admins.length <= 1) {
+        return {
+          ok: false,
+          status: 409,
+          error: "Cannot demote the last remaining Administrator account.",
+        };
+      }
     }
 
-    if (!isAdminRole(target.role) && isAdminRole(effectiveRole)) {
-      return {
-        ok: false,
-        status: 400,
-        error:
-          "Token-only members do not have email/password credentials and cannot be promoted directly to Admin. Create a dedicated Admin account with email and password instead.",
-      };
-    }
-
-    if (!isAdminRole(effectiveRole) && !effectiveFullName) {
-      return {
-        ok: false,
-        status: 400,
-        error: "Member name is required for non-Admin roles (1–120 characters)",
-      };
+    if (nextUsername !== undefined) {
+      const [conflict] = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(and(sql`lower(${users.username}) = ${nextUsername}`, ne(users.id, target.id)))
+        .limit(1);
+      if (conflict) {
+        return {
+          ok: false,
+          status: 409,
+          error: `Username "${nextUsername}" is already in use`,
+        };
+      }
     }
 
     const [updated] = await tx
       .update(users)
       .set({
         role: effectiveRole,
+        username: effectiveUsername,
         fullName: effectiveFullName,
       })
       .where(eq(users.id, target.id))
@@ -118,6 +130,8 @@ export async function updateManagedUser(
         details: {
           previousRole: target.role,
           role: updated.role,
+          previousUsername: target.username ?? null,
+          username: updated.username ?? null,
           previousFullName: target.fullName,
           fullName: updated.fullName,
         },
@@ -138,8 +152,8 @@ export async function updateManagedUser(
 }
 
 /**
- * FR-20 / FR-29: Immediately revokes all active browser sessions and unclaimed
- * one-time tokens for a non-Admin member without deleting their user record.
+ * Legacy helper retained for backward compatibility with existing audit/device tables:
+ * revokes any lingering rows in `access_devices` for a user.
  */
 export async function revokeAllUserSessions(
   input: {
@@ -196,8 +210,8 @@ export async function revokeAllUserSessions(
 
 /**
  * FR-20 / FR-29: Removes a user account with strict self-lockout and last-Admin
- * protection. Cascades access_devices while preserving historical audit_logs,
- * alarms, and trend_alerts.
+ * protection, cleaning up Supabase Auth credentials and preserving historical
+ * audit_logs, alarms, and trend_alerts.
  */
 export async function removeManagedUser(
   input: {
@@ -243,11 +257,6 @@ export async function removeManagedUser(
         }
       }
 
-      const activeTokens = await tx
-        .select({ id: accessDevices.id })
-        .from(accessDevices)
-        .where(and(eq(accessDevices.userId, target.id), isNull(accessDevices.revokedAt)));
-
       await tx.delete(users).where(eq(users.id, target.id));
       deletedTarget = target;
 
@@ -260,9 +269,9 @@ export async function removeManagedUser(
           ipAddress: input.ipAddress ?? null,
           details: {
             email: target.email,
+            username: target.username ?? null,
             fullName: target.fullName,
             role: target.role,
-            revokedActiveTokens: activeTokens.length,
           },
         },
         tx,
@@ -275,12 +284,12 @@ export async function removeManagedUser(
   if (!outcome.ok) return outcome;
   invalidateSessionCache();
 
-  if (deletedTarget && isAdminRole((deletedTarget as UserRow).role) && input.deleteSupabaseAuthUser) {
+  if (deletedTarget && input.deleteSupabaseAuthUser) {
     try {
       await input.deleteSupabaseAuthUser((deletedTarget as UserRow).id);
     } catch (err) {
       console.warn(
-        "[AHU] Removed Admin DB row but Supabase Auth cleanup reported an error:",
+        "[AHU] Removed user DB row but Supabase Auth cleanup reported an error:",
         err instanceof Error ? err.message : err,
       );
     }

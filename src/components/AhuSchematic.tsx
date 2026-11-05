@@ -217,7 +217,7 @@ export default function AhuSchematic({
             <span className="num text-brand-300">{supply === null ? "—" : `${supply.toFixed(1)} °C`}</span>
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <StatusBadge status={status} size="sm" />
           <Segmented
             size="sm"
@@ -232,8 +232,8 @@ export default function AhuSchematic({
       </div>
 
       {model === "realistic" ? (
-        <div className="animate-fade">
-          <div className="relative overflow-hidden rounded-xl border border-ink-700 bg-ink-950 ring-1 ring-inset ring-white/5">
+        <div className="animate-fade overflow-x-auto pb-1">
+          <div className="relative min-w-[540px] overflow-hidden rounded-xl border border-ink-700 bg-ink-950 ring-1 ring-inset ring-white/5 sm:min-w-0">
             <NextImage
               src="/ahu/side-elevation.jpg"
               alt="Flat orthographic side elevation of the air handling unit: intake damper, filter stage, cooling coil, heating coil and supply fan scroll"

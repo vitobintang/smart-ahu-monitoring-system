@@ -21,10 +21,17 @@ if (!DATABASE_URL || !NEXT_PUBLIC_SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || 
     const { rows } = await client.query('SELECT count(*)::int AS count FROM ahu_private.users');
     if (rows[0].count !== 0) throw new Error("Bootstrap is only permitted when no role profiles exist.");
     const email = BOOTSTRAP_ADMIN_EMAIL.trim().toLowerCase();
+    const rawUsername = (process.env.BOOTSTRAP_ADMIN_USERNAME || email.split("@")[0] || "admin")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^[._-]+|[._-]+$/g, "")
+      .slice(0, 32);
+    const username = rawUsername.length >= 3 ? rawUsername : `${rawUsername}admin`.slice(0, 32);
     const { data, error } = await auth.auth.admin.createUser({ email, password: BOOTSTRAP_ADMIN_PASSWORD, email_confirm: true });
     if (error || !data.user) throw new Error(`Supabase Auth user creation failed: ${error?.message ?? "unknown error"}`);
     createdId = data.user.id;
-    await client.query('INSERT INTO ahu_private.users (id, email, full_name, role) VALUES ($1, $2, $3, $4)', [createdId, email, "System Administrator", "Admin"]);
+    await client.query('INSERT INTO ahu_private.users (id, email, username, full_name, role) VALUES ($1, $2, $3, $4, $5)', [createdId, email, username, "System Administrator", "Admin"]);
     await client.query("COMMIT");
     createdId = undefined;
     console.log("Administrator created. Remove bootstrap credentials from the environment.");
