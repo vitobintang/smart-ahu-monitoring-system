@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   ArrowRight,
   Box,
@@ -32,7 +32,7 @@ import { Btn, Empty, ErrorNote, Field, Spinner, StatusBadge, cx, inputClass } fr
 const AhuFacilityMap3D = dynamic(() => import("@/components/AhuFacilityMap3D"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-full min-h-[420px] w-full flex-1 items-center justify-center bg-[#09172e] text-slate-300">
+    <div className="absolute inset-0 flex h-full w-full items-center justify-center bg-[#eaf1fb] text-[#12294d]">
       <Spinner label="Initializing 3D multi-wing facility digital twin…" />
     </div>
   ),
@@ -52,11 +52,22 @@ function suggestNextAhuId(existingIds: string[]): string {
   return `AHU-${String(next).padStart(2, "0")}`;
 }
 
-/** FR-03 / FR-05: full-page 3D facility digital twin + toggleable classic AHU list page. */
+/** FR-03 / FR-05: Full-screen Light-Mode 3D Facility Digital Twin + sleek animated AHU Fleet List sheet. */
 export default function AhuIndexPage() {
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const isListView = searchParams?.get("view") === "list";
+  const [listOpen, setListOpen] = useState(() => searchParams?.get("view") === "list");
+
+  useEffect(() => {
+    setListOpen(searchParams?.get("view") === "list");
+  }, [searchParams]);
+
+  function switchView(showList: boolean) {
+    setListOpen(showList);
+    if (typeof window !== "undefined") {
+      const nextUrl = showList ? "/ahu?view=list" : "/ahu";
+      window.history.replaceState(window.history.state, "", nextUrl);
+    }
+  }
 
   const user = useSessionUser();
   const canControl = user ? can(user.role, "control") : false;
@@ -65,7 +76,7 @@ export default function AhuIndexPage() {
 
   const [selected3dId, setSelected3dId] = useState<string | null>(null);
 
-  // Add-New-AHU modal + 3D floor-platform / wall-snap placement state
+  // Add-New-AHU modal + 3D floor / outdoor / wall-snap placement state
   const [addOpen, setAddOpen] = useState(false);
   const [newId, setNewId] = useState("");
   const [newName, setNewName] = useState("");
@@ -135,7 +146,7 @@ export default function AhuIndexPage() {
   async function submitCreateAhu(e: React.FormEvent) {
     e.preventDefault();
     if (!placement) {
-      setCreateErr("Click on the 3D floor platform or snap to a wall to place the new AHU.");
+      setCreateErr("Click inside any indoor wing or anywhere outdoors to place the new AHU.");
       return;
     }
     setCreating(true);
@@ -167,11 +178,11 @@ export default function AhuIndexPage() {
 
   const addModal = addOpen ? (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#071226]/70 p-3 backdrop-blur-sm sm:p-5"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-3 backdrop-blur-sm sm:p-5"
       onClick={() => !creating && setAddOpen(false)}
     >
       <div
-        className="max-h-[94dvh] w-full max-w-5xl overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4 shadow-[0_32px_90px_-20px_rgba(7,18,38,0.65)] sm:p-6"
+        className="animate-rise max-h-[94dvh] w-full max-w-5xl overflow-y-auto rounded-3xl border border-[#dbe4f0] bg-white p-4 shadow-[0_32px_90px_-20px_rgba(18,41,77,0.45)] sm:p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3.5">
@@ -180,10 +191,10 @@ export default function AhuIndexPage() {
               3D Digital Twin Commissioning
             </p>
             <h2 className="mt-0.5 text-[18px] font-bold tracking-tight text-[#12294d] sm:text-[20px]">
-              Add New AHU &amp; Place 3D Model in Facility Room
+              Add New AHU &amp; Place 3D Model
             </h2>
             <p className="text-[11.5px] text-slate-500">
-              Drag the 3D AHU or click on any indoor floor wing or outdoor pad. Solid wall physics prevents passing through walls and magnetically snaps flush against walls.
+              Drag or click inside any indoor room wing or anywhere outdoors. Solid walls snap flush &amp; block clipping.
             </p>
           </div>
           <button
@@ -224,7 +235,7 @@ export default function AhuIndexPage() {
                 className={inputClass}
                 value={newLocation}
                 onChange={(e) => setNewLocation(e.target.value)}
-                placeholder={placement?.zoneLabel ?? "Auto from selected 3D wing"}
+                placeholder={placement?.zoneLabel ?? "Auto from selected 3D position"}
               />
             </Field>
             <Field label="Target Setpoint (°C)">
@@ -273,9 +284,9 @@ export default function AhuIndexPage() {
               <button
                 type="button"
                 onClick={() => autoPickSlot(false)}
-                className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800 transition hover:bg-amber-100"
+                className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-100"
               >
-                <Sun size={12} /> Auto Outdoor Wall Slot
+                <Sun size={12} /> Auto Outdoor Slot
               </button>
               <button
                 type="button"
@@ -297,7 +308,7 @@ export default function AhuIndexPage() {
                     snappedToWall: check.snappedToWall,
                   });
                 }}
-                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-100"
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-[#12294d] transition hover:bg-slate-100"
               >
                 <RotateCw size={12} /> Rotate ({placement?.rotation ?? 0}°)
               </button>
@@ -325,7 +336,7 @@ export default function AhuIndexPage() {
                   </span>
                 </span>
               ) : (
-                <span>Click on any indoor branch floor or outdoor wall pad above to set position.</span>
+                <span>Click inside any indoor wing or anywhere outdoors above to set position.</span>
               )}
             </div>
 
@@ -345,223 +356,239 @@ export default function AhuIndexPage() {
 
   if (loading && !data) {
     return (
-      <div className={cx(isListView ? "py-10" : "flex h-full flex-1 items-center justify-center bg-[#09172e]")}>
+      <div className="flex h-full w-full items-center justify-center bg-[#eaf1fb]">
         <Spinner label="Loading AHU fleet…" />
       </div>
     );
   }
 
-  // Default: Whole-page 3D Facility Digital Twin
-  if (!isListView) {
-    return (
-      <div className="relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden">
-        {error ? (
-          <div className="z-30 bg-red-950/90 px-4 py-2 text-xs text-red-200">{error}</div>
-        ) : null}
-
-        <AhuFacilityMap3D
-          items={cards}
-          mode="explore"
-          fullPage
-          selectedAhuId={selected3dId}
-          onSelectAhu={setSelected3dId}
-          onOpenList={() => router.replace("/ahu?view=list")}
-          canAddAhu={canConfigure}
-          onRequestAddAhu={openAddModal}
-          canMoveAhu={canControl || canConfigure}
-          onMoveAhuSave={handleMoveAhuSave}
-        />
-
-        {addModal}
-      </div>
-    );
-  }
-
-  // Classic AHU Units List Page (?view=list)
   return (
-    <div className="space-y-4 sm:space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-[20px] font-bold tracking-[-0.02em] text-[#12294d] sm:text-[22px]">
-            AHU Units · Fleet List
-          </h1>
-          <p className="text-[12px] text-slate-500">
-            All provisioned air handling units · live status, sensors, and control (FR-05)
-          </p>
-        </div>
+    <div className="relative h-full w-full overflow-hidden bg-[#eaf1fb]">
+      {/* Persistent Full-Viewport 3D Facility Digital Twin (never unmounted when opening Fleet List -> 0ms blink!) */}
+      <AhuFacilityMap3D
+        items={cards}
+        mode="explore"
+        fullPage
+        selectedAhuId={selected3dId}
+        onSelectAhu={setSelected3dId}
+        onOpenList={() => switchView(true)}
+        canAddAhu={canConfigure}
+        onRequestAddAhu={openAddModal}
+        canMoveAhu={canControl || canConfigure}
+        onMoveAhuSave={handleMoveAhuSave}
+      />
 
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => router.replace("/ahu")}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-[#bfd4f7] bg-[#eef4ff] px-3.5 py-2 text-[12px] font-bold text-[#1d6ef2] transition hover:bg-[#e0ecff]"
-          >
-            <Box size={14} /> Open 3D Facility Room
-          </button>
-
-          {canConfigure ? (
-            <button
-              type="button"
-              onClick={openAddModal}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#2563eb] to-[#1d6ef2] px-3.5 py-2 text-[12px] font-bold text-white shadow-[0_10px_22px_-8px_rgba(37,99,235,0.9)] transition hover:brightness-105"
-            >
-              <Plus size={15} /> Add New AHU
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      <ErrorNote message={error} />
-
-      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
-        {cards.map((c) => (
-          <div key={c.ahu.id}>
-            {/* Compact Square Mobile Card (< sm) */}
-            <div
-              className={cx(
-                "panel card-hover flex aspect-square flex-col justify-between rounded-2xl p-3 sm:hidden",
-                c.status === "FAULT" && "border-red-200 bg-red-50/30",
-              )}
-            >
-              <Link href={`/ahu/${c.ahu.id}`} className="block min-w-0">
-                <div className="flex items-center justify-between gap-1">
-                  <span className="font-mono text-[13.5px] font-extrabold text-[#12294d]">{c.ahu.id}</span>
-                  <StatusBadge status={c.status} size="sm" />
-                </div>
-                <p className="mt-0.5 truncate text-[10px] font-medium text-slate-500">{c.ahu.location}</p>
-              </Link>
-
-              <Link href={`/ahu/${c.ahu.id}`} className="grid grid-cols-2 gap-1.5">
-                <div className="rounded-lg bg-[#f4f7fc] px-2 py-1">
-                  <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">Temp</span>
-                  <span className="num block text-[12px] font-bold text-[#12294d]">
-                    {c.values.supplyTemp === null || c.values.supplyTemp === undefined
-                      ? "—"
-                      : `${c.values.supplyTemp.toFixed(1)}°C`}
-                  </span>
-                </div>
-                <div className="rounded-lg bg-[#f4f7fc] px-2 py-1">
-                  <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">RH</span>
-                  <span className="num block text-[12px] font-bold text-[#12294d]">
-                    {c.values.humidity === null || c.values.humidity === undefined
-                      ? "—"
-                      : `${c.values.humidity.toFixed(0)}%`}
-                  </span>
-                </div>
-              </Link>
-
-              <div className="flex items-center justify-between gap-1.5 border-t border-[#eef2f7] pt-1.5">
-                {canControl ? (
-                  <ControlPanel
-                    ahuId={c.ahu.id}
-                    status={c.status}
-                    canControl={canControl}
-                    controlMode={c.ahu.controlMode ?? "AUTO"}
-                    setpoint={c.ahu.setpoint ?? 22}
-                    desiredRunState={c.ahu.desiredRunState ?? "STOP"}
-                    activeCommand={c.activeCommand ?? null}
-                    physicalUnlocked={false}
-                    onDone={() => void reload()}
-                    compact
-                  />
-                ) : (
-                  <span className="font-mono text-[9.5px] text-slate-400">{c.ahu.installedSensors.length}/12 sens</span>
-                )}
-                <Link
-                  href={`/ahu/${c.ahu.id}`}
-                  className="inline-flex items-center gap-0.5 rounded-md bg-[#eef4ff] px-2 py-1 text-[10px] font-bold text-[#1d6ef2]"
-                >
-                  Open <ArrowRight size={11} />
-                </Link>
-              </div>
+      {/* Sleek Animated AHU Fleet List Sheet Overlay (smooth fade + glide transition, zero page blink) */}
+      <div
+        aria-hidden={!listOpen}
+        className={cx(
+          "absolute inset-0 z-30 overflow-y-auto overscroll-contain bg-[#eef3fa]/96 backdrop-blur-xl transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          listOpen
+            ? "pointer-events-auto translate-y-0 opacity-100"
+            : "pointer-events-none translate-y-4 opacity-0",
+        )}
+      >
+        <div className="mx-auto max-w-[1600px] space-y-4 px-3.5 py-4 sm:space-y-5 sm:px-6 sm:py-6 lg:px-7">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 className="text-[20px] font-bold tracking-[-0.02em] text-[#12294d] sm:text-[22px]">
+                AHU Units · Fleet List
+              </h2>
+              <p className="text-[12px] text-slate-500">
+                All provisioned air handling units · live status, sensors, and control (FR-05)
+              </p>
             </div>
 
-            {/* Full Tablet/Desktop Card (>= sm) */}
-            <div className="panel card-hover hidden h-full flex-col rounded-2xl p-4 sm:flex">
-              <div className="flex items-start justify-between gap-2">
-                <Link href={`/ahu/${c.ahu.id}`} className="group min-w-0 flex-1">
-                  <p className="font-mono text-[14.5px] font-bold text-[#12294d] group-hover:text-[#1d6ef2]">
-                    {c.ahu.id}
-                  </p>
-                  <p className="truncate text-[12px] font-medium text-slate-600">{c.ahu.name}</p>
-                  <p className="mt-0.5 flex items-center gap-1 truncate text-[10.5px] text-slate-400">
-                    <MapPin size={10} className="flex-none" /> {c.ahu.location}
-                  </p>
-                </Link>
-                <StatusBadge status={c.status} size="sm" />
-              </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => switchView(false)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[#9ec2fb] bg-white px-3.5 py-2 text-[12px] font-bold text-[#1d6ef2] shadow-[0_2px_8px_-4px_rgba(29,110,242,0.3)] transition hover:border-[#60a5fa] hover:bg-[#f0f6ff]"
+              >
+                <Box size={14} /> Back to 3D Facility Room
+              </button>
 
-              <Link href={`/ahu/${c.ahu.id}`} className="mt-3 flex items-center gap-3">
-                <div className="relative h-16 w-20 flex-none sm:w-24">
-                  <Image
-                    src="/ahu/unit-iso.png"
-                    alt={`${c.ahu.id} illustration`}
-                    fill
-                    sizes="96px"
-                    className={cx("object-contain", c.status === "OFFLINE" && "opacity-45 grayscale")}
-                  />
-                </div>
-                <dl className="grid min-w-0 flex-1 grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
-                  <div className="flex justify-between gap-1.5">
-                    <dt className="text-slate-400">Supply</dt>
-                    <dd className="num font-semibold text-slate-700">{c.values.supplyTemp?.toFixed(1) ?? "--"} °C</dd>
-                  </div>
-                  <div className="flex justify-between gap-1.5">
-                    <dt className="text-slate-400">Humidity</dt>
-                    <dd className="num font-semibold text-slate-700">{c.values.humidity?.toFixed(0) ?? "--"} %</dd>
-                  </div>
-                  <div className="flex justify-between gap-1.5">
-                    <dt className="text-slate-400">Sensors</dt>
-                    <dd className="num font-semibold text-slate-700">{c.ahu.installedSensors.length}/12</dd>
-                  </div>
-                  <div className="flex justify-between gap-1.5">
-                    <dt className="text-slate-400">Alarms</dt>
-                    <dd className={cx("num font-semibold", c.activeAlarms > 0 ? "text-red-500" : "text-slate-700")}>
-                      {c.activeAlarms}
-                    </dd>
-                  </div>
-                </dl>
-              </Link>
-
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#f1f5f9] pt-2.5">
-                <span className="text-[10px] text-slate-400">
-                  {c.lastSeenAt ? `seen ${timeAgo(c.lastSeenAt)}` : "no telemetry"}
-                </span>
-                <div className="flex items-center gap-1.5">
-                  {canControl ? (
-                    <ControlPanel
-                      ahuId={c.ahu.id}
-                      status={c.status}
-                      canControl={canControl}
-                      controlMode={c.ahu.controlMode ?? "AUTO"}
-                      setpoint={c.ahu.setpoint ?? 22}
-                      desiredRunState={c.ahu.desiredRunState ?? "STOP"}
-                      activeCommand={c.activeCommand ?? null}
-                      physicalUnlocked={false}
-                      onDone={() => void reload()}
-                      compact
-                    />
-                  ) : null}
-                  <Link
-                    href={`/config?ahu=${encodeURIComponent(c.ahu.id)}`}
-                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-100"
-                  >
-                    <Settings2 size={11} /> Config
-                  </Link>
-                  <Link
-                    href={`/ahu/${c.ahu.id}`}
-                    className="inline-flex items-center gap-1 rounded-lg border border-[#dbe7fb] bg-[#f4f8ff] px-2.5 py-1 text-[11px] font-semibold text-[#1d6ef2] transition hover:bg-[#e8f0fe]"
-                  >
-                    Details <ArrowRight size={12} />
-                  </Link>
-                </div>
-              </div>
+              {canConfigure ? (
+                <button
+                  type="button"
+                  onClick={openAddModal}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#2563eb] to-[#1d6ef2] px-3.5 py-2 text-[12px] font-bold text-white shadow-[0_10px_22px_-8px_rgba(37,99,235,0.85)] transition hover:brightness-105"
+                >
+                  <Plus size={15} /> Add New AHU
+                </button>
+              ) : null}
             </div>
           </div>
-        ))}
-      </div>
 
-      {cards.length === 0 ? <Empty>No AHU units registered.</Empty> : null}
+          <ErrorNote message={error} />
+
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
+            {cards.map((c) => (
+              <div key={c.ahu.id}>
+                {/* Compact Square Mobile Card (< sm) */}
+                <div
+                  className={cx(
+                    "panel card-hover flex aspect-square flex-col justify-between rounded-2xl p-3 sm:hidden",
+                    c.status === "FAULT" && "border-red-200 bg-red-50/30",
+                  )}
+                >
+                  <Link href={`/ahu/${c.ahu.id}`} className="block min-w-0">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="font-mono text-[13.5px] font-extrabold text-[#12294d]">{c.ahu.id}</span>
+                      <StatusBadge status={c.status} size="sm" />
+                    </div>
+                    <p className="mt-0.5 truncate text-[10px] font-medium text-slate-500">{c.ahu.location}</p>
+                  </Link>
+
+                  <Link href={`/ahu/${c.ahu.id}`} className="grid grid-cols-2 gap-1.5">
+                    <div className="rounded-lg bg-[#f4f7fc] px-2 py-1">
+                      <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">Temp</span>
+                      <span className="num block text-[12px] font-bold text-[#12294d]">
+                        {c.values.supplyTemp === null || c.values.supplyTemp === undefined
+                          ? "—"
+                          : `${c.values.supplyTemp.toFixed(1)}°C`}
+                      </span>
+                    </div>
+                    <div className="rounded-lg bg-[#f4f7fc] px-2 py-1">
+                      <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">RH</span>
+                      <span className="num block text-[12px] font-bold text-[#12294d]">
+                        {c.values.humidity === null || c.values.humidity === undefined
+                          ? "—"
+                          : `${c.values.humidity.toFixed(0)}%`}
+                      </span>
+                    </div>
+                  </Link>
+
+                  <div className="flex items-center justify-between gap-1.5 border-t border-[#eef2f7] pt-1.5">
+                    {canControl ? (
+                      <ControlPanel
+                        ahuId={c.ahu.id}
+                        status={c.status}
+                        canControl={canControl}
+                        controlMode={c.ahu.controlMode ?? "AUTO"}
+                        setpoint={c.ahu.setpoint ?? 22}
+                        desiredRunState={c.ahu.desiredRunState ?? "STOP"}
+                        activeCommand={c.activeCommand ?? null}
+                        physicalUnlocked={false}
+                        onDone={() => void reload()}
+                        compact
+                      />
+                    ) : (
+                      <span className="font-mono text-[9.5px] text-slate-400">{c.ahu.installedSensors.length}/12 sens</span>
+                    )}
+                    <Link
+                      href={`/ahu/${c.ahu.id}`}
+                      className="inline-flex items-center gap-0.5 rounded-md bg-[#eef4ff] px-2 py-1 text-[10px] font-bold text-[#1d6ef2]"
+                    >
+                      Open <ArrowRight size={11} />
+                    </Link>
+                  </div>
+                </div>
+
+                {/* Full Tablet/Desktop Card (>= sm) */}
+                <div className="panel card-hover hidden h-full flex-col rounded-2xl p-4 sm:flex">
+                  <div className="flex items-start justify-between gap-2">
+                    <Link href={`/ahu/${c.ahu.id}`} className="group min-w-0 flex-1">
+                      <p className="font-mono text-[14.5px] font-bold text-[#12294d] group-hover:text-[#1d6ef2]">
+                        {c.ahu.id}
+                      </p>
+                      <p className="truncate text-[12px] font-medium text-slate-600">{c.ahu.name}</p>
+                      <p className="mt-0.5 flex items-center gap-1 truncate text-[10.5px] text-slate-400">
+                        <MapPin size={10} className="flex-none" /> {c.ahu.location}
+                      </p>
+                    </Link>
+                    <StatusBadge status={c.status} size="sm" />
+                  </div>
+
+                  <Link href={`/ahu/${c.ahu.id}`} className="mt-3 flex items-center gap-3">
+                    <div className="relative h-16 w-20 flex-none sm:w-24">
+                      <Image
+                        src="/ahu/unit-iso.png"
+                        alt={`${c.ahu.id} illustration`}
+                        fill
+                        sizes="96px"
+                        className={cx("object-contain", c.status === "OFFLINE" && "opacity-45 grayscale")}
+                      />
+                    </div>
+                    <dl className="grid min-w-0 flex-1 grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                      <div className="flex justify-between gap-1.5">
+                        <dt className="text-slate-400">Supply</dt>
+                        <dd className="num font-semibold text-slate-700">{c.values.supplyTemp?.toFixed(1) ?? "--"} °C</dd>
+                      </div>
+                      <div className="flex justify-between gap-1.5">
+                        <dt className="text-slate-400">Humidity</dt>
+                        <dd className="num font-semibold text-slate-700">{c.values.humidity?.toFixed(0) ?? "--"} %</dd>
+                      </div>
+                      <div className="flex justify-between gap-1.5">
+                        <dt className="text-slate-400">Sensors</dt>
+                        <dd className="num font-semibold text-slate-700">{c.ahu.installedSensors.length}/12</dd>
+                      </div>
+                      <div className="flex justify-between gap-1.5">
+                        <dt className="text-slate-400">Alarms</dt>
+                        <dd className={cx("num font-semibold", c.activeAlarms > 0 ? "text-red-500" : "text-slate-700")}>
+                          {c.activeAlarms}
+                        </dd>
+                      </div>
+                    </dl>
+                  </Link>
+
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#f1f5f9] pt-2.5">
+                    <span className="text-[10px] text-slate-400">
+                      {c.lastSeenAt ? `seen ${timeAgo(c.lastSeenAt)}` : "no telemetry"}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {canControl ? (
+                        <ControlPanel
+                          ahuId={c.ahu.id}
+                          status={c.status}
+                          canControl={canControl}
+                          controlMode={c.ahu.controlMode ?? "AUTO"}
+                          setpoint={c.ahu.setpoint ?? 22}
+                          desiredRunState={c.ahu.desiredRunState ?? "STOP"}
+                          activeCommand={c.activeCommand ?? null}
+                          physicalUnlocked={false}
+                          onDone={() => void reload()}
+                          compact
+                        />
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelected3dId(c.ahu.id);
+                          switchView(false);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-lg border border-[#dbe7fb] bg-[#f4f8ff] px-2 py-1 text-[11px] font-semibold text-[#1d6ef2] transition hover:bg-[#e8f0fe]"
+                        title="Locate in 3D Facility Room"
+                      >
+                        <Box size={11} /> 3D
+                      </button>
+                      <Link
+                        href={`/config?ahu=${encodeURIComponent(c.ahu.id)}`}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-100"
+                      >
+                        <Settings2 size={11} /> Config
+                      </Link>
+                      <Link
+                        href={`/ahu/${c.ahu.id}`}
+                        className="inline-flex items-center gap-1 rounded-lg border border-[#dbe7fb] bg-[#f4f8ff] px-2.5 py-1 text-[11px] font-semibold text-[#1d6ef2] transition hover:bg-[#e8f0fe]"
+                      >
+                        Details <ArrowRight size={12} />
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {cards.length === 0 ? <Empty>No AHU units registered.</Empty> : null}
+
+          <footer className="flex flex-col items-start justify-between gap-2 pt-3 text-[11px] text-slate-500 sm:flex-row sm:items-center">
+            <span>© 2026 Smart Monitoring AHU. All rights reserved.</span>
+            <span>Safer Air | Smarter Buildings | A Cleaner Tomorrow</span>
+          </footer>
+        </div>
+      </div>
 
       {addModal}
     </div>
