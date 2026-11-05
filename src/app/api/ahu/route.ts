@@ -8,6 +8,7 @@ import {
   resolveAhuPlacement,
   validatePlatformPlacement,
 } from "@/lib/facility-layout";
+import { getActiveFloorplan } from "@/lib/floorplan-store";
 import { randomHex, randomId } from "@/lib/ids";
 import { simulationTick } from "@/lib/workers";
 
@@ -19,10 +20,13 @@ const AHU_ID_RE = /^[A-Z0-9][A-Z0-9_-]{2,23}$/;
 export async function GET() {
   try {
     await requireAuth("view");
-    const rows = await db.select().from(ahus).orderBy(asc(ahus.id));
+    const [rows, floorplan] = await Promise.all([
+      db.select().from(ahus).orderBy(asc(ahus.id)),
+      getActiveFloorplan(),
+    ]);
     const resolved: Array<{ id: string; x: number; z: number }> = [];
     const units = rows.map((row) => {
-      const p = resolveAhuPlacement(row, resolved);
+      const p = resolveAhuPlacement(row, resolved, floorplan.vertices);
       resolved.push({ id: row.id, x: p.x, z: p.z });
       return {
         ...row,
@@ -82,9 +86,10 @@ export async function POST(req: Request) {
       );
     }
 
+    const floorplan = await getActiveFloorplan();
     const existingPlacements: Array<{ id: string; x: number; z: number; rotation?: number }> = [];
     for (const r of existingRows) {
-      const p = resolveAhuPlacement(r, existingPlacements);
+      const p = resolveAhuPlacement(r, existingPlacements, floorplan.vertices);
       existingPlacements.push({ id: r.id, x: p.x, z: p.z, rotation: p.rotation });
     }
 
@@ -92,7 +97,14 @@ export async function POST(req: Request) {
       typeof body.mapRotation === "number" && Number.isFinite(body.mapRotation)
         ? normalizeRotation(body.mapRotation)
         : undefined;
-    const placement = validatePlatformPlacement(body.mapX, body.mapZ, existingPlacements, undefined, requestedRot);
+    const placement = validatePlatformPlacement(
+      body.mapX,
+      body.mapZ,
+      existingPlacements,
+      undefined,
+      requestedRot,
+      floorplan.vertices,
+    );
     if (!placement.valid || !placement.zone) {
       return Response.json(
         { error: placement.reason ?? "Invalid 3D floor platform position." },

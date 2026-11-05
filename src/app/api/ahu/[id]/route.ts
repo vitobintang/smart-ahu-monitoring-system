@@ -5,6 +5,7 @@ import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { getAhuDetail, getSeries } from "@/lib/queries";
 import { PARAM_KEYS, PARAM_MAP, type ParamKey } from "@/lib/domain";
 import { normalizeRotation, resolveAhuPlacement, validatePlatformPlacement } from "@/lib/facility-layout";
+import { getActiveFloorplan } from "@/lib/floorplan-store";
 import { maybePulseWorkers } from "@/lib/workers";
 
 export const dynamic = "force-dynamic";
@@ -70,17 +71,27 @@ export async function PATCH(req: Request, ctx: Ctx) {
     const changes: Record<string, { from: unknown; to: unknown }> = {};
 
     if (typeof body.mapX === "number" && Number.isFinite(body.mapX) && typeof body.mapZ === "number" && Number.isFinite(body.mapZ)) {
-      const allRows = await db.select().from(ahus).orderBy(asc(ahus.id));
+      const [allRows, floorplan] = await Promise.all([
+        db.select().from(ahus).orderBy(asc(ahus.id)),
+        getActiveFloorplan(),
+      ]);
       const existingPlacements: Array<{ id: string; x: number; z: number; rotation?: number }> = [];
       for (const r of allRows) {
-        const p = resolveAhuPlacement(r, existingPlacements);
+        const p = resolveAhuPlacement(r, existingPlacements, floorplan.vertices);
         existingPlacements.push({ id: r.id, x: p.x, z: p.z, rotation: p.rotation });
       }
       const requestedRot =
         typeof body.mapRotation === "number" && Number.isFinite(body.mapRotation)
           ? normalizeRotation(body.mapRotation)
           : undefined;
-      const check = validatePlatformPlacement(body.mapX, body.mapZ, existingPlacements, id, requestedRot);
+      const check = validatePlatformPlacement(
+        body.mapX,
+        body.mapZ,
+        existingPlacements,
+        id,
+        requestedRot,
+        floorplan.vertices,
+      );
       if (!check.valid || !check.zone) {
         return Response.json(
           { error: check.reason ?? "Invalid 3D floor platform position." },

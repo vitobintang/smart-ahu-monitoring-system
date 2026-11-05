@@ -6,13 +6,21 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   collidesWithAnyWall,
   computeExteriorWallSegments,
+  computePolygonAreaSqM,
   DEFAULT_AHU_PLACEMENTS,
+  DEFAULT_ROOM_VERTICES,
+  deleteFloorVertex,
+  dragFloorWall,
+  extrudeWingOnWall,
   FACILITY_ZONES,
+  insertVertexOnWall,
   isFootprintOnPlatform,
   MIN_AHU_SPACING,
+  moveFloorVertex,
   resolveAhuPlacement,
   resolveWallPhysicsAndSnap,
   suggestCleanPlatformSlot,
+  validateFloorplanPolygon,
   validatePlatformPlacement,
 } from "../src/lib/facility-layout";
 import { commandFeedbackMatches, computeAhuStatus } from "../src/lib/domain";
@@ -196,3 +204,58 @@ test("Supavisor EMAXCONNSESSION and offline DNS ENOTFOUND errors are classified 
   equal(isOfflineNetworkError(dnsErr), true);
   ok(summarizeDbError(dnsErr).includes("ENOTFOUND"));
 });
+
+test("3D room editor operations: drag wall, insert/move/delete corner, extrude wing, and snap AHU to custom angled wall", () => {
+  const baseCheck = validateFloorplanPolygon(DEFAULT_ROOM_VERTICES);
+  equal(baseCheck.valid, true);
+  equal(DEFAULT_ROOM_VERTICES.length, 22);
+  const baseArea = computePolygonAreaSqM(DEFAULT_ROOM_VERTICES);
+  ok(baseArea > 800, `expected default multi-wing area > 800 m², got ${baseArea}`);
+
+  // 1. Dragging the top NW Cleanroom wall (edge 0: (-20,-18) -> (-4,-18)) northward to z = -22 expands indoor floor area
+  const expanded = dragFloorWall(DEFAULT_ROOM_VERTICES, 0, -12, -22, 0.5);
+  ok(computePolygonAreaSqM(expanded) > baseArea);
+  const ahuInExpandedWing = validatePlatformPlacement(-12, -20, [], undefined, 0, expanded);
+  equal(ahuInExpandedWing.valid, true);
+  equal(ahuInExpandedWing.indoor, true);
+
+  // 2. Inserting a new corner point on East Lab's outer wall (edge 7: (22,-12) -> (22,2)) and pulling it out into an angled bay
+  const splitRes = insertVertexOnWall(DEFAULT_ROOM_VERTICES, 7, { x: 22, z: -5 }, 0.5);
+  ok(splitRes !== null);
+  equal(splitRes!.vertices.length, 23);
+
+  const angledRoom = moveFloorVertex(splitRes!.vertices, splitRes!.insertedIndex, 26, -5, 0.5);
+  equal(validateFloorplanPolygon(angledRoom).valid, true);
+  ok(computePolygonAreaSqM(angledRoom) > baseArea);
+
+  // Magnetic wall snap aligns AHU flush against the newly created diagonal wall with zero wall collision!
+  const snapDiagonal = resolveWallPhysicsAndSnap(23.6, -8.5, [], {
+    enableWallSnap: true,
+    autoAlignRotation: true,
+    roomVertices: angledRoom,
+  });
+  equal(snapDiagonal.valid, true);
+  equal(snapDiagonal.snappedToWall, true);
+  equal(collidesWithAnyWall(snapDiagonal.snappedX, snapDiagonal.snappedZ, snapDiagonal.rotation, angledRoom), false);
+
+  // 3. One-click Extrude Wing pops out 4 new orthogonal corners on South-East Warehouse bottom wall (edge 12: (14,20) -> (-2,20))
+  const extruded = extrudeWingOnWall(DEFAULT_ROOM_VERTICES, 12, 4);
+  ok(extruded !== null);
+  equal(extruded!.length, 26);
+  ok(computePolygonAreaSqM(extruded!) > baseArea + 30);
+
+  // 4. Deleting the newly inserted vertex restores the 22-corner room cleanly
+  const afterDelete = deleteFloorVertex(angledRoom, splitRes!.insertedIndex);
+  ok(afterDelete !== null);
+  equal(afterDelete!.length, 22);
+
+  // 5. Self-intersecting bowtie walls are rejected by polygon validator
+  const bowtie = [
+    { x: -10, z: -10 },
+    { x: 10, z: 10 },
+    { x: 10, z: -10 },
+    { x: -10, z: 10 },
+  ];
+  equal(validateFloorplanPolygon(bowtie).valid, false);
+});
+
