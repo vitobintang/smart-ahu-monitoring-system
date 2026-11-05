@@ -1097,3 +1097,104 @@ export function resolveAhuPlacement(
     indoor: fallback.indoor,
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* Dynamic Randomized Outdoor Landscape Tree Generator & Room Reactor */
+/* ------------------------------------------------------------------ */
+
+export interface OutdoorTreeCandidate {
+  x: number;
+  z: number;
+  scale: number;
+  kind: "canopy" | "pine";
+  rotationY: number;
+}
+
+export const OUTDOOR_TREE_WALL_CLEARANCE = 2.8;
+export const OUTDOOR_TREE_AHU_CLEARANCE = 3.5;
+export const MAX_VISIBLE_OUTDOOR_TREES = 8;
+
+function minDistanceToWalls(x: number, z: number, walls: WallSegment[]): number {
+  let minD = Infinity;
+  for (const w of walls) {
+    const d = projectPointToSegment(x, z, w.x1, w.z1, w.x2, w.z2).dist;
+    if (d < minD) minD = d;
+  }
+  return minD;
+}
+
+/**
+ * Returns true when an outdoor tree candidate at (x, z) is strictly outside the current
+ * room polygon and maintains safe clearance from all room walls and AHU units.
+ */
+export function isOutdoorTreeSpotClear(
+  x: number,
+  z: number,
+  roomVertices: FloorVertex[] = DEFAULT_ROOM_VERTICES,
+  ahuPositions: Array<{ x: number; z: number }> = [],
+): boolean {
+  if (!isPointWithinCampusBounds(x, z)) return false;
+  if (isPointInsideIndoorRoom(x, z, roomVertices)) return false;
+
+  const walls = computeExteriorWallSegments(roomVertices);
+  if (minDistanceToWalls(x, z, walls) < OUTDOOR_TREE_WALL_CLEARANCE) return false;
+
+  for (const u of ahuPositions) {
+    if (Math.hypot(u.x - x, u.z - z) < OUTDOOR_TREE_AHU_CLEARANCE) return false;
+  }
+  return true;
+}
+
+/**
+ * Generates a randomized, Poisson-spaced spatial pool of outdoor tree spots:
+ * - 5 sparse initial outdoor trees around the building courtyard (3.1m–11.5m outside walls),
+ *   so expanding the room automatically swallows & hides trees in its path.
+ * - 6 dormant randomized seeds inside the room wings, so shrinking the room automatically
+ *   reveals & sprouts new trees in the newly opened outdoor space!
+ */
+export function generateRandomTreePool(
+  baseVertices: FloorVertex[] = DEFAULT_ROOM_VERTICES,
+  existingAhus: Array<{ x: number; z: number }> = [],
+  rng: () => number = Math.random,
+): OutdoorTreeCandidate[] {
+  const pool: OutdoorTreeCandidate[] = [];
+  const baseWalls = computeExteriorWallSegments(baseVertices);
+
+  const makeSpec = (x: number, z: number): OutdoorTreeCandidate => ({
+    x: Number(x.toFixed(2)),
+    z: Number(z.toFixed(2)),
+    scale: Number((0.92 + rng() * 0.22).toFixed(2)),
+    kind: rng() < 0.62 ? "canopy" : "pine",
+    rotationY: Number((rng() * Math.PI * 2).toFixed(3)),
+  });
+
+  // Pass 1: 5 sparse, randomly placed visible outdoor trees around the courtyard perimeter
+  const targetInitialOutdoor = 5;
+  for (let attempt = 0; attempt < 420 && pool.length < targetInitialOutdoor; attempt += 1) {
+    const x = -32 + rng() * 64;
+    const z = -30 + rng() * 60;
+    if (!isOutdoorTreeSpotClear(x, z, baseVertices, existingAhus)) continue;
+    const wallDist = minDistanceToWalls(x, z, baseWalls);
+    if (wallDist < 3.1 || wallDist > 11.5) continue;
+    if (pool.some((p) => Math.hypot(p.x - x, p.z - z) < 11.8)) continue;
+    pool.push(makeSpec(x, z));
+  }
+
+  // Pass 2: 6 dormant randomized seeds inside the room wings (sprout automatically when room shrinks!)
+  const targetDormantSeeds = 6;
+  let dormantAdded = 0;
+  for (let attempt = 0; attempt < 420 && dormantAdded < targetDormantSeeds; attempt += 1) {
+    const x = -21 + rng() * 42;
+    const z = -17 + rng() * 36;
+    if (!isPointInsideIndoorRoom(x, z, baseVertices)) continue;
+    const wallDist = minDistanceToWalls(x, z, baseWalls);
+    // Bias toward outer wings (1.5m–7.5m inside walls) so shrinking a wing by a few meters reveals trees!
+    if (wallDist < 1.4 || wallDist > 8.0) continue;
+    if (pool.some((p) => Math.hypot(p.x - x, p.z - z) < 8.8)) continue;
+    pool.push(makeSpec(x, z));
+    dormantAdded += 1;
+  }
+
+  return pool;
+}
+

@@ -13,8 +13,11 @@ import {
   dragFloorWall,
   extrudeWingOnWall,
   FACILITY_ZONES,
+  generateRandomTreePool,
   insertVertexOnWall,
   isFootprintOnPlatform,
+  isOutdoorTreeSpotClear,
+  MAX_VISIBLE_OUTDOOR_TREES,
   MIN_AHU_SPACING,
   moveFloorVertex,
   resolveAhuPlacement,
@@ -258,4 +261,48 @@ test("3D room editor operations: drag wall, insert/move/delete corner, extrude w
   ];
   equal(validateFloorplanPolygon(bowtie).valid, false);
 });
+
+test("randomized outdoor trees keep a sparse count and automatically appear/disappear as the room shrinks or expands", () => {
+  // Deterministic PRNG so test is 100% repeatable
+  let s = 424242;
+  const rng = () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 0x100000000;
+  };
+
+  const pool = generateRandomTreePool(DEFAULT_ROOM_VERTICES, [], rng);
+  ok(pool.length >= 8 && pool.length <= 12, `expected 8..12 total pool candidates, got ${pool.length}`);
+
+  const countVisible = (room: Array<{ x: number; z: number }>) =>
+    Math.min(
+      MAX_VISIBLE_OUTDOOR_TREES,
+      pool.filter((t) => isOutdoorTreeSpotClear(t.x, t.z, room, [])).length,
+    );
+
+  // At default room size: just a few (4–6) outdoor trees are visible
+  const defaultVisible = countVisible(DEFAULT_ROOM_VERTICES);
+  ok(defaultVisible >= 3 && defaultVisible <= 6, `expected 3..6 initial trees, got ${defaultVisible}`);
+
+  // Shrinking the room to a small central box uncovers dormant seeds -> more trees automatically appear!
+  const shrunkRoom = [
+    { x: -4, z: -4 },
+    { x: 4, z: -4 },
+    { x: 4, z: 4 },
+    { x: -4, z: 4 },
+  ];
+  const shrunkVisible = countVisible(shrunkRoom);
+  ok(shrunkVisible > defaultVisible, `expected more trees when room shrinks (${shrunkVisible} > ${defaultVisible})`);
+  ok(shrunkVisible <= MAX_VISIBLE_OUTDOOR_TREES);
+
+  // Expanding the room wide across the campus covers outdoor spots -> trees automatically disappear!
+  const hugeRoom = [
+    { x: -34, z: -32 },
+    { x: 34, z: -32 },
+    { x: 34, z: 32 },
+    { x: -34, z: 32 },
+  ];
+  const hugeVisible = countVisible(hugeRoom);
+  ok(hugeVisible < defaultVisible, `expected fewer trees when room expands (${hugeVisible} < ${defaultVisible})`);
+});
+
 

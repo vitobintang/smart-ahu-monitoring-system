@@ -39,14 +39,17 @@ import {
   deleteFloorVertex,
   dragFloorWall,
   extrudeWingOnWall,
+  generateRandomTreePool,
   insertVertexOnWall,
-  isPointInsideIndoorRoom,
+  isOutdoorTreeSpotClear,
+  MAX_VISIBLE_OUTDOOR_TREES,
   moveFloorVertex,
   normalizeRotation,
   projectPointToSegment,
   resolveAhuPlacement,
   resolveWallPhysicsAndSnap,
   type FloorVertex,
+  type OutdoorTreeCandidate,
   type PlacementValidation,
   type WallSegment,
 } from "@/lib/facility-layout";
@@ -123,25 +126,8 @@ const STATUS_DOT_CLASS: Record<AhuStatus, string> = {
   OFFLINE: "bg-rose-500",
 };
 
-interface TreeSpec {
-  x: number;
-  z: number;
-  scale: number;
-  kind: "canopy" | "pine";
-}
-
-/** Sparse, tasteful architectural perimeter trees signifying the exterior grounds without clutter. */
-const OUTDOOR_TREE_SPECS: TreeSpec[] = [
-  { x: -28.0, z: -15.0, scale: 1.05, kind: "canopy" },
-  { x: 27.0, z: -15.5, scale: 0.98, kind: "pine" },
-  { x: 28.0, z: 12.0, scale: 1.08, kind: "canopy" },
-  { x: -27.0, z: 15.5, scale: 1.02, kind: "canopy" },
-  { x: -11.5, z: 24.0, scale: 0.96, kind: "pine" },
-  { x: 6.5, z: -21.0, scale: 0.98, kind: "canopy" },
-];
-
 /** Procedurally generates a crisp 3D architectural tree (deciduous shade canopy or layered pine) with planter ring. */
-function buildOutdoorTree3D(spec: TreeSpec): { group: THREE.Group; crown: THREE.Group } {
+function buildOutdoorTree3D(spec: OutdoorTreeCandidate): { group: THREE.Group; crown: THREE.Group } {
   const group = new THREE.Group();
   const s = spec.scale;
 
@@ -210,6 +196,7 @@ function buildOutdoorTree3D(spec: TreeSpec): { group: THREE.Group; crown: THREE.
     }
   }
 
+  crown.rotation.y = spec.rotationY;
   group.add(crown);
   group.position.set(spec.x, 0, spec.z);
   return { group, crown };
@@ -926,7 +913,15 @@ export default function AhuFacilityMap3D({
       wallGizmoMat: THREE.MeshStandardMaterial;
       wallGizmoRingMat: THREE.MeshBasicMaterial;
     };
-    trees: Array<{ group: THREE.Group; crown: THREE.Group; x: number; z: number; phase: number }>;
+    trees: Array<{
+      group: THREE.Group;
+      crown: THREE.Group;
+      x: number;
+      z: number;
+      phase: number;
+      targetVisible: boolean;
+      currentScale: number;
+    }>;
     rotors: Array<{ rotor: THREE.Group; running: boolean }>;
     halos: Map<string, THREE.Mesh>;
     beacons: Array<{ mat: THREE.MeshStandardMaterial; fault: boolean }>;
@@ -1148,12 +1143,36 @@ export default function AhuFacilityMap3D({
       }),
     };
 
-    // Sparse, tasteful 3D Outdoor Accent Trees
+    // Randomized sparse 3D Outdoor Trees + dormant seeds that sprout/disappear automatically as the room shrinks or expands
     const landscapeGroup = new THREE.Group();
-    const treeEntries: Array<{ group: THREE.Group; crown: THREE.Group; x: number; z: number; phase: number }> = [];
-    for (let idx = 0; idx < OUTDOOR_TREE_SPECS.length; idx += 1) {
-      const spec = OUTDOOR_TREE_SPECS[idx];
+    const randomTreePool = generateRandomTreePool(
+      activeRoomVerticesRef.current,
+      existingCoordsRef.current,
+    );
+    const treeEntries: Array<{
+      group: THREE.Group;
+      crown: THREE.Group;
+      x: number;
+      z: number;
+      phase: number;
+      targetVisible: boolean;
+      currentScale: number;
+    }> = [];
+    let initialShown = 0;
+    for (let idx = 0; idx < randomTreePool.length; idx += 1) {
+      const spec = randomTreePool[idx];
       const builtTree = buildOutdoorTree3D(spec);
+      const isClear =
+        initialShown < MAX_VISIBLE_OUTDOOR_TREES &&
+        isOutdoorTreeSpotClear(
+          spec.x,
+          spec.z,
+          activeRoomVerticesRef.current,
+          existingCoordsRef.current,
+        );
+      if (isClear) initialShown += 1;
+      builtTree.group.visible = isClear;
+      builtTree.group.scale.setScalar(isClear ? 1 : 0.001);
       landscapeGroup.add(builtTree.group);
       treeEntries.push({
         group: builtTree.group,
@@ -1161,6 +1180,8 @@ export default function AhuFacilityMap3D({
         x: spec.x,
         z: spec.z,
         phase: idx * 0.9,
+        targetVisible: isClear,
+        currentScale: isClear ? 1 : 0,
       });
     }
     scene.add(landscapeGroup);
@@ -1749,6 +1770,18 @@ export default function AhuFacilityMap3D({
           if (r.running) r.rotor.rotation.z -= dt * 7.5;
         }
         for (const t of objs.trees) {
+          const goal = t.targetVisible ? 1 : 0;
+          if (Math.abs(t.currentScale - goal) > 0.002) {
+            const rate = goal > t.currentScale ? 9.5 : 12.5;
+            t.currentScale += (goal - t.currentScale) * (1 - Math.exp(-dt * rate));
+            const s = Math.max(0.001, t.currentScale);
+            t.group.scale.setScalar(s);
+            t.group.visible = t.currentScale > 0.015;
+          } else {
+            t.currentScale = goal;
+            t.group.visible = goal > 0.5;
+            if (t.group.visible) t.group.scale.setScalar(1);
+          }
           if (t.group.visible) {
             t.crown.rotation.z = Math.sin(elapsed * 1.25 + t.phase) * 0.016;
           }
@@ -1988,24 +2021,25 @@ export default function AhuFacilityMap3D({
     }
   }, [activeRoomVertices, editingRoom, roomTool, hoveredRoomTarget]);
 
-  // Auto-hide any decorative tree if an AHU OR expanded room wall occupies its spot
+  // Automatically sprout or hide outdoor trees in real time as the room shrinks/expands or AHUs move!
   useEffect(() => {
     const objs = ahuSceneObjectsRef.current;
     if (!objs) return;
     const activeDraft = mode === "placement" ? placement : moveDraft;
-    const walls = computeExteriorWallSegments(activeRoomVertices);
+    const occupiedAhuPoints = resolvedUnits
+      .filter((u) => u.item.ahu.id !== movingAhuId)
+      .map((u) => ({ x: u.placement.x, z: u.placement.z }));
+    if (activeDraft) {
+      occupiedAhuPoints.push({ x: activeDraft.x, z: activeDraft.z });
+    }
+
+    let shownCount = 0;
     for (const t of objs.trees) {
-      const insideExpandedRoom = isPointInsideIndoorRoom(t.x, t.z, activeRoomVertices);
-      const nearWall = walls.some(
-        (w) => projectPointToSegment(t.x, t.z, w.x1, w.z1, w.x2, w.z2).dist < 2.5,
-      );
-      const blockedByUnit = resolvedUnits.some(
-        (u) => u.item.ahu.id !== movingAhuId && Math.hypot(u.placement.x - t.x, u.placement.z - t.z) < 3.4,
-      );
-      const blockedByDraft = activeDraft
-        ? Math.hypot(activeDraft.x - t.x, activeDraft.z - t.z) < 3.4
-        : false;
-      t.group.visible = !(insideExpandedRoom || nearWall || blockedByUnit || blockedByDraft);
+      const clear =
+        shownCount < MAX_VISIBLE_OUTDOOR_TREES &&
+        isOutdoorTreeSpotClear(t.x, t.z, activeRoomVertices, occupiedAhuPoints);
+      if (clear) shownCount += 1;
+      t.targetVisible = clear;
     }
   }, [resolvedUnits, placement, moveDraft, mode, movingAhuId, activeRoomVertices]);
 
