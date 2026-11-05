@@ -4,8 +4,8 @@ import { db } from "@/db";
 import { ahus, devices } from "@/db/schema";
 import type { DataSource } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
-import { refreshAhuStatus } from "@/lib/engine";
-import { simulationTick } from "@/lib/workers";
+import { readAuthoritativeSource, reconcileAhuSourceTransition, refreshAhuStatus } from "@/lib/engine";
+import { resetSimulatorUnit, simulationTick } from "@/lib/workers";
 
 export const dynamic = "force-dynamic";
 
@@ -42,22 +42,45 @@ export async function POST(req: Request) {
       const existing = (await db.select().from(devices).where(eq(devices.id, body.deviceId)).limit(1))[0];
       if (!existing) return Response.json({ error: "Device not found" }, { status: 404 });
       const nextEnabled = Boolean(body.enabled);
+      let prevSource: "PHYSICAL" | "SIMULATION" | null = null;
+      let nextSource: "PHYSICAL" | "SIMULATION" | null = null;
       await db.transaction(async (tx) => {
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${existing.ahuId}, 0))`);
+        prevSource = await readAuthoritativeSource(tx, existing.ahuId);
         await tx.update(devices).set({ enabled: nextEnabled }).where(eq(devices.id, existing.id));
+        nextSource = await readAuthoritativeSource(tx, existing.ahuId);
+        const reconciled = await reconcileAhuSourceTransition(tx, {
+          ahuId: existing.ahuId,
+          prevSource,
+          nextSource,
+          userId: actor.user.id,
+          userEmail: actor.user.email,
+          ipAddress: ip,
+        });
         await writeAudit({
           userId: actor.user.id,
           userEmail: actor.user.email,
           action: "DEVICE_UPDATED",
           entity: `device:${existing.id}`,
           ipAddress: ip,
-          details: { from: existing.enabled, to: nextEnabled, ahuId: existing.ahuId },
+          details: {
+            from: existing.enabled,
+            to: nextEnabled,
+            ahuId: existing.ahuId,
+            prevSource,
+            nextSource,
+            ...reconciled,
+          },
         }, tx);
       });
 
+      if (prevSource === "SIMULATION" && nextSource !== "SIMULATION") {
+        resetSimulatorUnit(existing.ahuId);
+      }
+
       // Immediately reflect enable/disable state in AHU status without waiting
       // for the background monitor/simulation interval.
-      if (nextEnabled && existing.sourceType === "SIMULATION" && process.env.SIMULATION_ENABLED !== "false") {
+      if (nextSource === "SIMULATION" && process.env.SIMULATION_ENABLED !== "false") {
         await simulationTick();
       }
       await refreshAhuStatus(existing.ahuId);
@@ -83,8 +106,11 @@ export async function POST(req: Request) {
 
     const id = randomId();
     const token = `${sourceType === "PHYSICAL" ? "phy" : "sim"}_${ahuId.toLowerCase()}_${randomHex(24)}`;
+    let prevSource: "PHYSICAL" | "SIMULATION" | null = null;
+    let nextSource: "PHYSICAL" | "SIMULATION" | null = null;
     await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${ahuId}, 0))`);
+      prevSource = await readAuthoritativeSource(tx, ahuId);
       await tx.insert(devices).values({
         id,
         ahuId,
@@ -93,6 +119,15 @@ export async function POST(req: Request) {
         sourceType,
         enabled: true,
       });
+      nextSource = await readAuthoritativeSource(tx, ahuId);
+      const reconciled = await reconcileAhuSourceTransition(tx, {
+        ahuId,
+        prevSource,
+        nextSource,
+        userId: actor.user.id,
+        userEmail: actor.user.email,
+        ipAddress: ip,
+      });
 
       await writeAudit({
         userId: actor.user.id,
@@ -100,11 +135,22 @@ export async function POST(req: Request) {
         action: "DEVICE_PROVISIONED",
         entity: `device:${id}`,
         ipAddress: ip,
-        details: { ahuId, sourceType, label: body.label ?? null },
+        details: {
+          ahuId,
+          sourceType,
+          label: body.label ?? null,
+          prevSource,
+          nextSource,
+          ...reconciled,
+        },
       }, tx);
     });
 
-    if (sourceType === "SIMULATION" && process.env.SIMULATION_ENABLED !== "false") {
+    if (prevSource === "SIMULATION" && nextSource !== "SIMULATION") {
+      resetSimulatorUnit(ahuId);
+    }
+
+    if (nextSource === "SIMULATION" && process.env.SIMULATION_ENABLED !== "false") {
       await simulationTick();
     }
     await refreshAhuStatus(ahuId);

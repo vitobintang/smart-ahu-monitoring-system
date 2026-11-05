@@ -11,6 +11,7 @@ interface Override {
   ahuId: string;
   forcedFault: string | null;
   commLoss: boolean;
+  rejectCommands: boolean;
   rapidFilterFouling: boolean;
   humiditySpike: boolean;
   currentOverload: boolean;
@@ -178,6 +179,12 @@ export default function SimulatorPage() {
                   checked={Boolean(ov?.commLoss)}
                   disabled={busy === a.id}
                   onChange={(v) => void patch(a.id, { commLoss: v })}
+                />
+                <Toggle
+                  label="Reject commands / controller NACK (FR-26 FAILED)"
+                  checked={Boolean(ov?.rejectCommands)}
+                  disabled={busy === a.id}
+                  onChange={(v) => void patch(a.id, { rejectCommands: v })}
                 />
                 <Toggle
                   label="Rapid filter fouling (trend test)"

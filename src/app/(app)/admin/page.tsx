@@ -2,11 +2,13 @@
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Check, Copy, HardDrive, KeyRound, Plus, ShieldAlert, UserPlus, Users } from "lucide-react";
+import { Ban, Check, Copy, HardDrive, KeyRound, Plus, ShieldAlert, Trash2, UserPlus, Users } from "lucide-react";
 import { api, fmtDateTime, usePoll } from "@/lib/client";
 import { AHU_IDS, ROLES } from "@/lib/domain";
 import { isAdminRole, isSyntheticTokenEmail } from "@/lib/role-auth";
 import { Btn, Empty, ErrorNote, Field, QualityTag, Spinner, cx, inputClass } from "@/components/ui";
+
+const NON_ADMIN_ROLES = ["Engineering", "Operator", "Viewer"] as const;
 
 interface UserRow {
   id: string;
@@ -48,7 +50,7 @@ export default function AdminPage() {
   const params = useSearchParams();
   const router = useRouter();
   const tab = params.get("tab") === "devices" ? "devices" : "users";
-  const users = usePoll<{ users: UserRow[] }>("/api/users", 30000, tab === "users");
+  const users = usePoll<{ users: UserRow[]; currentUserId?: string }>("/api/users", 30000, tab === "users");
   const devices = usePoll<{ devices: DeviceRow[]; physicalControlUnlocked: boolean }>(
     "/api/devices",
     30000,
@@ -78,9 +80,17 @@ export default function AdminPage() {
   const [resetPassword, setResetPassword] = useState("");
 
   const allUsers = users.data?.users ?? [];
+  const currentUserId = users.data?.currentUserId ?? "";
   const adminUsers = allUsers.filter((u) => isAdminRole(u.role));
   const nonAdminUsers = allUsers.filter((u) => !isAdminRole(u.role));
   const creatingAdmin = isAdminRole(role);
+
+  const activeTokensByUser = new Map<string, number>();
+  for (const d of access.data?.devices ?? []) {
+    if (!d.revokedAt) {
+      activeTokensByUser.set(d.userId, (activeTokensByUser.get(d.userId) ?? 0) + 1);
+    }
+  }
 
   async function copyTokenToClipboard(value: string) {
     try {
@@ -121,6 +131,64 @@ export default function AdminPage() {
       await access.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not revoke device");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeMemberRole(u: UserRow, nextRole: string) {
+    if (nextRole === u.role) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api("/api/users", {
+        method: "PATCH",
+        body: JSON.stringify({ userId: u.id, role: nextRole }),
+      });
+      setNotice(`Updated role for "${displayMemberLabel(u)}" from ${u.role} to ${nextRole} (FR-20).`);
+      await Promise.all([users.reload(), access.reload()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update member role");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revokeAllMemberSessions(u: UserRow) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await api<{ ok: boolean; revokedCount: number }>("/api/users", {
+        method: "PATCH",
+        body: JSON.stringify({ userId: u.id, revokeSessions: true }),
+      });
+      setNotice(
+        `Revoked ${res.revokedCount} active token(s) / browser session(s) for "${displayMemberLabel(u)}" (FR-20).`,
+      );
+      await access.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not revoke member sessions");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeUser(u: UserRow) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api(`/api/users?userId=${encodeURIComponent(u.id)}`, {
+        method: "DELETE",
+      });
+      if (accessUser === u.id) setAccessUser("");
+      if (resetAdminId === u.id) setResetAdminId("");
+      setNotice(`Removed ${u.role} account "${displayMemberLabel(u)}" (FR-20).`);
+      await Promise.all([users.reload(), access.reload()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove user");
     } finally {
       setBusy(false);
     }
@@ -380,25 +448,34 @@ export default function AdminPage() {
               <p className="text-[11px] text-slate-500">{users.data?.users.length ?? 0} accounts · roles per FR-02</p>
             </header>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[620px] text-left text-xs">
+              <table className="w-full min-w-[740px] text-left text-xs">
                 <thead className="bg-ink-900/60 text-[10px] uppercase tracking-wider text-slate-500">
                   <tr>
                     <th className="px-4 py-2.5">Name / Account</th>
                     <th className="px-4 py-2.5">Sign-in method</th>
                     <th className="px-4 py-2.5">Role</th>
                     <th className="px-4 py-2.5">Created</th>
+                    <th className="px-4 py-2.5 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-ink-800/70">
                   {(users.data?.users ?? []).map((u) => {
                     const admin = isAdminRole(u.role);
+                    const isSelf = u.id === currentUserId;
+                    const isSoleAdmin = admin && adminUsers.length <= 1;
+                    const activeTokenCount = activeTokensByUser.get(u.id) ?? 0;
                     return (
                       <tr key={u.id}>
                         <td className="px-4 py-2.5">
                           {admin ? (
-                            <div>
+                            <div className="flex flex-wrap items-center gap-1.5">
                               <span className="font-mono font-medium text-slate-200">{u.email}</span>
-                              {u.fullName ? <span className="ml-2 text-slate-400">({u.fullName})</span> : null}
+                              {u.fullName ? <span className="text-slate-400">({u.fullName})</span> : null}
+                              {isSelf ? (
+                                <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-emerald-300">
+                                  Active session
+                                </span>
+                              ) : null}
                             </div>
                           ) : (
                             <div>
@@ -410,14 +487,83 @@ export default function AdminPage() {
                           )}
                         </td>
                         <td className="px-4 py-2.5 text-[11px] text-slate-400">
-                          {admin ? "Email & password" : "Access token only"}
+                          {admin ? (
+                            "Email & password"
+                          ) : (
+                            <span>
+                              Access token only{" "}
+                              <span className="font-mono text-[10px] text-slate-500">
+                                ({activeTokenCount} active)
+                              </span>
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-2.5">
-                          <span className="rounded bg-cyan-500/15 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-cyan-300">
-                            {u.role}
-                          </span>
+                          {admin ? (
+                            <span className="rounded bg-cyan-500/15 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-cyan-300">
+                              {u.role}
+                            </span>
+                          ) : (
+                            <select
+                              aria-label={`Role for ${displayMemberLabel(u)}`}
+                              disabled={busy}
+                              value={u.role}
+                              onChange={(e) => void changeMemberRole(u, e.target.value)}
+                              className="rounded-lg border border-ink-600 bg-ink-900/90 px-2 py-1 font-mono text-[11px] font-semibold text-cyan-200 outline-none focus:border-cyan-500/60 disabled:opacity-50"
+                            >
+                              {NON_ADMIN_ROLES.map((r) => (
+                                <option key={r} value={r}>
+                                  {r}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                         </td>
                         <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">{fmtDateTime(u.createdAt)}</td>
+                        <td className="px-4 py-2.5 text-right">
+                          <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
+                            {!admin && activeTokenCount > 0 ? (
+                              <Btn
+                                size="sm"
+                                variant="ghost"
+                                disabled={busy}
+                                onClick={() => {
+                                  if (
+                                    window.confirm(
+                                      `Revoke all ${activeTokenCount} active token(s) / browser session(s) for "${displayMemberLabel(u)}"?`,
+                                    )
+                                  ) {
+                                    void revokeAllMemberSessions(u);
+                                  }
+                                }}
+                              >
+                                <Ban size={12} /> Deactivate
+                              </Btn>
+                            ) : null}
+                            {isSelf || isSoleAdmin ? (
+                              <span className="font-mono text-[10px] uppercase text-slate-600">
+                                {isSelf ? "Protected (self)" : "Protected (last Admin)"}
+                              </span>
+                            ) : (
+                              <Btn
+                                size="sm"
+                                variant="ghost"
+                                disabled={busy}
+                                onClick={() => {
+                                  if (
+                                    window.confirm(
+                                      `Remove ${u.role} account "${displayMemberLabel(u)}"? Active browser sessions and tokens for this user will be revoked immediately.`,
+                                    )
+                                  ) {
+                                    void removeUser(u);
+                                  }
+                                }}
+                              >
+                                <Trash2 size={12} /> Remove
+                              </Btn>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}

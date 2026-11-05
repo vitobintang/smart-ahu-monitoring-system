@@ -2,18 +2,31 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { accessDevices, users } from "@/db/schema";
 import type { Role } from "@/db/schema";
-import { getClientIp, jsonError, requireAuth, safePublicUser, writeAudit } from "@/lib/auth";
+import {
+  getClientIp,
+  invalidateSessionCache,
+  jsonError,
+  requireAuth,
+  safePublicUser,
+  writeAudit,
+} from "@/lib/auth";
 import { secretHash } from "@/lib/device-access";
 import { ROLES } from "@/lib/domain";
 import { randomHex, randomId } from "@/lib/ids";
 import { buildTokenAccountEmail, isAdminRole } from "@/lib/role-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import {
+  NON_ADMIN_ROLES,
+  removeManagedUser,
+  revokeAllUserSessions,
+  updateManagedUser,
+} from "@/lib/user-management";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    await requireAuth("manageUsers");
+    const actor = await requireAuth("manageUsers");
     const rows = await db
       .select({
         id: users.id,
@@ -24,7 +37,12 @@ export async function GET() {
       })
       .from(users)
       .orderBy(users.createdAt);
-    return Response.json({ users: rows, roles: ROLES });
+    return Response.json({
+      users: rows,
+      roles: ROLES,
+      nonAdminRoles: NON_ADMIN_ROLES,
+      currentUserId: actor.user.id,
+    });
   } catch (err) {
     return jsonError(err);
   }
@@ -177,10 +195,37 @@ export async function POST(req: Request) {
 export async function PATCH(req: Request) {
   try {
     const actor = await requireAuth("manageUsers", { mutating: true });
+    const ip = await getClientIp();
     const body = (await req.json()) as {
       userId?: string;
       password?: string;
+      role?: string;
+      fullName?: string;
+      revokeSessions?: boolean;
     };
+
+    if (body.revokeSessions) {
+      const res = await revokeAllUserSessions({
+        actor: actor.user,
+        targetUserId: body.userId ?? "",
+        ipAddress: ip,
+      });
+      if (!res.ok) return Response.json({ error: res.error }, { status: res.status });
+      return Response.json({ ok: true, ...res.data });
+    }
+
+    if (body.role !== undefined || body.fullName !== undefined) {
+      const res = await updateManagedUser({
+        actor: actor.user,
+        targetUserId: body.userId ?? "",
+        role: body.role,
+        fullName: body.fullName,
+        ipAddress: ip,
+      });
+      if (!res.ok) return Response.json({ error: res.error }, { status: res.status });
+      return Response.json({ ok: true, ...res.data });
+    }
+
     const userId = (body.userId ?? actor.user.id).trim();
     const password = body.password ?? "";
     if (!userId) {
@@ -210,7 +255,7 @@ export async function PATCH(req: Request) {
       return Response.json({ error: `Could not update password: ${error.message}` }, { status: 400 });
     }
 
-    const ip = await getClientIp();
+    invalidateSessionCache();
     await writeAudit({
       userId: actor.user.id,
       userEmail: actor.user.email,
@@ -221,6 +266,39 @@ export async function PATCH(req: Request) {
     });
 
     return Response.json({ ok: true, email: target.email });
+  } catch (err) {
+    return jsonError(err);
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const actor = await requireAuth("manageUsers", { mutating: true });
+    const ip = await getClientIp();
+    const url = new URL(req.url);
+    let userId = url.searchParams.get("userId")?.trim() ?? "";
+
+    if (!userId) {
+      try {
+        const body = (await req.json()) as { userId?: string };
+        userId = (body.userId ?? "").trim();
+      } catch {
+        /* empty body is valid when userId query param is used */
+      }
+    }
+
+    const res = await removeManagedUser({
+      actor: actor.user,
+      targetUserId: userId,
+      ipAddress: ip,
+      deleteSupabaseAuthUser: async (authUserId) => {
+        const supabase = createSupabaseAdminClient();
+        const { error } = await supabase.auth.admin.deleteUser(authUserId);
+        if (error) throw new Error(error.message);
+      },
+    });
+    if (!res.ok) return Response.json({ error: res.error }, { status: res.status });
+    return Response.json({ ok: true, ...res.data });
   } catch (err) {
     return jsonError(err);
   }

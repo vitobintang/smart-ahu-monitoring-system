@@ -80,7 +80,7 @@ interface Detail {
   thresholds: Threshold[];
   devices: { id: string; label: string; sourceType: "PHYSICAL" | "SIMULATION"; enabled: boolean; createdAt: string }[];
   alarms: { id: string; parameter: string; priority: string; message: string; isActive: boolean; acknowledged: boolean; acknowledgedBy: string | null; acknowledgedAt: string | null; triggeredAt: string; resolvedAt: string | null; observedValue: number | null; thresholdValue: number | null }[];
-  commands: { id: string; commandType: string; status: string; createdAt: string; expiresAt: string; confirmedAt: string | null; userEmail: string | null; payload: unknown }[];
+  commands: { id: string; commandType: string; status: string; rejectionReason?: string | null; createdAt: string; expiresAt: string; confirmedAt: string | null; userEmail: string | null; payload: unknown }[];
   trends: { id: string; parameter: string; estimatedMin: number; direction: string; isReliable: boolean; acknowledged: boolean; createdAt: string; minutesToBreach: number | null }[];
   analyses: Analysis[];
   computed: { status: AhuStatus; ageSec: number | null; stale: boolean };
@@ -421,7 +421,14 @@ export default function AhuDetailView({
                     <td className="py-2 pr-3 font-mono text-cyan-300">{c.commandType}</td>
                     <td className="py-2 pr-3 font-mono text-[11px] text-slate-400">{JSON.stringify(c.payload ?? {})}</td>
                     <td className="py-2 pr-3">
-                      <CommandStatusBadge status={c.status} />
+                      <div className="flex flex-col items-start gap-1">
+                        <CommandStatusBadge status={c.status} />
+                        {c.rejectionReason ? (
+                          <span className="max-w-xs text-[10px] leading-snug text-rose-300/90">
+                            {c.rejectionReason}
+                          </span>
+                        ) : null}
+                      </div>
                     </td>
                     <td className="py-2 pr-3 text-slate-400">{c.userEmail ?? "system"}</td>
                     <td className="py-2 pr-3 font-mono text-[11px] text-slate-500">{fmtDateTime(c.createdAt)}</td>
