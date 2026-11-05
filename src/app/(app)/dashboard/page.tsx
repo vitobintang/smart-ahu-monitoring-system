@@ -74,12 +74,6 @@ interface Overview {
   serverTime: string;
 }
 
-interface Feed {
-  alarms: Overview["recentAlarms"];
-  trends: Overview["recentTrends"];
-  commands: { id: string; ahuId: string; commandType: string; status: string; expiresAt: string }[];
-}
-
 const PILL: Record<AhuStatus, { label: string; cls: string }> = {
   RUN: { label: "RUNNING", cls: "bg-[#22c55e] text-white shadow-[0_6px_14px_-6px_rgba(34,197,94,0.9)]" },
   STOP: { label: "STOPPED", cls: "bg-[#f5b301] text-white shadow-[0_6px_14px_-6px_rgba(245,179,1,0.9)]" },

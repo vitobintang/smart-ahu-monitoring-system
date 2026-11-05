@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { asc } from "drizzle-orm";
 import { db } from "@/db";
 import { ahus, devices, sensorThresholds } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";

@@ -3,10 +3,10 @@ import { eq } from "drizzle-orm";
 import { randomHex, randomId, safeEqual } from "@/lib/ids";
 import { db } from "@/db";
 import { auditLogs, users } from "@/db/schema";
-import type { Role, UserRow } from "@/db/schema";
+import type { UserRow } from "@/db/schema";
 import { type Activity, can } from "@/lib/domain";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { DEVICE_COOKIE, getAuthorizedDeviceUser, revokeCurrentDeviceCookie, secretHash } from "@/lib/device-access";
+import { revokeCurrentDeviceCookie, secretHash } from "@/lib/device-access";
 import { resolveOrLinkAppUserForAuthUser } from "@/lib/oauth-account";
 import { resolveRoleSession } from "@/lib/role-auth";
 
@@ -184,36 +184,6 @@ export async function writeAudit(
 }
 
 /* ------------------------------------------------------------------ */
-/* Rate limiting                                                      */
-/* ------------------------------------------------------------------ */
-
-type Bucket = { hits: number[] };
-const globalForRl = globalThis as typeof globalThis & { __rl?: Map<string, Bucket> };
-const buckets: Map<string, Bucket> = (globalForRl.__rl ??= new Map<string, Bucket>());
-
-export function rateLimit(
-  key: string,
-  max: number,
-  windowMs: number,
-): { allowed: boolean; remaining: number; retryAfterSec: number } {
-  const now = Date.now();
-  const bucket = buckets.get(key) ?? { hits: [] };
-  bucket.hits = bucket.hits.filter((t) => now - t < windowMs);
-  if (bucket.hits.length >= max) {
-    const oldest = bucket.hits[0] ?? now;
-    buckets.set(key, bucket);
-    return {
-      allowed: false,
-      remaining: 0,
-      retryAfterSec: Math.ceil((windowMs - (now - oldest)) / 1000),
-    };
-  }
-  bucket.hits.push(now);
-  buckets.set(key, bucket);
-  return { allowed: true, remaining: max - bucket.hits.length, retryAfterSec: 0 };
-}
-
-/* ------------------------------------------------------------------ */
 /* Authorization guards (FR-02 / NFR-03)                              */
 /* ------------------------------------------------------------------ */
 
@@ -223,10 +193,6 @@ export class ApiError extends Error {
     super(message);
     this.status = status;
   }
-}
-
-export function hasRole(role: Role | string, activity: Activity): boolean {
-  return can(role, activity);
 }
 
 /**

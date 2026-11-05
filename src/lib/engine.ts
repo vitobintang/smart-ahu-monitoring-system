@@ -1408,12 +1408,4 @@ export async function runTrendDetection(ahuId: string, now = new Date(), exec: C
   return created;
 }
 
-export async function listActiveAlarms(ahuIds?: string[]) {
-  const cond =
-    ahuIds && ahuIds.length > 0
-      ? and(eq(alarms.isActive, true), inArray(alarms.ahuId, ahuIds))
-      : eq(alarms.isActive, true);
-  return db.select().from(alarms).where(cond).orderBy(desc(alarms.triggeredAt));
-}
-
 export { isNotNull, or };

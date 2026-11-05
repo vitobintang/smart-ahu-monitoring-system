@@ -387,10 +387,6 @@ input[type="checkbox"] { cursor: pointer; }
     break-inside: avoid;
     page-break-inside: avoid;
   }
-
-  .print-hide { display: none !important; }
-  .print-break { break-before: page; page-break-before: always; }
-  .print-only { display: block !important; }
 }
 
 @media screen {

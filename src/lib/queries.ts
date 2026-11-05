@@ -1,6 +1,6 @@
 import { and, desc, eq, gt, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { ahuCommands, ahus, alarms, devices, sensorThresholds, telemetry, trendAlerts, users } from "@/db/schema";
+import { ahuCommands, ahus, alarms, devices, sensorThresholds, telemetry, trendAlerts } from "@/db/schema";
 import type { AhuRow } from "@/db/schema";
 import { computeAhuStatus, PARAMETERS, PARAM_KEYS, type ParamKey } from "@/lib/domain";
 import { computeTrendAnalyses } from "@/lib/engine";
@@ -471,10 +471,6 @@ export function reportToCsv(report: ReportResult): string {
     lines.push(cells.map((c) => (/[",\r\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(","));
   }
   return lines.join("\n");
-}
-
-export async function listUsers() {
-  return db.select({ id: users.id, email: users.email, fullName: users.fullName, role: users.role, createdAt: users.createdAt }).from(users).orderBy(users.createdAt);
 }
 
 /** Stream every selected sample in deterministic descending timestamp/id order.

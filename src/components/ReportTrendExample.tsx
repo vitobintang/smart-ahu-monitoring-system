@@ -1,4 +1,3 @@
-import React from "react";
 
 import type { ReportTimelinePoint } from "../lib/report-selection";
 

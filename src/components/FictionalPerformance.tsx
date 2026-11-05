@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 
 type WindowMinutes = 5 | 15 | 30;
 

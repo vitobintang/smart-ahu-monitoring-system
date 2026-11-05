@@ -39,13 +39,11 @@ export interface WallSegment {
   edgeIndex?: number;
 }
 
-export const GRID_CELL = 2;
 export const AHU_HALF_LENGTH = 1.55; // local X half-extent of 3.1m plinth
 export const AHU_HALF_DEPTH = 0.93; // local Z half-extent of 1.85m plinth (back is local -Z)
 export const WALL_HALF_THICK = 0.14; // 0.28m solid perimeter wall
 export const WALL_FLUSH_GAP = 0.03; // 3cm mounting clearance when snapped flush to wall
 export const WALL_SNAP_RANGE = 1.65; // magnetic snap engagement distance from wall face
-export const WALL_CLEARANCE = AHU_HALF_DEPTH + WALL_HALF_THICK + WALL_FLUSH_GAP;
 export const MIN_AHU_SPACING = 3.6;
 
 /** Full 3D architectural site bounds where outdoor AHUs & room walls can be freely placed. */
@@ -319,14 +317,6 @@ export function isPointWithinCampusBounds(x: number, z: number): boolean {
   );
 }
 
-export function isPointInsideOutdoorPad(
-  x: number,
-  z: number,
-  customVertices?: FloorVertex[] | null,
-): boolean {
-  return isPointWithinCampusBounds(x, z) && !isPointInsideIndoorRoom(x, z, customVertices);
-}
-
 export function findZoneAt(
   x: number,
   z: number,
@@ -517,7 +507,6 @@ export function dragFloorWall(
     // Land the wall itself exactly on a grid line (matches the visible 2m floor tile grid)
     const axisN = verticalWall ? nx : nz;
     const midCoord = verticalWall ? midX : midZ;
-    const projected = verticalWall ? targetX : targetZ;
     const desiredMid = midCoord + axisN * rawOffset;
     snappedOffset = (snapToPlatformGrid(desiredMid, snapStep) - midCoord) * axisN;
   } else if (snapStep > 0) {

@@ -15,7 +15,6 @@ import {
 
 // Keep application tables out of Supabase's exposed public Data API schema.
 export const ahuSchema = pgSchema("ahu_private");
-export const appSchema = ahuSchema;
 const pgTable = ahuSchema.table;
 const pgEnum = ahuSchema.enum.bind(ahuSchema);
 
