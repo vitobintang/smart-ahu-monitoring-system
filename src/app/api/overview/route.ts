@@ -56,7 +56,7 @@ async function loadOverview(windowMin: number, lite: boolean): Promise<Record<st
   if (existing) return existing;
 
   const work = (async () => {
-    await maybePulseWorkers();
+    maybePulseWorkers();
     const dash = await getDashboard();
     const sync = await getSyncStatus();
     const recentAlarms = lite

@@ -58,12 +58,21 @@ async function createMigratedTestDb() {
 }
 
 function withInjectedGlobalDb<T>(testDb: NodePgDatabase, fn: () => Promise<T>): Promise<T> {
-  const g = globalThis as typeof globalThis & { __ahuDrizzleDb?: NodePgDatabase };
+  const g = globalThis as typeof globalThis & {
+    __ahuDrizzleDb?: NodePgDatabase;
+    __ahuWorkDrizzleDb?: NodePgDatabase;
+  };
   const prev = g.__ahuDrizzleDb;
+  const prevWork = g.__ahuWorkDrizzleDb;
   g.__ahuDrizzleDb = testDb;
+  // Background workers run on the dedicated work pool in production; inject it too so
+  // simulator/monitor queries hit the in-memory PGlite database during tests.
+  g.__ahuWorkDrizzleDb = testDb;
   return fn().finally(() => {
     if (prev === undefined) delete g.__ahuDrizzleDb;
     else g.__ahuDrizzleDb = prev;
+    if (prevWork === undefined) delete g.__ahuWorkDrizzleDb;
+    else g.__ahuWorkDrizzleDb = prevWork;
   });
 }
 

@@ -159,7 +159,9 @@ export default function AhuIndexPage() {
         mapRotation: next.rotation,
       }),
     });
-    await reload();
+    // Don't block the Save spinner on the overview refetch — the 3D map keeps showing the
+    // saved coordinates optimistically until the next poll confirms them (FR-24 cadence).
+    void reload();
   }
 
   async function handleSaveRoomVertices(vertices: FloorVertex[]) {

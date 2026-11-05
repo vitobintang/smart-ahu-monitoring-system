@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   try {
     await requireAuth("view");
-    await maybePulseWorkers();
+    maybePulseWorkers();
     await expireStaleCommands();
     const url = new URL(req.url);
     const ahuId = url.searchParams.get("ahuId");

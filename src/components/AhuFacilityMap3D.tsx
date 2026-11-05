@@ -48,11 +48,13 @@ import {
   projectPointToSegment,
   resolveAhuPlacement,
   resolveWallPhysicsAndSnap,
+  ROOM_GRID_SNAP_STEP,
   type FloorVertex,
   type OutdoorTreeCandidate,
   type PlacementValidation,
   type WallSegment,
 } from "@/lib/facility-layout";
+import { RoomMeshPool, type RoomEditTool, type RoomHoverTarget } from "./room-mesh-pool";
 
 export interface FacilityAhuItem {
   ahu: {
@@ -85,8 +87,6 @@ export interface PendingPlacement {
   indoor: boolean;
   snappedToWall?: boolean;
 }
-
-type RoomEditTool = "drag" | "split" | "extrude" | "delete";
 
 interface Props {
   items: FacilityAhuItem[];
@@ -202,74 +202,14 @@ function buildOutdoorTree3D(spec: OutdoorTreeCandidate): { group: THREE.Group; c
   return { group, crown };
 }
 
-/** Computes clean 2m × 2m indoor floor grid line segments clipped strictly inside any polygon. */
-function buildClippedFloorGridPositions(vertices: FloorVertex[]): Float32Array {
-  if (vertices.length < 3) return new Float32Array(0);
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minZ = Infinity;
-  let maxZ = -Infinity;
-  for (const v of vertices) {
-    if (v.x < minX) minX = v.x;
-    if (v.x > maxX) maxX = v.x;
-    if (v.z < minZ) minZ = v.z;
-    if (v.z > maxZ) maxZ = v.z;
-  }
-
-  const coords: number[] = [];
-  const y = 0.008;
-  const n = vertices.length;
-
-  // Horizontal grid lines (constant z)
-  const startZ = Math.ceil(minZ / 2) * 2;
-  const endZ = Math.floor(maxZ / 2) * 2;
-  for (let z = startZ; z <= endZ; z += 2) {
-    const zProbe = z + 1e-4; // tiny offset avoids exact vertex double-counting
-    const xs: number[] = [];
-    for (let i = 0; i < n; i += 1) {
-      const a = vertices[i];
-      const b = vertices[(i + 1) % n];
-      if ((a.z <= zProbe && b.z > zProbe) || (b.z <= zProbe && a.z > zProbe)) {
-        const t = (zProbe - a.z) / (b.z - a.z);
-        xs.push(a.x + t * (b.x - a.x));
-      }
-    }
-    xs.sort((p, q) => p - q);
-    for (let k = 0; k + 1 < xs.length; k += 2) {
-      coords.push(xs[k], y, z, xs[k + 1], y, z);
-    }
-  }
-
-  // Vertical grid lines (constant x)
-  const startX = Math.ceil(minX / 2) * 2;
-  const endX = Math.floor(maxX / 2) * 2;
-  for (let x = startX; x <= endX; x += 2) {
-    const xProbe = x + 1e-4;
-    const zs: number[] = [];
-    for (let i = 0; i < n; i += 1) {
-      const a = vertices[i];
-      const b = vertices[(i + 1) % n];
-      if ((a.x <= xProbe && b.x > xProbe) || (b.x <= xProbe && a.x > xProbe)) {
-        const t = (xProbe - a.x) / (b.x - a.x);
-        zs.push(a.z + t * (b.z - a.z));
-      }
-    }
-    zs.sort((p, q) => p - q);
-    for (let k = 0; k + 1 < zs.length; k += 2) {
-      coords.push(x, y, zs[k], x, y, zs[k + 1]);
-    }
-  }
-
-  return new Float32Array(coords);
-}
-
-/** Disposes geometries inside a group without destroying shared materials. */
-function clearGroupGeometries(group: THREE.Group) {
+/** Deeply disposes a group's geometries + per-model materials before clearing (stops GC churn from frequent rebuilds). */
+function disposeGroupDeep(group: THREE.Group) {
   group.traverse((obj) => {
-    const maybeMesh = obj as THREE.Mesh | THREE.LineSegments;
-    if (maybeMesh.geometry) {
-      maybeMesh.geometry.dispose();
-    }
+    const mesh = obj as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+    if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+    else if (mat) mat.dispose();
   });
   group.clear();
 }
@@ -576,9 +516,10 @@ export default function AhuFacilityMap3D({
   const [roomSnapGrid, setRoomSnapGrid] = useState(true);
   const [roomDraftVertices, setRoomDraftVertices] = useState<FloorVertex[]>(roomVertices);
   const [roomHistory, setRoomHistory] = useState<FloorVertex[][]>([]);
-  const [hoveredRoomTarget, setHoveredRoomTarget] = useState<
-    { type: "wall" | "vertex"; index: number } | null
-  >(null);
+  // Hover is tracked in a ref + applied imperatively in the 3D pool (React re-renders on every
+  // pointermove were a major lag source; the scene no longer re-renders at all during drags).
+  const hoveredRoomTargetRef = useRef<RoomHoverTarget | null>(null);
+  const roomAreaLabelRef = useRef<HTMLSpanElement | null>(null);
   const [savingRoom, setSavingRoom] = useState(false);
   const [roomNotice, setRoomNotice] = useState<string | null>(null);
   const [roomError, setRoomError] = useState<string | null>(null);
@@ -597,14 +538,53 @@ export default function AhuFacilityMap3D({
   );
 
   // Resolve 3D coordinates for every AHU unit against the active room polygon
+  // Optimistically pins a just-saved AHU at its new 3D coordinates until the polled overview
+  // delivers the persisted row (prevents a visible jump-back without blocking the Save button).
+  const [savedPlacementOverrides, setSavedPlacementOverrides] = useState<
+    Map<string, PendingPlacement>
+  >(new Map());
+
   const resolvedUnits = useMemo(() => {
     const acc: Array<{ id: string; x: number; z: number; rotation?: number }> = [];
     return items.map((item) => {
-      const p = resolveAhuPlacement(item.ahu, acc, activeRoomVertices);
+      const ov = savedPlacementOverrides.get(item.ahu.id);
+      const ahu = ov
+        ? {
+            ...item.ahu,
+            mapX: ov.x,
+            mapZ: ov.z,
+            mapRotation: ov.rotation,
+            mapZone: ov.zoneLabel,
+          }
+        : item.ahu;
+      const p = resolveAhuPlacement(ahu, acc, activeRoomVertices);
       acc.push({ id: item.ahu.id, x: p.x, z: p.z, rotation: p.rotation });
       return { item, placement: p };
     });
-  }, [items, activeRoomVertices]);
+  }, [items, activeRoomVertices, savedPlacementOverrides]);
+
+  // Retire an optimistic override as soon as the polled fleet data confirms the saved position
+  useEffect(() => {
+    setSavedPlacementOverrides((prev) => {
+      if (prev.size === 0) return prev;
+      let changed = false;
+      const next = new Map(prev);
+      for (const [id, ov] of prev) {
+        const card = items.find((i) => i.ahu.id === id);
+        if (
+          card &&
+          card.ahu.mapX != null &&
+          card.ahu.mapZ != null &&
+          Math.abs(card.ahu.mapX - ov.x) < 0.05 &&
+          Math.abs(card.ahu.mapZ - ov.z) < 0.05
+        ) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [items]);
 
   const existingCoords = useMemo(
     () =>
@@ -688,7 +668,7 @@ export default function AhuFacilityMap3D({
 
   const cancelEditingRoom = useCallback(() => {
     setEditingRoom(false);
-    setHoveredRoomTarget(null);
+    hoveredRoomTargetRef.current = null;
     setRoomDraftVertices(roomVertices.map((v) => ({ ...v })));
     setRoomHistory([]);
     setRoomError(null);
@@ -721,7 +701,7 @@ export default function AhuFacilityMap3D({
     try {
       await onSaveRoomVertices(roomDraftVertices);
       setEditingRoom(false);
-      setHoveredRoomTarget(null);
+      hoveredRoomTargetRef.current = null;
       setRoomHistory([]);
     } catch (err) {
       setRoomError(err instanceof Error ? err.message : "Failed to save custom room geometry");
@@ -767,9 +747,12 @@ export default function AhuFacilityMap3D({
     try {
       await onMoveAhuSave(movingAhuId, moveDraft);
       const finishedId = movingAhuId;
+      const savedPlacement = moveDraft;
       setMovingAhuId(null);
       setMoveDraft(null);
       setHoverInfo(null);
+      // Keep the unit visually pinned at its saved spot until the poll confirms it
+      setSavedPlacementOverrides((prev) => new Map(prev).set(finishedId, savedPlacement));
       setSelectedId(finishedId);
     } catch (err) {
       setMoveError(err instanceof Error ? err.message : "Failed to save new 3D position");
@@ -925,12 +908,15 @@ export default function AhuFacilityMap3D({
     rotors: Array<{ rotor: THREE.Group; running: boolean }>;
     halos: Map<string, THREE.Mesh>;
     beacons: Array<{ mat: THREE.MeshStandardMaterial; fault: boolean }>;
+    roomPool: RoomMeshPool;
+    wallSnapBeam: THREE.Mesh;
+    wallSnapRail: THREE.Mesh;
   } | null>(null);
 
+  /** Reuses two persistent highlight meshes (no geometry churn) — safe to call every animation frame. */
   const updateWallSnapHighlight = useCallback((seg: WallSegment | null) => {
     const objs = ahuSceneObjectsRef.current;
     if (!objs) return;
-    clearGroupGeometries(objs.wallSnapLineGroup);
     if (!seg) {
       objs.wallSnapLineGroup.visible = false;
       return;
@@ -942,25 +928,14 @@ export default function AhuFacilityMap3D({
     const midZ = (seg.z1 + seg.z2) / 2;
     const angleY = -Math.atan2(dz, dx);
 
-    const beam = new THREE.Mesh(
-      new THREE.BoxGeometry(len + 0.2, 2.96, 0.44),
-      new THREE.MeshBasicMaterial({
-        color: 0x10b981,
-        transparent: true,
-        opacity: 0.32,
-      }),
-    );
-    beam.position.set(midX, 1.48, midZ);
-    beam.rotation.y = angleY;
-    objs.wallSnapLineGroup.add(beam);
+    objs.wallSnapBeam.scale.set(len + 0.2, 2.96, 0.44);
+    objs.wallSnapBeam.position.set(midX, 1.48, midZ);
+    objs.wallSnapBeam.rotation.y = angleY;
 
-    const rail = new THREE.Mesh(
-      new THREE.BoxGeometry(len + 0.28, 0.15, 0.52),
-      new THREE.MeshBasicMaterial({ color: 0x059669 }),
-    );
-    rail.position.set(midX, 2.95, midZ);
-    rail.rotation.y = angleY;
-    objs.wallSnapLineGroup.add(rail);
+    objs.wallSnapRail.scale.set(len + 0.28, 0.15, 0.52);
+    objs.wallSnapRail.position.set(midX, 2.95, midZ);
+    objs.wallSnapRail.rotation.y = angleY;
+
     objs.wallSnapLineGroup.visible = true;
   }, []);
 
@@ -1199,6 +1174,31 @@ export default function AhuFacilityMap3D({
     scene.add(placedDraftGroup);
     scene.add(wallSnapLineGroup);
 
+    // Persistent wall-snap highlight meshes (reused in place — never rebuilt per hover)
+    const wallSnapBeam = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshBasicMaterial({ color: 0x10b981, transparent: true, opacity: 0.32 }),
+    );
+    wallSnapBeam.visible = true;
+    wallSnapBeam.frustumCulled = false;
+    wallSnapLineGroup.add(wallSnapBeam);
+
+    const wallSnapRail = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshBasicMaterial({ color: 0x059669 }),
+    );
+    wallSnapRail.visible = true;
+    wallSnapRail.frustumCulled = false;
+    wallSnapLineGroup.add(wallSnapRail);
+
+    // Pooled, in-place-updatable 3D room (floor slab / clipped grid / walls / columns / CAD gizmos)
+    const roomPool = new RoomMeshPool(facilityGroup, roomWallGizmoGroup, roomVertexGizmoGroup, sharedMats);
+    roomPool.sync(activeRoomVerticesRef.current, {
+      editing: editingRoomRef.current,
+      tool: roomToolRef.current,
+      hovered: hoveredRoomTargetRef.current,
+    });
+
     ahuSceneObjectsRef.current = {
       facilityGroup,
       roomVertexGizmoGroup,
@@ -1213,6 +1213,9 @@ export default function AhuFacilityMap3D({
       rotors: [],
       halos: new Map(),
       beacons: [],
+      roomPool,
+      wallSnapBeam,
+      wallSnapRail,
     };
 
     // Raycaster + Pointer Physics (Orbit / Pan / Direct AHU Drag / Direct Wall & Vertex CAD Drag!)
@@ -1229,8 +1232,20 @@ export default function AhuFacilityMap3D({
           index: number;
           startVertices: FloorVertex[];
           undoRecorded: boolean;
+          grabDeltaX: number;
+          grabDeltaZ: number;
+          grabNormalOffset: number;
+          latestVerts: FloorVertex[] | null;
         }
       | null = null;
+    // Pointer events arrive at 125Hz–1000Hz; drag math is coalesced to one application per
+    // animation frame via these pending markers (the single biggest lag fix).
+    let pendingRoomDragX = 0;
+    let pendingRoomDragY = 0;
+    let roomDragPending = false;
+    let pendingGhostX = 0;
+    let pendingGhostY = 0;
+    let ghostMovePending = false;
     let dragButton = 0;
     let downX = 0;
     let downY = 0;
@@ -1266,17 +1281,23 @@ export default function AhuFacilityMap3D({
       updateWallSnapHighlight(check.snappedToWall ? check.snappedWall : null);
       const objs = ahuSceneObjectsRef.current;
       if (!objs) return;
-      objs.ghostGroup.clear();
-      const built = buildAhuModel3D({
-        id: "GHOST",
-        status: "RUN",
-        hasHeater: false,
-        outdoor: !check.indoor,
-        isGhost: true,
-        isValidGhost: check.valid,
-      });
-      built.group.rotation.y = (-check.rotation * Math.PI) / 180;
-      objs.ghostGroup.add(built.group);
+      // Rebuild the ghost model ONLY when its look (indoor/outdoor × valid/invalid) changes;
+      // while dragging across open ground it is merely repositioned — no geometry churn.
+      const ghostKey = `${check.indoor ? 1 : 0}|${check.valid ? 1 : 0}`;
+      if (objs.ghostGroup.children.length === 0 || objs.ghostGroup.userData.ghostKey !== ghostKey) {
+        disposeGroupDeep(objs.ghostGroup);
+        const built = buildAhuModel3D({
+          id: "GHOST",
+          status: "RUN",
+          hasHeater: false,
+          outdoor: !check.indoor,
+          isGhost: true,
+          isValidGhost: check.valid,
+        });
+        objs.ghostGroup.add(built.group);
+        objs.ghostGroup.userData.ghostKey = ghostKey;
+      }
+      objs.ghostGroup.children[0].rotation.y = (-check.rotation * Math.PI) / 180;
       objs.ghostGroup.position.set(check.snappedX, 0, check.snappedZ);
       objs.ghostGroup.visible = true;
     };
@@ -1349,11 +1370,27 @@ export default function AhuFacilityMap3D({
         if (tool === "drag") {
           const vIdx = findHitRoomVertex();
           if (vIdx !== null) {
+            // Compensate the ray→floor parallax offset so the grabbed corner tracks the cursor 1:1
+            updateNdc(e.clientX, e.clientY);
+            raycaster.setFromCamera(pointerNdc, camera);
+            let grabDeltaX = 0;
+            let grabDeltaZ = 0;
+            if (raycaster.ray.intersectPlane(floorPlane, planeHit)) {
+              const grabbed = activeRoomVerticesRef.current[vIdx];
+              if (grabbed) {
+                grabDeltaX = planeHit.x - grabbed.x;
+                grabDeltaZ = planeHit.z - grabbed.z;
+              }
+            }
             draggingRoomElement = {
               type: "vertex",
               index: vIdx,
               startVertices: activeRoomVerticesRef.current.map((v) => ({ ...v })),
               undoRecorded: false,
+              grabDeltaX,
+              grabDeltaZ,
+              grabNormalOffset: 0,
+              latestVerts: null,
             };
             domEl.style.cursor = "grabbing";
             domEl.setPointerCapture?.(e.pointerId);
@@ -1361,11 +1398,29 @@ export default function AhuFacilityMap3D({
           }
           const wHit = findHitRoomWall();
           if (wHit !== null) {
+            // Remember where along the wall's normal it was grabbed so the wall follows the cursor
+            // exactly (no snap-jump on first move) while still landing on grid lines.
+            const verts = activeRoomVerticesRef.current;
+            const wa = verts[wHit.edgeIndex];
+            const wb = verts[(wHit.edgeIndex + 1) % verts.length];
+            let grabNormalOffset = 0;
+            if (wa && wb) {
+              const wdx = wb.x - wa.x;
+              const wdz = wb.z - wa.z;
+              const wlen = Math.hypot(wdx, wdz) || 1;
+              grabNormalOffset =
+                (wHit.point.x - (wa.x + wb.x) / 2) * (-wdz / wlen) +
+                (wHit.point.z - (wa.z + wb.z) / 2) * (wdx / wlen);
+            }
             draggingRoomElement = {
               type: "wall",
               index: wHit.edgeIndex,
-              startVertices: activeRoomVerticesRef.current.map((v) => ({ ...v })),
+              startVertices: verts.map((v) => ({ ...v })),
               undoRecorded: false,
+              grabDeltaX: 0,
+              grabDeltaZ: 0,
+              grabNormalOffset,
+              latestVerts: null,
             };
             domEl.style.cursor = "grabbing";
             domEl.setPointerCapture?.(e.pointerId);
@@ -1402,49 +1457,19 @@ export default function AhuFacilityMap3D({
         movedDist += Math.hypot(dx, dy);
 
         // Direct 3D Wall or Corner Vertex CAD Dragging!
+        // Perf: only RECORD the pointer position here (pointermove can fire at 125–1000Hz).
+        // The actual snap math + 3D pool update happens exactly once per animation frame below.
         if (draggingRoomElement && editingRoomRef.current) {
-          updateNdc(e.clientX, e.clientY);
-          raycaster.setFromCamera(pointerNdc, camera);
-          if (raycaster.ray.intersectPlane(floorPlane, planeHit)) {
-            const snapStep = roomSnapGridRef.current ? 0.5 : 0.05;
-            const nextVerts =
-              draggingRoomElement.type === "vertex"
-                ? moveFloorVertex(
-                    draggingRoomElement.startVertices,
-                    draggingRoomElement.index,
-                    planeHit.x,
-                    planeHit.z,
-                    snapStep,
-                  )
-                : dragFloorWall(
-                    draggingRoomElement.startVertices,
-                    draggingRoomElement.index,
-                    planeHit.x,
-                    planeHit.z,
-                    snapStep,
-                  );
-
-            if (nextVerts !== draggingRoomElement.startVertices) {
-              if (!draggingRoomElement.undoRecorded) {
-                pushRoomUndoRef.current(draggingRoomElement.startVertices);
-                draggingRoomElement.undoRecorded = true;
-              }
-              setRoomError(null);
-              setRoomDraftVertices(nextVerts);
-            }
-          }
+          pendingRoomDragX = e.clientX;
+          pendingRoomDragY = e.clientY;
+          roomDragPending = true;
           return;
         }
 
         if (isDraggingModelDirectly && isEditingPlacement) {
-          updateNdc(e.clientX, e.clientY);
-          raycaster.setFromCamera(pointerNdc, camera);
-          if (raycaster.ray.intersectPlane(floorPlane, planeHit)) {
-            const check = evaluatePhysicsAtRay();
-            setHoverInfo(check);
-            updateWallSnapHighlight(check.snappedToWall ? check.snappedWall : null);
-            commitPlacementFromCheck(check);
-          }
+          pendingGhostX = e.clientX;
+          pendingGhostY = e.clientY;
+          ghostMovePending = true;
           return;
         }
 
@@ -1467,19 +1492,22 @@ export default function AhuFacilityMap3D({
       raycaster.setFromCamera(pointerNdc, camera);
 
       // Room Editor hover feedback (vertex handles, wall handles, split preview orb)
+      // Perf: state lives in a ref + pooled meshes; React never re-renders on hover.
       if (editingRoomRef.current) {
         const objs = ahuSceneObjectsRef.current;
         const tool = roomToolRef.current;
         if (objs) objs.splitPreviewOrb.visible = false;
 
+        let nextHover: RoomHoverTarget | null = null;
+        let nextCursor = "grab";
+
         if (tool === "delete") {
           const vIdx = findHitRoomVertex();
-          setHoveredRoomTarget(vIdx !== null ? { type: "vertex", index: vIdx } : null);
-          domEl.style.cursor = vIdx !== null ? "pointer" : "grab";
-          return;
-        }
-
-        if (tool === "split") {
+          if (vIdx !== null) {
+            nextHover = { type: "vertex", index: vIdx };
+            nextCursor = "pointer";
+          }
+        } else if (tool === "split") {
           const wHit = findHitRoomWall();
           if (wHit && objs) {
             const verts = activeRoomVerticesRef.current;
@@ -1490,37 +1518,45 @@ export default function AhuFacilityMap3D({
               objs.splitPreviewOrb.position.set(proj.cx, 2.98, proj.cz);
               objs.splitPreviewOrb.visible = true;
             }
-            setHoveredRoomTarget({ type: "wall", index: wHit.edgeIndex });
-            domEl.style.cursor = "copy";
-          } else {
-            setHoveredRoomTarget(null);
-            domEl.style.cursor = "grab";
+            nextHover = { type: "wall", index: wHit.edgeIndex };
+            nextCursor = "copy";
           }
-          return;
-        }
-
-        if (tool === "extrude") {
+        } else if (tool === "extrude") {
           const wHit = findHitRoomWall();
-          setHoveredRoomTarget(wHit ? { type: "wall", index: wHit.edgeIndex } : null);
-          domEl.style.cursor = wHit ? "cell" : "grab";
-          return;
+          if (wHit) {
+            nextHover = { type: "wall", index: wHit.edgeIndex };
+            nextCursor = "cell";
+          }
+        } else {
+          // Default "drag" tool: check vertices first, then walls
+          const vIdx = findHitRoomVertex();
+          if (vIdx !== null) {
+            nextHover = { type: "vertex", index: vIdx };
+            nextCursor = "move";
+          } else {
+            const wHit = findHitRoomWall();
+            if (wHit !== null) {
+              nextHover = { type: "wall", index: wHit.edgeIndex };
+              nextCursor = "ew-resize";
+            }
+          }
         }
 
-        // Default "drag" tool: check vertices first, then walls
-        const vIdx = findHitRoomVertex();
-        if (vIdx !== null) {
-          setHoveredRoomTarget({ type: "vertex", index: vIdx });
-          domEl.style.cursor = "move";
-          return;
+        const prev = hoveredRoomTargetRef.current;
+        const changed =
+          (prev === null) !== (nextHover === null) ||
+          (prev !== null &&
+            nextHover !== null &&
+            (prev.type !== nextHover.type || prev.index !== nextHover.index));
+        if (changed) {
+          hoveredRoomTargetRef.current = nextHover;
+          objs?.roomPool.sync(activeRoomVerticesRef.current, {
+            editing: true,
+            tool,
+            hovered: nextHover,
+          });
         }
-        const wHit = findHitRoomWall();
-        if (wHit !== null) {
-          setHoveredRoomTarget({ type: "wall", index: wHit.edgeIndex });
-          domEl.style.cursor = "ew-resize";
-          return;
-        }
-        setHoveredRoomTarget(null);
-        domEl.style.cursor = "grab";
+        domEl.style.cursor = nextCursor;
         return;
       }
 
@@ -1558,6 +1594,16 @@ export default function AhuFacilityMap3D({
         domEl.releasePointerCapture?.(e.pointerId);
       }
 
+      // Commit the drag's final snapped geometry to React exactly ONCE (the 3D pool already
+      // matches it visually, so the resulting re-render is a near-zero-cost no-op).
+      if (finishedRoomDrag) {
+        roomDragPending = false;
+        if (finishedRoomDrag.latestVerts) {
+          setRoomDraftVertices(finishedRoomDrag.latestVerts);
+        }
+      }
+      ghostMovePending = false;
+
       const clickDelta = Math.hypot(e.clientX - downX, e.clientY - downY);
       const isCleanClick = movedDist < 6 && clickDelta < 6 && e.button === 0;
 
@@ -1566,8 +1612,8 @@ export default function AhuFacilityMap3D({
         updateNdc(e.clientX, e.clientY);
         raycaster.setFromCamera(pointerNdc, camera);
         const tool = roomToolRef.current;
-        const verts = activeRoomVerticesRef.current;
-        const snapStep = roomSnapGridRef.current ? 0.5 : 0.05;
+        const verts = finishedRoomDrag?.latestVerts ?? activeRoomVerticesRef.current;
+        const snapStep = roomSnapGridRef.current ? ROOM_GRID_SNAP_STEP : 0.05;
 
         if (tool === "split") {
           const wHit = findHitRoomWall();
@@ -1615,7 +1661,7 @@ export default function AhuFacilityMap3D({
             if (next) {
               pushRoomUndoRef.current(verts);
               setRoomDraftVertices(next);
-              setHoveredRoomTarget(null);
+              hoveredRoomTargetRef.current = null;
               setRoomError(null);
               setRoomNotice("Corner point removed.");
             } else {
@@ -1700,8 +1746,13 @@ export default function AhuFacilityMap3D({
         objs.ghostGroup.visible = false;
         objs.wallSnapLineGroup.visible = false;
         objs.splitPreviewOrb.visible = false;
+        hoveredRoomTargetRef.current = null;
+        objs.roomPool.sync(activeRoomVerticesRef.current, {
+          editing: editingRoomRef.current,
+          tool: roomToolRef.current,
+          hovered: null,
+        });
       }
-      setHoveredRoomTarget(null);
     };
 
     const handleWheel = (e: WheelEvent) => {
@@ -1765,6 +1816,67 @@ export default function AhuFacilityMap3D({
       camera.lookAt(c.targetX, 0.5, c.targetZ);
 
       const objs = ahuSceneObjectsRef.current;
+
+      // ── Per-frame coalesced Room CAD drag application (runs AT MOST once per frame) ──
+      // Pointermove only records coordinates; all snap math + 3D pool updates happen here,
+      // directly against the pooled meshes — React state is committed only on pointer-up.
+      if (roomDragPending && draggingRoomElement && editingRoomRef.current && objs) {
+        roomDragPending = false;
+        updateNdc(pendingRoomDragX, pendingRoomDragY);
+        raycaster.setFromCamera(pointerNdc, camera);
+        if (raycaster.ray.intersectPlane(floorPlane, planeHit)) {
+          const snapStep = roomSnapGridRef.current ? ROOM_GRID_SNAP_STEP : 0.05;
+          const nextVerts =
+            draggingRoomElement.type === "vertex"
+              ? moveFloorVertex(
+                  draggingRoomElement.startVertices,
+                  draggingRoomElement.index,
+                  planeHit.x,
+                  planeHit.z,
+                  snapStep,
+                  { dx: draggingRoomElement.grabDeltaX, dz: draggingRoomElement.grabDeltaZ },
+                )
+              : dragFloorWall(
+                  draggingRoomElement.startVertices,
+                  draggingRoomElement.index,
+                  planeHit.x,
+                  planeHit.z,
+                  snapStep,
+                  draggingRoomElement.grabNormalOffset,
+                );
+
+          if (nextVerts !== draggingRoomElement.startVertices) {
+            if (!draggingRoomElement.undoRecorded) {
+              pushRoomUndoRef.current(draggingRoomElement.startVertices);
+              draggingRoomElement.undoRecorded = true;
+            }
+            draggingRoomElement.latestVerts = nextVerts;
+            objs.roomPool.sync(nextVerts, {
+              editing: true,
+              tool: roomToolRef.current,
+              hovered: hoveredRoomTargetRef.current,
+            });
+            const areaEl = roomAreaLabelRef.current;
+            if (areaEl) {
+              areaEl.textContent = `${computePolygonAreaSqM(nextVerts)} m² · ${nextVerts.length} Corners`;
+            }
+          }
+        }
+      }
+
+      // ── Per-frame coalesced AHU placement/move ghost update ──
+      if (ghostMovePending && isDraggingModelDirectly && !draggingRoomElement && objs) {
+        ghostMovePending = false;
+        updateNdc(pendingGhostX, pendingGhostY);
+        raycaster.setFromCamera(pointerNdc, camera);
+        if (raycaster.ray.intersectPlane(floorPlane, planeHit)) {
+          const check = evaluatePhysicsAtRay();
+          setHoverInfo(check);
+          updateWallSnapHighlight(check.snappedToWall ? check.snappedWall : null);
+          commitPlacementFromCheck(check);
+        }
+      }
+
       if (objs) {
         for (const r of objs.rotors) {
           if (r.running) r.rotor.rotation.z -= dt * 7.5;
@@ -1865,161 +1977,24 @@ export default function AhuFacilityMap3D({
       domEl.removeEventListener("pointerleave", handlePointerLeave);
       domEl.removeEventListener("wheel", handleWheel);
       domEl.removeEventListener("contextmenu", handleContextMenu);
+      ahuSceneObjectsRef.current?.roomPool.dispose();
       renderer.dispose();
       ahuSceneObjectsRef.current = null;
     };
   }, [mode, setSelectedId, updateWallSnapHighlight]);
 
-  // Dynamically rebuild the 3D Room Floor Slab, Clipped Grid, Arbitrary-Angle Walls & Interactive CAD Handles!
+  // Sync the pooled 3D room to React state changes (drag commits, tool switches, edit mode).
+  // During active drags this is a no-op: the animation loop already applied the identical
+  // geometry directly to the pool, and the pool early-returns when nothing changed.
   useEffect(() => {
     const objs = ahuSceneObjectsRef.current;
-    if (!objs || activeRoomVertices.length < 3) return;
-
-    clearGroupGeometries(objs.facilityGroup);
-    clearGroupGeometries(objs.roomWallGizmoGroup);
-    clearGroupGeometries(objs.roomVertexGizmoGroup);
-
-    const { sharedMats } = objs;
-
-    // 1. Extruded Cleanroom Floor Slab for ANY custom polygon
-    const shape = new THREE.Shape();
-    shape.moveTo(activeRoomVertices[0].x, -activeRoomVertices[0].z);
-    for (let i = 1; i < activeRoomVertices.length; i += 1) {
-      shape.lineTo(activeRoomVertices[i].x, -activeRoomVertices[i].z);
-    }
-    shape.closePath();
-
-    const slabGeo = new THREE.ExtrudeGeometry(shape, { depth: 0.26, bevelEnabled: false });
-    slabGeo.rotateX(-Math.PI / 2);
-    const slabMesh = new THREE.Mesh(slabGeo, sharedMats.indoorSlabMat);
-    slabMesh.position.y = -0.26;
-    slabMesh.receiveShadow = true;
-    objs.facilityGroup.add(slabMesh);
-
-    // 2. Clean 2m × 2m floor tile grid clipped to the custom polygon
-    const gridCoords = buildClippedFloorGridPositions(activeRoomVertices);
-    if (gridCoords.length > 0) {
-      const gridGeo = new THREE.BufferGeometry();
-      gridGeo.setAttribute("position", new THREE.BufferAttribute(gridCoords, 3));
-      objs.facilityGroup.add(new THREE.LineSegments(gridGeo, sharedMats.gridLineMat));
-    }
-
-    // 3. Oriented Frosted Architectural Perimeter Walls (supports H, V, & Diagonal walls!)
-    const wallSegments = computeExteriorWallSegments(activeRoomVertices);
-    const wallHeight = 2.85;
-    const wallThickness = 0.28;
-
-    for (const seg of wallSegments) {
-      const edgeIdx = seg.edgeIndex ?? 0;
-      const dx = seg.x2 - seg.x1;
-      const dz = seg.z2 - seg.z1;
-      const length = Math.hypot(dx, dz);
-      const midX = (seg.x1 + seg.x2) / 2;
-      const midZ = (seg.z1 + seg.z2) / 2;
-      const angleY = -Math.atan2(dz, dx);
-
-      const isWallHovered =
-        editingRoom && hoveredRoomTarget?.type === "wall" && hoveredRoomTarget.index === edgeIdx;
-      const chosenWallMat = isWallHovered
-        ? roomTool === "extrude" || roomTool === "split"
-          ? sharedMats.wallExtrudeMat
-          : sharedMats.wallHoverMat
-        : sharedMats.wallMat;
-
-      const wallMesh = new THREE.Mesh(
-        new THREE.BoxGeometry(length, wallHeight, wallThickness),
-        chosenWallMat,
-      );
-      wallMesh.position.set(midX, wallHeight / 2, midZ);
-      wallMesh.rotation.y = angleY;
-      wallMesh.castShadow = true;
-      wallMesh.receiveShadow = true;
-      wallMesh.userData = { edgeIndex: edgeIdx };
-      objs.facilityGroup.add(wallMesh);
-
-      const baseSkirt = new THREE.Mesh(
-        new THREE.BoxGeometry(length + 0.04, 0.12, wallThickness + 0.04),
-        sharedMats.basePlinthMat,
-      );
-      baseSkirt.position.set(midX, 0.06, midZ);
-      baseSkirt.rotation.y = angleY;
-      objs.facilityGroup.add(baseSkirt);
-
-      const capMesh = new THREE.Mesh(
-        new THREE.BoxGeometry(length + 0.05, 0.09, wallThickness + 0.05),
-        sharedMats.wallCapMat,
-      );
-      capMesh.position.set(midX, wallHeight + 0.045, midZ);
-      capMesh.rotation.y = angleY;
-      capMesh.userData = { edgeIndex: edgeIdx };
-      objs.facilityGroup.add(capMesh);
-
-      // Interactive Wall Push/Pull Midpoint Handle when Edit Room is active
-      if (editingRoom && (roomTool === "drag" || roomTool === "extrude") && length >= 1.6) {
-        const puck = new THREE.Mesh(
-          new THREE.BoxGeometry(Math.min(1.3, length * 0.4), 0.34, 0.68),
-          isWallHovered ? sharedMats.wallHoverMat : sharedMats.wallGizmoMat,
-        );
-        puck.position.set(midX, wallHeight + 0.24, midZ);
-        puck.rotation.y = angleY;
-        puck.userData = { edgeIndex: edgeIdx };
-        objs.roomWallGizmoGroup.add(puck);
-
-        // Bidirectional push/pull arrow cones perpendicular to wall
-        const nx = -dz / length;
-        const nz = dx / length;
-        for (const side of [-1, 1]) {
-          const cone = new THREE.Mesh(
-            new THREE.ConeGeometry(0.18, 0.38, 12),
-            sharedMats.wallGizmoMat,
-          );
-          cone.position.set(midX + nx * side * 0.56, wallHeight + 0.24, midZ + nz * side * 0.56);
-          cone.rotation.z = -Math.PI / 2;
-          cone.rotation.y = -Math.atan2(nz * side, nx * side);
-          cone.userData = { edgeIndex: edgeIdx };
-          objs.roomWallGizmoGroup.add(cone);
-        }
-      }
-    }
-
-    // 4. Rounded Corner Columns + Interactive Corner Vertex Handles
-    for (let vIdx = 0; vIdx < activeRoomVertices.length; vIdx += 1) {
-      const v = activeRoomVertices[vIdx];
-      const col = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.22, 0.22, wallHeight + 0.18, 16),
-        sharedMats.columnMat,
-      );
-      col.position.set(v.x, (wallHeight + 0.18) / 2, v.z);
-      col.castShadow = true;
-      objs.facilityGroup.add(col);
-
-      if (editingRoom && (roomTool === "drag" || roomTool === "delete")) {
-        const isVertHovered =
-          hoveredRoomTarget?.type === "vertex" && hoveredRoomTarget.index === vIdx;
-        const handleMat =
-          roomTool === "delete"
-            ? sharedMats.vertexDeleteMat
-            : isVertHovered
-              ? sharedMats.vertexHoverMat
-              : sharedMats.vertexGizmoMat;
-
-        const orb = new THREE.Mesh(
-          new THREE.SphereGeometry(isVertHovered ? 0.52 : 0.42, 20, 20),
-          handleMat,
-        );
-        orb.position.set(v.x, wallHeight + 0.36, v.z);
-        orb.userData = { vertexIndex: vIdx };
-        objs.roomVertexGizmoGroup.add(orb);
-
-        const ringGeo = new THREE.RingGeometry(0.54, 0.72, 24);
-        ringGeo.rotateX(-Math.PI / 2);
-        const ring = new THREE.Mesh(ringGeo, sharedMats.wallGizmoRingMat);
-        ring.position.set(v.x, wallHeight + 0.2, v.z);
-        ring.userData = { vertexIndex: vIdx };
-        objs.roomVertexGizmoGroup.add(ring);
-      }
-    }
-  }, [activeRoomVertices, editingRoom, roomTool, hoveredRoomTarget]);
+    if (!objs) return;
+    objs.roomPool.sync(activeRoomVertices, {
+      editing: editingRoom,
+      tool: roomTool,
+      hovered: hoveredRoomTargetRef.current,
+    });
+  }, [activeRoomVertices, editingRoom, roomTool]);
 
   // Automatically sprout or hide outdoor trees in real time as the room shrinks/expands or AHUs move!
   useEffect(() => {
@@ -2047,7 +2022,7 @@ export default function AhuFacilityMap3D({
   useEffect(() => {
     const objs = ahuSceneObjectsRef.current;
     if (!objs) return;
-    objs.ahuRootGroup.clear();
+    disposeGroupDeep(objs.ahuRootGroup);
     objs.rotors = [];
     objs.halos.clear();
     objs.beacons = [];
@@ -2074,7 +2049,7 @@ export default function AhuFacilityMap3D({
   useEffect(() => {
     const objs = ahuSceneObjectsRef.current;
     if (!objs) return;
-    objs.placedDraftGroup.clear();
+    disposeGroupDeep(objs.placedDraftGroup);
     const activeDraft = mode === "placement" ? placement : moveDraft;
     const activeId = mode === "placement" ? draftAhuId : movingAhuId;
     if (!activeDraft || !activeId) {
@@ -2179,7 +2154,10 @@ export default function AhuFacilityMap3D({
                       ? `Moving ${movingAhuId} in 3D Facility`
                       : "AHU Units · 3D Facility Digital Twin"}
               </h1>
-              <span className="hidden rounded-full border border-[#cbe0fd] bg-[#eef5ff] px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#1d6ef2] md:inline-flex">
+              <span
+                ref={roomAreaLabelRef}
+                className="hidden rounded-full border border-[#cbe0fd] bg-[#eef5ff] px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#1d6ef2] md:inline-flex"
+              >
                 {editingRoom
                   ? `${activeRoomAreaSqM} m² · ${activeRoomVertices.length} Corners`
                   : `${indoorCount} Indoor · ${outdoorCount} Outdoor`}
@@ -2424,9 +2402,9 @@ export default function AhuFacilityMap3D({
                   ? "border-blue-300 bg-blue-100/90 text-[#12294d]"
                   : "border-slate-300 bg-white text-slate-600",
               )}
-              title="Snap wall & corner drags to clean 0.5m architectural increments"
+              title="Snap wall & corner drags exactly onto the visible 2m × 2m floor grid lines"
             >
-              <Grid size={12} /> {roomSnapGrid ? "Snap 0.5m" : "Freeform"}
+              <Grid size={12} /> {roomSnapGrid ? "Snap 2m Grid" : "Freeform"}
             </button>
 
             <button
