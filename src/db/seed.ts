@@ -70,6 +70,19 @@ export async function seed() {
   );
   await db.insert(sensorThresholds).values(thresholdValues).onConflictDoNothing();
 
+  // Clean up any accidental duplicate "... simulation device" rows when a unit already has its canonical Simulation Controller
+  await db.execute(sql`
+    DELETE FROM "ahu_private"."devices" d
+    WHERE d.source_type = 'SIMULATION'
+      AND d.label LIKE '%simulation device'
+      AND EXISTS (
+        SELECT 1 FROM "ahu_private"."devices" keep
+        WHERE keep.ahu_id = d.ahu_id
+          AND keep.source_type = 'SIMULATION'
+          AND keep.id <> d.id
+      )
+  `);
+
   const existingSimDevices = await db
     .select({ ahuId: devices.ahuId })
     .from(devices)
