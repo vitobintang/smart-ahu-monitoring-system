@@ -522,7 +522,7 @@ export default function ReportsPage() {
           className="report-sheet mx-auto w-full overflow-hidden rounded-2xl border border-[#cfd9e6] bg-white text-[#0f172a] shadow-[0_20px_60px_-24px_rgba(15,23,42,0.28)]"
         >
           {/* Top formal authority bar */}
-          <div className="h-2 w-full bg-gradient-to-r from-[#0b1f3f] via-[#163a70] to-[#1d6ef2]" />
+          <div className="h-2 w-full bg-linear-to-r from-[#0b1f3f] via-[#163a70] to-[#1d6ef2]" />
 
           <div className="space-y-6 p-4 sm:p-7 md:p-9">
             {/* MASTHEAD & CONTROLLED DOCUMENT STAMP */}
