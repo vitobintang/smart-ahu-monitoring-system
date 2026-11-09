@@ -159,24 +159,26 @@ export async function readRtdbThresholds(rtdb: RtdbAdapter, ahuId?: string): Pro
 /* ------------------------------------------------------------------ */
 
 export function ahuToRow(record: RtdbAhuRecord): Record<string, unknown> {
+  // `n()` restores nulls RTDB stripped (see live-read.ts).
+  const n = <T,>(value: T | undefined): T | null => (value === undefined ? null : (value as T));
   return {
     id: record.id,
     name: record.name,
     location: record.location,
     commTimeoutSec: record.commTimeoutSec,
     hasHeater: record.hasHeater,
-    installedSensors: record.installedSensors,
+    installedSensors: record.installedSensors ?? [],
     currentStatus: record.currentStatus,
-    lastSeenAt: record.lastSeenAt === null ? null : new Date(record.lastSeenAt),
+    lastSeenAt: record.lastSeenAt == null ? null : new Date(record.lastSeenAt),
     controlMode: record.controlMode,
     desiredRunState: record.desiredRunState,
     setpoint: record.setpoint,
-    faultCode: record.faultCode,
+    faultCode: n(record.faultCode),
     physicalControlEnabled: record.physicalControlEnabled,
-    mapX: record.mapX,
-    mapZ: record.mapZ,
+    mapX: n(record.mapX),
+    mapZ: n(record.mapZ),
     mapRotation: record.mapRotation,
-    mapZone: record.mapZone,
+    mapZone: n(record.mapZone),
   };
 }
 
@@ -193,19 +195,21 @@ export function deviceToRow(record: RtdbDeviceRecord): Record<string, unknown> {
 }
 
 export function thresholdToRow(record: RtdbThresholdRecord): Record<string, unknown> {
+  // `n()` restores nulls RTDB stripped (see live-read.ts).
+  const n = <T,>(value: T | undefined): T | null => (value === undefined ? null : (value as T));
   return {
     id: record.id,
     ahuId: record.ahuId,
     parameter: record.parameter,
     enabled: record.enabled,
-    lowLimit: record.lowLimit,
-    highLimit: record.highLimit,
+    lowLimit: n(record.lowLimit),
+    highLimit: n(record.highLimit),
     delaySec: record.delaySec,
     priority: record.priority,
-    validMin: record.validMin,
-    validMax: record.validMax,
-    unit: record.unit,
-    label: record.label,
+    validMin: n(record.validMin),
+    validMax: n(record.validMax),
+    unit: n(record.unit),
+    label: n(record.label),
     trendEnabled: record.trendEnabled,
   };
 }

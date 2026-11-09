@@ -144,19 +144,21 @@ export async function readCommandHistory(rtdb: RtdbAdapter, ahuId: string, limit
  * instances, same field names) so JSON responses keep their exact API shape.
  */
 export function commandToRow(record: RtdbCommandRecord): Record<string, unknown> {
+  // `n()` restores nulls RTDB stripped (see live-read.ts).
+  const n = <T,>(value: T | undefined): T | null => (value === undefined ? null : (value as T));
   return {
     id: record.id,
     ahuId: record.ahuId,
-    userId: record.userId,
-    userEmail: record.userEmail,
+    userId: n(record.userId),
+    userEmail: n(record.userEmail),
     commandType: record.commandType,
-    payload: record.payload,
+    payload: n(record.payload),
     status: record.status,
-    rejectionReason: record.rejectionReason,
+    rejectionReason: n(record.rejectionReason),
     createdAt: new Date(record.createdAt),
     expiresAt: new Date(record.expiresAt),
     updatedAt: new Date(record.updatedAt),
-    confirmedAt: record.confirmedAt === null ? null : new Date(record.confirmedAt),
+    confirmedAt: record.confirmedAt == null ? null : new Date(record.confirmedAt),
   };
 }
 

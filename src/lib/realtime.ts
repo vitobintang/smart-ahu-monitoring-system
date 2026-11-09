@@ -26,18 +26,7 @@ const g = globalThis as typeof globalThis & {
 };
 
 function detectDatabaseSyncMode(): SyncMode {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
   const dbUrl = process.env.DATABASE_URL?.trim() ?? "";
-  try {
-    if (supabaseUrl) {
-      const { hostname } = new URL(supabaseUrl);
-      if (hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1") {
-        return "CLOUD";
-      }
-    }
-  } catch {
-    /* ignore malformed URL here */
-  }
   try {
     if (dbUrl) {
       const { hostname } = new URL(dbUrl);

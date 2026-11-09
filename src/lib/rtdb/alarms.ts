@@ -140,21 +140,24 @@ export async function readAlarmHistory(rtdb: RtdbAdapter, ahuId: string, limit =
  * same field names) so JSON responses keep their exact API shape.
  */
 export function alarmToRow(record: RtdbAlarmRecord): Record<string, unknown> {
+  // `n()` restores nulls RTDB stripped (see live-read.ts) — the dashboard's
+  // `observedValue !== null` guard depends on it.
+  const n = <T,>(value: T | undefined): T | null => (value === undefined ? null : (value as T));
   return {
     id: record.id,
     ahuId: record.ahuId,
     parameter: record.parameter,
     priority: record.priority,
     message: record.message,
-    breachDirection: record.breachDirection,
-    observedValue: record.observedValue,
-    thresholdValue: record.thresholdValue,
+    breachDirection: n(record.breachDirection),
+    observedValue: n(record.observedValue),
+    thresholdValue: n(record.thresholdValue),
     isActive: record.isActive,
     acknowledged: record.acknowledged,
-    acknowledgedBy: record.acknowledgedBy,
-    acknowledgedAt: record.acknowledgedAt === null ? null : new Date(record.acknowledgedAt),
+    acknowledgedBy: n(record.acknowledgedBy),
+    acknowledgedAt: record.acknowledgedAt == null ? null : new Date(record.acknowledgedAt),
     triggeredAt: new Date(record.triggeredAt),
-    resolvedAt: record.resolvedAt === null ? null : new Date(record.resolvedAt),
+    resolvedAt: record.resolvedAt == null ? null : new Date(record.resolvedAt),
   };
 }
 

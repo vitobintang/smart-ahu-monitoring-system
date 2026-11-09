@@ -91,26 +91,35 @@ export interface LatestRow {
 }
 
 /** Maps a mirrored RTDB record onto the dashboard's LatestRow shape. */
+/**
+ * RTDB stores no null object fields (they are stripped on write), so missing
+ * keys read back as undefined. Every row mapper normalizes them back to null
+ * to preserve the exact PostgreSQL/JSON API shapes the UI was built against.
+ */
+function n<T>(value: T | undefined): T | null {
+  return value === undefined ? null : (value as T);
+}
+
 export function toLatestRow(record: RtdbTelemetryRecord): LatestRow {
   return {
     timestamp: new Date(record.timestamp),
-    source: record.source,
-    messageId: record.messageId,
-    faultCode: record.faultCode,
-    runState: record.runState,
-    roomTemp: record.roomTemp,
-    supplyTemp: record.supplyTemp,
-    returnTemp: record.returnTemp,
-    humidity: record.humidity,
-    filterDiffPressure: record.filterDiffPressure,
-    fanSpeed: record.fanSpeed,
-    coilTemp: record.coilTemp,
-    damperPosition: record.damperPosition,
-    current: record.current,
-    isCurrentFallback: record.isCurrentFallback,
-    voltage: record.voltage,
-    isVoltageFallback: record.isVoltageFallback,
-    runHours: record.runHours,
-    heaterOutput: record.heaterOutput,
+    source: n(record.source),
+    messageId: n(record.messageId),
+    faultCode: n(record.faultCode),
+    runState: n(record.runState),
+    roomTemp: n(record.roomTemp),
+    supplyTemp: n(record.supplyTemp),
+    returnTemp: n(record.returnTemp),
+    humidity: n(record.humidity),
+    filterDiffPressure: n(record.filterDiffPressure),
+    fanSpeed: n(record.fanSpeed),
+    coilTemp: n(record.coilTemp),
+    damperPosition: n(record.damperPosition),
+    current: n(record.current),
+    isCurrentFallback: n(record.isCurrentFallback),
+    voltage: n(record.voltage),
+    isVoltageFallback: n(record.isVoltageFallback),
+    runHours: n(record.runHours),
+    heaterOutput: n(record.heaterOutput),
   };
 }
