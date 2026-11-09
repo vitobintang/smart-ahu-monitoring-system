@@ -9,7 +9,7 @@ async function auth(): Promise<Auth> {
 /**
  * Firebase session-cookie session management.
  *
- * Flow: the browser authenticates once (password REST sign-in or Google popup →
+ * Flow: the browser authenticates once (Email/Password REST sign-in →
  * ID token), the server exchanges the ID token for a short-lived session cookie
  * via the Admin SDK, and every later request is verified from that httpOnly
  * cookie — no token ever touches localStorage.
