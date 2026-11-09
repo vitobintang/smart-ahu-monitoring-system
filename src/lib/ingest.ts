@@ -1,7 +1,8 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { mirrorToRtdb } from "@/lib/rtdb/live-read";
+import { mirrorToRtdb, tryGetAhuRtdb } from "@/lib/rtdb/live-read";
 import { patchRtdbAhu } from "@/lib/rtdb/registry";
+import { ingestTelemetryRtdb } from "@/lib/rtdb/lifecycle";
 import { alarmBreachTimers, ahus, alarms, devices, sensorThresholds, telemetry } from "@/db/schema";
 import type { AhuRow } from "@/db/schema";
 import { PARAM_KEYS, PARAM_MAP, computeAhuStatus, type ParamKey } from "@/lib/domain";
@@ -44,6 +45,21 @@ export interface IngestResult {
 /* ------------------------------------------------------------------ */
 
 export async function ingestTelemetry(token: string, payload: TelemetryPayload, exec: Client = db): Promise<IngestResult> {
+  // Phase 5b slice 3: the ENTIRE ingest pipeline (token auth, dedup, history
+  // append + latest advance, threshold/fault/communication alarms, command
+  // confirm/fail, registry patches) runs RTDB-native when Firebase is
+  // configured. PostgreSQL below is the legacy fallback (PGlite test runs).
+  try {
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      const rtdbResult = await ingestTelemetryRtdb(rtdb, token, payload);
+      if (!rtdbResult.ok) return rtdbResult as IngestResult;
+      return rtdbResult as IngestResult;
+    }
+  } catch (err) {
+    console.error("[ingest] RTDB ingest failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+  }
+
   const deviceRows = await exec.select().from(devices).where(eq(devices.token, token)).limit(1);
   const device = deviceRows[0];
   if (!device || !device.enabled) {

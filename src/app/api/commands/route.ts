@@ -4,6 +4,7 @@ import { ahuCommands } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth } from "@/lib/auth";
 import { acceptPendingCommands, COMMAND_TYPES, createCommand, expireStaleCommands, type CommandType } from "@/lib/engine";
 import { getOverride, maybePulseWorkers } from "@/lib/workers";
+import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
 
 export const dynamic = "force-dynamic";
 
@@ -15,12 +16,30 @@ export async function GET(req: Request) {
     await expireStaleCommands();
     const url = new URL(req.url);
     const ahuId = url.searchParams.get("ahuId");
-    const all = await db
-      .select()
-      .from(ahuCommands)
-      .where(ahuId ? eq(ahuCommands.ahuId, ahuId) : undefined)
-      .orderBy(desc(ahuCommands.createdAt))
-      .limit(60);
+    // Phase 5b slice 3: the tracking list reads the RTDB command tree when
+    // Firebase is configured; PostgreSQL remains the fallback.
+    let all: Array<Record<string, unknown>> = [];
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      const { readCommandHistory, commandToRow } = await import("@/lib/rtdb/commands");
+      if (ahuId) {
+        all = (await readCommandHistory(rtdb, ahuId, 60)).map(commandToRow);
+      } else {
+        const tree = (await rtdb.get<Record<string, import("@/lib/rtdb/commands").RtdbCommandRecord>>("commands")) ?? {};
+        all = Object.values(tree)
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .slice(0, 60)
+          .map(commandToRow);
+      }
+    } else {
+      const rows = await db
+        .select()
+        .from(ahuCommands)
+        .where(ahuId ? eq(ahuCommands.ahuId, ahuId) : undefined)
+        .orderBy(desc(ahuCommands.createdAt))
+        .limit(60);
+      all = rows;
+    }
     return Response.json({ commands: all, types: COMMAND_TYPES });
   } catch (err) {
     return jsonError(err);
