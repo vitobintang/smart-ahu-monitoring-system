@@ -57,9 +57,6 @@ export default function LoginPage() {
   const [phase, setPhase] = useState<AuthPhase>("idle");
 
   const busy = phase !== "idle";
-  const supabaseCallbackHint = process.env.NEXT_PUBLIC_SUPABASE_URL
-    ? `${process.env.NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/, "")}/auth/v1/callback`
-    : "https://<PROJECT_REF>.supabase.co/auth/v1/callback";
 
   useEffect(() => {
     router.prefetch("/dashboard");
@@ -299,8 +296,8 @@ export default function LoginPage() {
               <li className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/6 px-3.5 py-2.5 backdrop-blur-xs">
                 <Wifi size={15} className="mt-0.5 flex-none text-[#c4b5fd]" />
                 <span>
-                  <span className="font-semibold text-white">Supabase Auth &amp; PostgreSQL</span> — unified identity
-                  across Email/Username + Password and Google Sign-In
+                  <span className="font-semibold text-white">Firebase Auth &amp; Realtime Database</span> — unified
+                  identity across Email/Username + Password and Google Sign-In
                 </span>
               </li>
             </ul>
@@ -438,15 +435,13 @@ export default function LoginPage() {
                   {googleSetupHint ? (
                     <ol className="mt-2 list-decimal space-y-1 pl-4 text-[11px] text-amber-800">
                       <li>
-                        In Google Cloud Console → <strong>Credentials</strong>, create an OAuth 2.0 Client ID with
-                        Authorized Redirect URI:{" "}
-                        <code className="rounded bg-amber-100 px-1 py-0.5 font-mono text-[10px]">
-                          {supabaseCallbackHint}
-                        </code>
+                        In Firebase Console → <strong>Build → Authentication → Sign-in method</strong>, enable the{" "}
+                        <strong>Google</strong> provider and set a project support email.
                       </li>
                       <li>
-                        In Supabase Dashboard → <strong>Authentication → Providers → Google</strong>, toggle{" "}
-                        <strong>Enable Sign in with Google</strong> ON and paste the Client ID &amp; Secret.
+                        Under <strong>Authentication → Settings → Authorized domains</strong>, add the domain this app
+                        runs on (<code className="rounded bg-amber-100 px-1 py-0.5 font-mono text-[10px]">localhost</code>{" "}
+                        is allowed by default).
                       </li>
                     </ol>
                   ) : null}
