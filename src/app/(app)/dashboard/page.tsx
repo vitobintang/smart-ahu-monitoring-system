@@ -314,7 +314,7 @@ export default function DashboardPage() {
               tile={<Cloud size={19} className="sm:h-[22px] sm:w-[22px]" />}
               grad="from-[#38bdf8] to-[#2563eb]"
               glow="rgba(37,99,235,0.6)"
-              value={data.sync.mode === "LOCAL" ? "Local Mode" : "PostgreSQL Cloud"}
+              value={data.sync.mode === "LOCAL" ? "Local Mode" : "Firebase RTDB"}
               valueClass="block text-[14px] sm:text-[15px] font-bold leading-snug tracking-[-0.01em] text-[#12294d]"
               label="Database sync · FR-24"
               mobileBanner
@@ -596,7 +596,7 @@ export default function DashboardPage() {
                   <span className="rounded-md bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-600">Healthy</span>
                 </div>
                 <div className="space-y-3">
-                  <HealthRow icon={<Cloud size={15} />} label="PostgreSQL sync" value={`Polling ${data.sync.pollingIntervalSec}s`} />
+                  <HealthRow icon={<Cloud size={15} />} label="Firebase RTDB sync" value={`Polling ${data.sync.pollingIntervalSec}s`} />
                   <HealthRow
                     icon={<Database size={15} />}
                     label="Live data"
