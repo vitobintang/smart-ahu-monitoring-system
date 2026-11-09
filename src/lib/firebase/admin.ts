@@ -39,11 +39,33 @@ function readServiceAccountJson(env: NodeJS.ProcessEnv): object {
   );
 }
 
+function resolveDatabaseUrl(env: NodeJS.ProcessEnv): string {
+  const url = env.FIREBASE_DATABASE_URL?.trim() || env.NEXT_PUBLIC_FIREBASE_DATABASE_URL?.trim();
+  if (!url) {
+    throw new Error(
+      "Firebase Realtime Database URL is not configured. Set NEXT_PUBLIC_FIREBASE_DATABASE_URL " +
+        "(e.g. https://<project>-default-rtdb.<region>.firebasedatabase.app) in .env.local",
+    );
+  }
+  if (!/^https:\/\/.+\.firebasedatabase\.app\/?$/.test(url) && !/^https:\/\/.+\.firebaseio\.com\/?$/.test(url)) {
+    throw new Error(`NEXT_PUBLIC_FIREBASE_DATABASE_URL does not look like a Firebase RTDB URL: ${url}`);
+  }
+  return url.replace(/\/$/, "");
+}
+
 async function getApp_(env: NodeJS.ProcessEnv): Promise<App> {
   if (globalForFirebaseAdmin.__ahFirebaseAdminApp) return globalForFirebaseAdmin.__ahFirebaseAdminApp;
   const { cert, getApp, getApps, initializeApp } = await import("firebase-admin/app");
   const existing = getApps().find((app) => app.name === "ahu-admin");
-  const app = existing ?? initializeApp({ credential: cert(readServiceAccountJson(env)) }, "ahu-admin");
+  // databaseURL MUST be explicit: regional RTDB instances are never inferable
+  // from the service account alone (the SDK would throw "Can't determine
+  // Firebase Database URL").
+  const app =
+    existing ??
+    initializeApp(
+      { credential: cert(readServiceAccountJson(env)), databaseURL: resolveDatabaseUrl(env) },
+      "ahu-admin",
+    );
   globalForFirebaseAdmin.__ahFirebaseAdminApp = app;
   return app;
 }
