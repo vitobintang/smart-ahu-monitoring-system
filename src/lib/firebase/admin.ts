@@ -23,12 +23,19 @@ const globalForFirebaseAdmin = globalThis as typeof globalThis & {
   __ahFirebaseAdminApp?: App;
 };
 
-function readServiceAccountJson(env: NodeJS.ProcessEnv): object {
+async function readServiceAccountJson(env: NodeJS.ProcessEnv): Promise<object> {
   const path = env.FIREBASE_SERVICE_ACCOUNT_PATH?.trim();
   const inline = env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
   if (path) {
-    // Lazy so the Edge bundle never sees "node:fs".
-    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    // Lazy AND bundler-invisible: webpackIgnore/turbopackKeep the Edge bundles
+    // from ever resolving "node:fs", while plain ESM runtimes (tsx tests,
+    // scripts) execute the real import. (A bare require("node:fs") works only
+    // under Next's CommonJS shim and crashes with "require is not defined"
+    // in pure ESM — which is exactly what the emulator test suite hit.)
+    const fsModule = "node:fs";
+    const { readFileSync } = (await import(
+      /* webpackIgnore: true */ /* turbopackIgnore: true */ fsModule
+    )) as typeof import("node:fs");
     return JSON.parse(readFileSync(path, "utf8")) as object;
   }
   if (inline) {
@@ -63,7 +70,7 @@ async function getApp_(env: NodeJS.ProcessEnv): Promise<App> {
   const app =
     existing ??
     initializeApp(
-      { credential: cert(readServiceAccountJson(env)), databaseURL: resolveDatabaseUrl(env) },
+      { credential: cert(await readServiceAccountJson(env)), databaseURL: resolveDatabaseUrl(env) },
       "ahu-admin",
     );
   globalForFirebaseAdmin.__ahFirebaseAdminApp = app;
