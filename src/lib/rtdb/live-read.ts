@@ -48,6 +48,22 @@ export async function readLatestTelemetry(
 }
 
 /**
+ * Fire-and-forget RTDB mirror runner shared by the Phase 2 data-plane hooks
+ * (telemetry ingest, command lifecycle, alarm lifecycle). Silent no-op when
+ * Firebase env vars are absent (local/PGlite runs stay pure PostgreSQL);
+ * failures are logged and never propagate to the caller.
+ */
+export function mirrorToRtdb(fn: (rtdb: RtdbAdapter) => Promise<void>): void {
+  if (!firebaseEnvConfigured()) return;
+  void (async () => {
+    const { getAhuRtdb } = await import("@/lib/firebase/admin");
+    await fn(await getAhuRtdb());
+  })().catch((err) => {
+    console.error("[rtdb-mirror] write failed:", err instanceof Error ? err.message : err);
+  });
+}
+
+/**
  * The subset of the PostgreSQL telemetry row the dashboard card build
  * consumes (see getDashboard in src/lib/queries.ts). The full PG row is
  * structurally assignable to this; RTDB records are mapped via toLatestRow.
