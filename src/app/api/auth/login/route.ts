@@ -1,16 +1,16 @@
-import { sql } from "drizzle-orm";
-import { db } from "@/db";
-import { users } from "@/db/schema";
 import { getClientIp, invalidateSessionCache, safePublicUser, sameOrigin, setCsrfCookie, writeAudit } from "@/lib/auth";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getFirebaseClientConfig } from "@/lib/firebase/config";
+import { stageFirebasePassword } from "@/lib/firebase/password-auth";
+import { publishSessionCookie } from "@/lib/firebase/session";
+import { getAhuRtdb } from "@/lib/firebase/admin";
 import { clearDeviceCookie } from "@/lib/device-access";
+import { getRtdbUserByEmail, getRtdbUserByUsername } from "@/lib/rtdb/users";
 import {
   canonicalizeClientIp,
   deriveLoginIpRateKey,
   releaseLoginAttempt,
   reserveLoginAttempt,
 } from "@/lib/login-rate-limiter";
-import { resolveOrLinkAppUserForAuthUser } from "@/lib/oauth-account";
 import { parseLoginPayload } from "@/lib/role-auth";
 
 export const dynamic = "force-dynamic";
@@ -56,14 +56,10 @@ export async function POST(req: Request) {
     );
   }
 
-  // Resolve username -> email when signing in with a username substitute
+  // Resolve username -> email when signing in with a username substitute (RTDB mirror)
   let loginEmail = parsed.identifier;
   if (parsed.identifierType === "username") {
-    const [matched] = await db
-      .select({ email: users.email })
-      .from(users)
-      .where(sql`lower(${users.username}) = ${parsed.identifier}`)
-      .limit(1);
+    const matched = await getRtdbUserByUsername(await getAhuRtdb(), parsed.identifier).catch(() => null);
     if (!matched) {
       await writeAudit({
         action: "LOGIN_FAILED",
@@ -76,12 +72,24 @@ export async function POST(req: Request) {
     loginEmail = matched.email;
   }
 
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email: loginEmail,
-    password: parsed.password,
-  });
-  if (error || !data.user) {
+  const config = getFirebaseClientConfig();
+  let staged: Awaited<ReturnType<typeof stageFirebasePassword>>;
+  try {
+    staged = await stageFirebasePassword(
+      { email: loginEmail, password: parsed.password },
+      { apiKey: config.apiKey },
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "";
+    if (message.includes("rate limited")) {
+      return Response.json(
+        { error: "Too many failed sign-in attempts. Please wait and try again." },
+        { status: 429, headers: { "Retry-After": "60" } },
+      );
+    }
+    return Response.json({ error: "Authentication unavailable. Try again shortly." }, { status: 503 });
+  }
+  if (!staged) {
     await writeAudit({
       userEmail: loginEmail,
       action: "LOGIN_FAILED",
@@ -92,15 +100,10 @@ export async function POST(req: Request) {
     return Response.json({ error: "Invalid email/username or password" }, { status: 401 });
   }
 
-  const user = await resolveOrLinkAppUserForAuthUser({
-    id: data.user.id,
-    email: data.user.email ?? loginEmail,
-    emailConfirmed: Boolean(data.user.email_confirmed_at),
-    fullName:
-      (typeof data.user.user_metadata?.full_name === "string" && data.user.user_metadata.full_name) || null,
-  });
-  if (!user) {
-    await supabase.auth.signOut({ scope: "local" });
+  // The RTDB profile is the authorization source: no profile -> no session.
+  const profile = await getRtdbUserByEmail(await getAhuRtdb(), loginEmail).catch(() => null);
+  if (!profile || profile.id !== staged.verifiedUserId) {
+    await staged.discard();
     await writeAudit({
       userEmail: loginEmail,
       action: "LOGIN_FAILED",
@@ -113,6 +116,15 @@ export async function POST(req: Request) {
       { status: 403 },
     );
   }
+  const user = profile;
+  try {
+    const session = staged.takeSession();
+    await publishSessionCookie(session.idToken);
+  } catch {
+    await staged.discard();
+    return Response.json({ error: "Authentication unavailable. Try again shortly." }, { status: 503 });
+  }
+  await staged.discard();
 
   invalidateSessionCache();
   await clearDeviceCookie();

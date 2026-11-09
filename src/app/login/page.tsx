@@ -75,7 +75,7 @@ export default function LoginPage() {
 
     if (errCode === "google_not_configured") {
       setGoogleSetupHint(true);
-      setError("Google Sign-In is ready in the app — enable the Google provider in Supabase Auth to activate it.");
+      setError("Google Sign-In is ready in the app — enable the Google provider in Firebase Authentication to activate it.");
     } else if (errCode === "unregistered_google") {
       setError(
         emailParam
@@ -85,7 +85,7 @@ export default function LoginPage() {
     } else if (errCode === "google_cancelled") {
       setError("Google sign-in was cancelled.");
     } else if (errCode === "supabase_not_configured") {
-      setError("Supabase Auth environment variables are missing.");
+      setError("Firebase environment variables are missing.");
     } else {
       setError(detail ? `Google sign-in failed: ${detail}` : "Google sign-in could not be completed. Please try again.");
     }
@@ -115,12 +115,70 @@ export default function LoginPage() {
     }
   }
 
-  function signInWithGoogle() {
+  async function signInWithGoogle() {
     if (busy) return;
     setError(null);
     setGoogleSetupHint(false);
     setPhase("google");
-    window.location.assign("/api/auth/google");
+    try {
+      // 1) Popup sign-in with the Firebase client SDK (loaded lazily).
+      const { signInWithGooglePopup } = await import("@/lib/firebase/client");
+      const { idToken } = await signInWithGooglePopup();
+
+      // 2) Server verifies the token, resolves the RTDB account, mints the session.
+      const res = await fetch("/api/auth/google", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ idToken }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        code?: string;
+        relinkToken?: string;
+      };
+
+      // 3) Google opened a NEW Firebase uid for an already-registered email:
+      //    exchange the one-time relink token and publish the original account's session.
+      if (res.ok && data.relinkToken) {
+        const { relinkWithCustomToken } = await import("@/lib/firebase/client");
+        const relinkIdToken = await relinkWithCustomToken(data.relinkToken);
+        const done = await fetch("/api/auth/google", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ relinkTokenIdToken: relinkIdToken }),
+        });
+        if (!done.ok) {
+          const errData = (await done.json().catch(() => ({}))) as { error?: string };
+          throw new Error(errData.error ?? "Google Sign-In failed");
+        }
+      } else if (!res.ok) {
+        if (data.code === "email_not_registered") {
+          setError(data.error ?? "This Google account is not registered yet.");
+          setPhase("idle");
+          return;
+        }
+        throw new Error(data.error ?? "Google Sign-In failed");
+      }
+
+      setPhase("redirecting");
+      window.location.replace("/dashboard");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Google Sign-In failed";
+      if (/cancelled|canceled|popup.closed|ERR_POPUP/i.test(message)) {
+        setError("Google Sign-In was cancelled.");
+        setPhase("idle");
+        return;
+      }
+      if (/unauthorized-domain/i.test(message)) {
+        setGoogleSetupHint(true);
+        setError("This domain is not yet authorized in Firebase Authentication settings.");
+        setPhase("idle");
+        return;
+      }
+      setError(message);
+      setPhase("idle");
+    }
   }
 
   return (

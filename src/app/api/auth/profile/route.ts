@@ -1,6 +1,8 @@
-import { and, eq, ne, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { users } from "@/db/schema";
+import { getAhuRtdb } from "@/lib/firebase/admin";
+import { changeRtdbUsername, updateFirebaseUserPassword } from "@/lib/firebase/provision";
 import {
   getClientIp,
   invalidateSessionCache,
@@ -10,7 +12,7 @@ import {
   writeAudit,
 } from "@/lib/auth";
 import { normalizeUsername } from "@/lib/role-auth";
-import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import { getRtdbUserByUsername } from "@/lib/rtdb/users";
 
 export const dynamic = "force-dynamic";
 
@@ -47,12 +49,8 @@ export async function PATCH(req: Request) {
       if (!parsed.ok) {
         return Response.json({ error: parsed.error }, { status: 400 });
       }
-      const [conflict] = await db
-        .select({ id: users.id })
-        .from(users)
-        .where(and(sql`lower(${users.username}) = ${parsed.username}`, ne(users.id, actor.user.id)))
-        .limit(1);
-      if (conflict) {
+      const holder = await getRtdbUserByUsername(await getAhuRtdb(), parsed.username).catch(() => null);
+      if (holder && holder.id !== actor.user.id) {
         return Response.json({ error: `Username "${parsed.username}" is already taken` }, { status: 409 });
       }
       patch.username = parsed.username;
@@ -63,13 +61,11 @@ export async function PATCH(req: Request) {
       if (body.newPassword.length < 8) {
         return Response.json({ error: "New password must be at least 8 characters" }, { status: 400 });
       }
-      const supabase = createSupabaseAdminClient();
-      const { error } = await supabase.auth.admin.updateUserById(actor.user.id, {
-        password: body.newPassword,
-        email_confirm: true,
-      });
-      if (error) {
-        return Response.json({ error: `Could not update password: ${error.message}` }, { status: 400 });
+      try {
+        await updateFirebaseUserPassword(actor.user.id, body.newPassword);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Could not update password";
+        return Response.json({ error: message }, { status: 400 });
       }
       passwordUpdated = true;
       await writeAudit({
@@ -84,12 +80,28 @@ export async function PATCH(req: Request) {
 
     let updatedUser = actor.user;
     if (Object.keys(patch).length > 0) {
-      const [saved] = await db
+      await db
         .update(users)
         .set(patch)
-        .where(eq(users.id, actor.user.id))
-        .returning();
-      if (saved) updatedUser = saved;
+        .where(eq(users.id, actor.user.id));
+      updatedUser = {
+        ...actor.user,
+        ...(patch.username !== undefined ? { username: patch.username } : {}),
+        ...(patch.fullName !== undefined ? { fullName: patch.fullName } : {}),
+      };
+      // RTDB is the session-authorization source: mirror the profile change.
+      if (patch.username) {
+        await changeRtdbUsername(actor.user.id, patch.username).catch(() => undefined);
+      }
+      if (patch.fullName !== undefined) {
+        const { getRtdbUserById } = await import("@/lib/rtdb/users");
+        const current = await getRtdbUserById(await getAhuRtdb(), actor.user.id).catch(() => null);
+        if (current) {
+          const { getFirebaseDb } = await import("@/lib/firebase/admin");
+          const { createAdminRtdbAdapter } = await import("@/lib/rtdb/store");
+          await createAdminRtdbAdapter(await getFirebaseDb()).set(`users/${actor.user.id}/fullName`, patch.fullName);
+        }
+      }
       await writeAudit({
         userId: actor.user.id,
         userEmail: actor.user.email,

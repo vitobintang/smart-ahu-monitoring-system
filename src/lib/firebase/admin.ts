@@ -1,7 +1,7 @@
-import { cert, getApp, getApps, initializeApp, type App } from "firebase-admin/app";
-import { getAuth, type Auth } from "firebase-admin/auth";
-import { getDatabase, type Database } from "firebase-admin/database";
-import { readFileSync } from "node:fs";
+import type { App } from "firebase-admin/app";
+import type { Auth } from "firebase-admin/auth";
+import type { Database } from "firebase-admin/database";
+import type { RtdbAdapter } from "@/lib/rtdb/store";
 
 /**
  * Server-side Firebase Admin SDK bootstrap (Auth + Realtime Database).
@@ -13,12 +13,22 @@ import { readFileSync } from "node:fs";
  * These are SERVER-ONLY secrets: never prefix them with NEXT_PUBLIC_ and never
  * commit the JSON. The Admin SDK bypasses RTDB security rules by design — all
  * application data access is supposed to flow through this trusted server.
+ *
+ * NOTE: every firebase-admin import here is a function-scoped dynamic import so
+ * that Edge bundles (Next instrumentation/proxy graphs) never include Node-only
+ * code statically. Node runtime is the only supported execution path.
  */
 
-function readServiceAccountJson(env: NodeJS.ProcessEnv = process.env): object {
+const globalForFirebaseAdmin = globalThis as typeof globalThis & {
+  __ahFirebaseAdminApp?: App;
+};
+
+function readServiceAccountJson(env: NodeJS.ProcessEnv): object {
   const path = env.FIREBASE_SERVICE_ACCOUNT_PATH?.trim();
   const inline = env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
   if (path) {
+    // Lazy so the Edge bundle never sees "node:fs".
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
     return JSON.parse(readFileSync(path, "utf8")) as object;
   }
   if (inline) {
@@ -29,12 +39,9 @@ function readServiceAccountJson(env: NodeJS.ProcessEnv = process.env): object {
   );
 }
 
-const globalForFirebaseAdmin = globalThis as typeof globalThis & {
-  __ahFirebaseAdminApp?: App;
-};
-
-export function getFirebaseAdminApp(env: NodeJS.ProcessEnv = process.env): App {
+async function getApp_(env: NodeJS.ProcessEnv): Promise<App> {
   if (globalForFirebaseAdmin.__ahFirebaseAdminApp) return globalForFirebaseAdmin.__ahFirebaseAdminApp;
+  const { cert, getApp, getApps, initializeApp } = await import("firebase-admin/app");
   const existing = getApps().find((app) => app.name === "ahu-admin");
   const app = existing ?? initializeApp({ credential: cert(readServiceAccountJson(env)) }, "ahu-admin");
   globalForFirebaseAdmin.__ahFirebaseAdminApp = app;
@@ -42,11 +49,19 @@ export function getFirebaseAdminApp(env: NodeJS.ProcessEnv = process.env): App {
 }
 
 /** Admin Auth — session cookies, ID-token verification, user management. */
-export function getFirebaseAuth(env: NodeJS.ProcessEnv = process.env): Auth {
-  return getAuth(getFirebaseAdminApp(env));
+export async function getFirebaseAuth(env: NodeJS.ProcessEnv = process.env): Promise<Auth> {
+  const { getAuth } = await import("firebase-admin/auth");
+  return getAuth(await getApp_(env));
 }
 
 /** Admin Realtime Database — full server-side data access (rules do not apply). */
-export function getFirebaseDb(env: NodeJS.ProcessEnv = process.env): Database {
-  return getDatabase(getFirebaseAdminApp(env));
+export async function getFirebaseDb(env: NodeJS.ProcessEnv = process.env): Promise<Database> {
+  const { getDatabase } = await import("firebase-admin/database");
+  return getDatabase(await getApp_(env));
+}
+
+/** Shared RTDB repository adapter (tests use InMemoryRtdb via the same interface). */
+export async function getAhuRtdb(env: NodeJS.ProcessEnv = process.env): Promise<RtdbAdapter> {
+  const { createAdminRtdbAdapter } = await import("@/lib/rtdb/store");
+  return createAdminRtdbAdapter(await getFirebaseDb(env));
 }
