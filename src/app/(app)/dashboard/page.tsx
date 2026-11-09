@@ -825,7 +825,7 @@ function UnitCard({ card }: { card: Card }) {
     <>
       {/* Compact Square Mobile AHU Card (< sm) */}
       <Link
-        href={`/ahu/${card.ahu.id}`}
+        href={`/ahu/${card.ahu.id}?from=/dashboard`}
         className={cx(
           "panel card-hover flex aspect-square flex-col justify-between rounded-2xl p-3 sm:hidden",
           card.status === "FAULT" && "border-red-200 bg-red-50/30",
@@ -976,7 +976,7 @@ function UnitCard({ card }: { card: Card }) {
         </div>
 
         <div className="mt-1 flex justify-end border-t border-[#f1f5f9] pt-2.5">
-          <Link href={`/ahu/${card.ahu.id}`} className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-[#2563eb] hover:underline">
+          <Link href={`/ahu/${card.ahu.id}?from=/dashboard`} className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-[#2563eb] hover:underline">
             View Details <ArrowRight size={13} />
           </Link>
         </div>

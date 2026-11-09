@@ -487,7 +487,7 @@ export default function AhuIndexPage() {
                     c.status === "FAULT" && "border-red-200 bg-red-50/30",
                   )}
                 >
-                  <Link href={`/ahu/${c.ahu.id}`} className="block min-w-0">
+                  <Link href={`/ahu/${c.ahu.id}?from=/ahu`} className="block min-w-0">
                     <div className="flex items-center justify-between gap-1">
                       <span className="font-mono text-[13.5px] font-extrabold text-[#12294d]">{c.ahu.id}</span>
                       <StatusBadge status={c.status} size="sm" />
@@ -495,7 +495,7 @@ export default function AhuIndexPage() {
                     <p className="mt-0.5 truncate text-[10px] font-medium text-slate-500">{c.ahu.location}</p>
                   </Link>
 
-                  <Link href={`/ahu/${c.ahu.id}`} className="grid grid-cols-2 gap-1.5">
+                  <Link href={`/ahu/${c.ahu.id}?from=/ahu`} className="grid grid-cols-2 gap-1.5">
                     <div className="rounded-lg bg-[#f4f7fc] px-2 py-1">
                       <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">Temp</span>
                       <span className="num block text-[12px] font-bold text-[#12294d]">
@@ -532,7 +532,7 @@ export default function AhuIndexPage() {
                       <span className="font-mono text-[9.5px] text-slate-400">{c.ahu.installedSensors.length}/12 sens</span>
                     )}
                     <Link
-                      href={`/ahu/${c.ahu.id}`}
+                      href={`/ahu/${c.ahu.id}?from=/ahu`}
                       className="inline-flex items-center gap-0.5 rounded-md bg-[#eef4ff] px-2 py-1 text-[10px] font-bold text-[#1d6ef2]"
                     >
                       Open <ArrowRight size={11} />
@@ -543,7 +543,7 @@ export default function AhuIndexPage() {
                 {/* Full Tablet/Desktop Card (>= sm) */}
                 <div className="panel card-hover hidden h-full flex-col rounded-2xl p-4 sm:flex">
                   <div className="flex items-start justify-between gap-2">
-                    <Link href={`/ahu/${c.ahu.id}`} className="group min-w-0 flex-1">
+                    <Link href={`/ahu/${c.ahu.id}?from=/ahu`} className="group min-w-0 flex-1">
                       <p className="font-mono text-[14.5px] font-bold text-[#12294d] group-hover:text-[#1d6ef2]">
                         {c.ahu.id}
                       </p>
@@ -555,7 +555,7 @@ export default function AhuIndexPage() {
                     <StatusBadge status={c.status} size="sm" />
                   </div>
 
-                  <Link href={`/ahu/${c.ahu.id}`} className="mt-3 flex items-center gap-3">
+                  <Link href={`/ahu/${c.ahu.id}?from=/ahu`} className="mt-3 flex items-center gap-3">
                     <div className="relative h-16 w-20 flex-none sm:w-24">
                       <Image
                         src="/ahu/unit-iso.png"
@@ -624,7 +624,7 @@ export default function AhuIndexPage() {
                         <Settings2 size={11} /> Config
                       </Link>
                       <Link
-                        href={`/ahu/${c.ahu.id}`}
+                        href={`/ahu/${c.ahu.id}?from=/ahu`}
                         className="inline-flex items-center gap-1 rounded-lg border border-[#dbe7fb] bg-[#f4f8ff] px-2.5 py-1 text-[11px] font-semibold text-[#1d6ef2] transition hover:bg-[#e8f0fe]"
                       >
                         Details <ArrowRight size={12} />

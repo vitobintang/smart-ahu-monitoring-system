@@ -2724,7 +2724,7 @@ export default function AhuFacilityMap3D({
                     <Settings2 size={12} /> Config
                   </Link>
                   <Link
-                    href={`/ahu/${encodeURIComponent(displayedCardUnit.item.ahu.id)}`}
+                    href={`/ahu/${encodeURIComponent(displayedCardUnit.item.ahu.id)}?from=/ahu`}
                     className="inline-flex items-center justify-center gap-1 rounded-xl bg-gradient-to-r from-[#2563eb] to-[#1d6ef2] px-2.5 py-1.5 text-[11px] font-bold text-white shadow-[0_6px_16px_-6px_rgba(37,99,235,0.8)] transition hover:brightness-105"
                   >
                     Detail <ExternalLink size={11} />
