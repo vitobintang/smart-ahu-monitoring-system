@@ -78,7 +78,7 @@ export function Tile({
       <div className="flex items-center gap-3 sm:items-start sm:gap-3.5">
         <span
           className={cx(
-            "grid h-10 w-10 flex-none place-items-center rounded-xl bg-linear-to-brext-white sm:h-14 sm:w-14 sm:rounded-2xl",
+            "grid h-10 w-10 flex-none place-items-center rounded-xl bg-linear-to-br text-white sm:h-14 sm:w-14 sm:rounded-2xl",
             grad,
           )}
           style={{ boxShadow: `0 10px 22px -10px ${glow}` }}
