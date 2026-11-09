@@ -41,24 +41,64 @@ export function createAdminRtdbAdapter(db: Database): RtdbAdapter {
     assertRtdbPath(path);
     return db.ref(path);
   };
+  return withPathPrefix(
+    {
+      async get<T>(path: string): Promise<T | null> {
+        const snap = await ref(path).get();
+        return (snap.val() ?? null) as T | null;
+      },
+      async set(path: string, value: unknown): Promise<void> {
+        await ref(path).set(value);
+      },
+      async update(path: string, values: Record<string, unknown>): Promise<void> {
+        await ref(path).update(values);
+      },
+      async remove(path: string): Promise<void> {
+        await ref(path).remove();
+      },
+      async transaction<T>(path: string, compute: (current: T | null) => T | undefined) {
+        const result = await ref(path).transaction((current: unknown) => compute(((current ?? null) as T | null)));
+        return { committed: result.committed, value: (result.snapshot?.val() ?? null) as T | null };
+      },
+    },
+    resolveRtdbPathPrefix(),
+  );
+}
+
+/**
+ * Optional namespace for SHARED Realtime Databases (env `RTDB_PATH_PREFIX`,
+ * e.g. "ahu-app"). Every adapter read/write is transparently relocated under
+ * `prefix/...`, so the app's whole footprint (ahus, telemetry, users, …) lives
+ * in one subtree and can never collide with the owner's existing nodes.
+ * Empty by default (standalone projects keep the root layout).
+ *
+ * Segments must be non-empty and free of RTDB-illegal characters; nested
+ * prefixes ("apps/ahu") are allowed.
+ */
+export function resolveRtdbPathPrefix(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = (env.RTDB_PATH_PREFIX ?? "").trim().replace(/^\/+|\/+$/g, "");
+  if (!raw) return "";
+  if (raw.includes("//")) throw new Error("RTDB_PATH_PREFIX cannot contain empty path segments");
+  for (const segment of raw.split("/")) {
+    // Same key charset as assertRtdbPath: no ".", "#", "$", "[", "]".
+    if (/[#$[\]]/.test(segment) || segment.includes(".")) {
+      throw new Error(`Invalid RTDB_PATH_PREFIX segment: "${segment}"`);
+    }
+  }
+  return raw;
+}
+
+/** Relocates every adapter operation under `prefix` (no-op when empty). */
+export function withPathPrefix(adapter: RtdbAdapter, prefix: string): RtdbAdapter {
+  if (!prefix) return adapter;
+  const prefixed = (path: string) => (path ? `${prefix}/${path.replace(/^\/+|\/+$/g, "")}` : prefix);
   return {
-    async get<T>(path: string): Promise<T | null> {
-      const snap = await ref(path).get();
-      return (snap.val() ?? null) as T | null;
-    },
-    async set(path: string, value: unknown): Promise<void> {
-      await ref(path).set(value);
-    },
-    async update(path: string, values: Record<string, unknown>): Promise<void> {
-      await ref(path).update(values);
-    },
-    async remove(path: string): Promise<void> {
-      await ref(path).remove();
-    },
-    async transaction<T>(path: string, compute: (current: T | null) => T | undefined) {
-      const result = await ref(path).transaction((current: unknown) => compute(((current ?? null) as T | null)));
-      return { committed: result.committed, value: (result.snapshot?.val() ?? null) as T | null };
-    },
+    get: <T>(path: string) => adapter.get<T>(prefixed(path)),
+    set: (path: string, value: unknown) => adapter.set(prefixed(path), value),
+    update: (path: string, values: Record<string, unknown>) => adapter.update(prefixed(path), values),
+    remove: (path: string) => adapter.remove(prefixed(path)),
+    transaction: <T>(path: string, compute: (current: T | null) => T | null | undefined) =>
+      adapter.transaction<T>(prefixed(path), compute),
   };
 }
 
