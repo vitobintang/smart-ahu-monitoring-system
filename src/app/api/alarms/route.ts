@@ -1,5 +1,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { mirrorToRtdb } from "@/lib/rtdb/live-read";
+import { applyAlarmAck } from "@/lib/rtdb/alarms";
 import { alarms } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { publishRealtime } from "@/lib/realtime";
@@ -47,9 +49,10 @@ export async function POST(req: Request) {
     const alarm = rows[0];
     if (!alarm) return Response.json({ error: "Alarm not found" }, { status: 404 });
 
+    const acknowledgedAt = new Date();
     await db
       .update(alarms)
-      .set({ acknowledged: true, acknowledgedBy: actor.user.id, acknowledgedAt: new Date() })
+      .set({ acknowledged: true, acknowledgedBy: actor.user.id, acknowledgedAt })
       .where(eq(alarms.id, alarm.id));
 
     const ip = await getClientIp();
@@ -74,6 +77,9 @@ export async function POST(req: Request) {
       by: actor.user.email,
       at: new Date().toISOString(),
     });
+    // Phase 2 dual-write: mirror the acknowledgement into RTDB (fire-and-forget)
+    mirrorToRtdb((rtdb) => applyAlarmAck(rtdb, alarm.id, actor.user.id, acknowledgedAt.getTime()));
+
     return Response.json({ ok: true, alarm: { ...alarm, acknowledged: true, acknowledgedBy: actor.user.id } });
   } catch (err) {
     return jsonError(err);

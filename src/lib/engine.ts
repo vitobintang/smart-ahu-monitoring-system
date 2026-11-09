@@ -23,9 +23,10 @@ import {
 import { publishRealtime } from "@/lib/realtime";
 import { writeAudit } from "@/lib/auth";
 import { authoritativeTelemetry } from "@/lib/source";
-import { firebaseEnvConfigured } from "@/lib/rtdb/live-read";
+import { mirrorToRtdb } from "@/lib/rtdb/live-read";
 import type { RtdbAdapter } from "@/lib/rtdb/store";
 import { applyCommandStatusPatch, activeSlotFor, claimActiveCommand, writeRtdbCommand, type RtdbCommandRecord } from "@/lib/rtdb/commands";
+import { applyAlarmResolve, writeRtdbAlarm, type RtdbAlarmRecord } from "@/lib/rtdb/alarms";
 
 /**
  * Phase 2 Slice C: fire-and-forget mirror of command lifecycle transitions
@@ -34,13 +35,7 @@ import { applyCommandStatusPatch, activeSlotFor, claimActiveCommand, writeRtdbCo
  * failures are logged and never affect the authoritative PostgreSQL path.
  */
 function mirrorCommand(fn: (rtdb: RtdbAdapter) => Promise<void>): void {
-  if (!firebaseEnvConfigured()) return;
-  void (async () => {
-    const { getAhuRtdb } = await import("@/lib/firebase/admin");
-    await fn(await getAhuRtdb());
-  })().catch((err) => {
-    console.error("[command-mirror] RTDB write failed:", err instanceof Error ? err.message : err);
-  });
+  mirrorToRtdb(fn);
 }
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -110,6 +105,23 @@ async function raiseAlarm(
     },
     client,
   );
+  const triggeredRecord: RtdbAlarmRecord = {
+    id,
+    ahuId: input.ahuId,
+    parameter: input.parameter,
+    priority: input.priority,
+    message: input.message,
+    breachDirection: input.breachDirection ?? null,
+    observedValue: input.observedValue ?? null,
+    thresholdValue: input.thresholdValue ?? null,
+    isActive: true,
+    acknowledged: false,
+    acknowledgedBy: null,
+    acknowledgedAt: null,
+    triggeredAt: (input.triggeredAt ?? new Date()).getTime(),
+    resolvedAt: null,
+  };
+  mirrorCommand((rtdb) => writeRtdbAlarm(rtdb, triggeredRecord));
   await publishRealtime("alarm", input.ahuId, {
     type: "ALARM_TRIGGERED",
     alarmId: id,
@@ -131,9 +143,10 @@ export async function resolveAlarm(client: Client, ahuId: string, parameter: str
   );
   const rows = await client.select({ id: alarms.id }).from(alarms).where(cond);
   if (rows.length === 0) return 0;
+  const resolvedAt = new Date();
   await client
     .update(alarms)
-    .set({ isActive: false, resolvedAt: new Date() })
+    .set({ isActive: false, resolvedAt })
     .where(inArray(alarms.id, rows.map((r) => r.id)));
   for (const row of rows) {
     await writeAudit(
@@ -144,6 +157,7 @@ export async function resolveAlarm(client: Client, ahuId: string, parameter: str
       },
       client,
     );
+    mirrorCommand((rtdb) => applyAlarmResolve(rtdb, row.id, resolvedAt.getTime()));
   }
   return rows.length;
 }
