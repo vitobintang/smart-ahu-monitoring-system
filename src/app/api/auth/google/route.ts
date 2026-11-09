@@ -1,5 +1,5 @@
 import { getClientIp, invalidateSessionCache, sameOrigin, setCsrfCookie, writeAudit } from "@/lib/auth";
-import { clearDeviceCookie } from "@/lib/device-access";
+
 import { createRelinkCustomToken, verifyGoogleIdToken } from "@/lib/firebase/provision";
 import { publishSessionCookie } from "@/lib/firebase/session";
 import { getAhuRtdb } from "@/lib/firebase/admin";
@@ -77,7 +77,10 @@ export async function POST(req: Request) {
   }
 
   invalidateSessionCache();
-  await clearDeviceCookie();
+  {
+    const cookieStore = await (await import("next/headers")).cookies();
+    cookieStore.delete("ahu_device");
+  }
   const csrfToken = await setCsrfCookie();
   await writeAudit({
     userId: profile.id,

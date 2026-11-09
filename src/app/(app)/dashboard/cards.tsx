@@ -15,7 +15,7 @@ import {
   Thermometer,
   TriangleAlert,
 } from "lucide-react";
-import type { AhuStatus } from "@/db/schema";
+import type { AhuStatus } from "@/lib/types";
 import { timeAgo } from "@/lib/client";
 import { cx } from "@/components/ui";
 

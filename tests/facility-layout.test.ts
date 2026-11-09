@@ -31,7 +31,6 @@ import {
   validatePlatformPlacement,
 } from "../src/lib/facility-placement";
 import { commandFeedbackMatches, computeAhuStatus } from "../src/lib/domain";
-import { isOfflineNetworkError, isTransientDbError, summarizeDbError } from "../src/db";
 import AhuSchematic from "../src/components/AhuSchematic";
 
 test("facility room is non-rectangular multi-branch with 5 indoor AHUs and 2 outdoor AHUs", () => {
@@ -190,26 +189,6 @@ test("airflow SVG paths use exact integer dash-period offsets so loops never jum
   ok(html.includes("--flow-offset:-256"));
   ok(html.includes("--flow-offset:-160"));
   ok(html.includes("--flow-offset:-192"));
-});
-
-test("Supavisor EMAXCONNSESSION and offline DNS ENOTFOUND errors are classified cleanly for pool retry and circuit-breaker backoff", () => {
-  const supavisorErr = new Error("Failed query: select * from ahu_private.ahus", {
-    cause: Object.assign(
-      new Error("(EMAXCONNSESSION) max clients reached in session mode - max clients are limited to pool_size: 15"),
-      { code: "XX000" },
-    ),
-  });
-  equal(isTransientDbError(supavisorErr), true);
-  equal(isOfflineNetworkError(supavisorErr), false);
-  ok(summarizeDbError(supavisorErr).includes("EMAXCONNSESSION"));
-
-  const dnsErr = new Error("Failed query: select * from ahu_private.ahus", {
-    cause: Object.assign(new Error("getaddrinfo ENOTFOUND aws-0-ap-southeast-1.pooler.supabase.com"), {
-      code: "ENOTFOUND",
-    }),
-  });
-  equal(isOfflineNetworkError(dnsErr), true);
-  ok(summarizeDbError(dnsErr).includes("ENOTFOUND"));
 });
 
 test("3D room editor operations: drag wall, insert/move/delete corner, extrude wing, and snap AHU to custom angled wall", () => {

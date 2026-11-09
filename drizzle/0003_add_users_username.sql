@@ -1,2 +1,0 @@
-ALTER TABLE "ahu_private"."users" ADD COLUMN IF NOT EXISTS "username" text;--> statement-breakpoint
-CREATE UNIQUE INDEX IF NOT EXISTS "users_username_uidx" ON "ahu_private"."users" USING btree (lower("username")) WHERE username IS NOT NULL;

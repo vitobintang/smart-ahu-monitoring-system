@@ -1,6 +1,11 @@
-import { asc } from "drizzle-orm";
-import { db } from "@/db";
-import { ahus, devices, sensorThresholds } from "@/db/schema";
+import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
+import { readRtdbAhus, ahuToRow, type RtdbAhuRecord } from "@/lib/rtdb/registry";
+
+async function requireRtdb() {
+  const rtdb = await tryGetAhuRtdb();
+  if (!rtdb) throw new Error("Firebase RTDB is not configured");
+  return rtdb;
+}
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { PARAMETERS, PARAM_KEYS, SETPOINT_MAX, SETPOINT_MIN, type ParamKey } from "@/lib/domain";
 import { normalizeRotation } from "@/lib/facility-layout";
@@ -17,10 +22,14 @@ const AHU_ID_RE = /^[A-Z0-9][A-Z0-9_-]{2,23}$/;
 export async function GET() {
   try {
     await requireAuth("view");
-    const [rows, floorplan] = await Promise.all([
-      db.select().from(ahus).orderBy(asc(ahus.id)),
+    const rtdb = await requireRtdb();
+    const [registry, floorplan] = await Promise.all([
+      readRtdbAhus(rtdb),
       getActiveFloorplan(),
     ]);
+    const rows = [...registry.values()]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((r) => ahuToRow(r) as unknown as RtdbAhuRecord & Record<string, unknown>);
     const resolved: Array<{ id: string; x: number; z: number }> = [];
     const units = rows.map((row) => {
       const p = resolveAhuPlacement(row, resolved, floorplan.vertices);
@@ -68,8 +77,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const existingRows = await db.select().from(ahus).orderBy(asc(ahus.id));
-    if (existingRows.some((r) => r.id.toUpperCase() === rawId)) {
+    const registry = await readRtdbAhus(await requireRtdb());
+    if ([...registry.values()].some((r) => r.id.toUpperCase() === rawId)) {
       return Response.json(
         { error: `AHU ${rawId} already exists.` },
         { status: 409 },
@@ -85,7 +94,7 @@ export async function POST(req: Request) {
 
     const floorplan = await getActiveFloorplan();
     const existingPlacements: Array<{ id: string; x: number; z: number; rotation?: number }> = [];
-    for (const r of existingRows) {
+    for (const r of [...registry.values()].sort((a, b) => a.id.localeCompare(b.id))) {
       const p = resolveAhuPlacement(r, existingPlacements, floorplan.vertices);
       existingPlacements.push({ id: r.id, x: p.x, z: p.z, rotation: p.rotation });
     }
@@ -139,79 +148,83 @@ export async function POST(req: Request) {
       sensors = PARAMETERS.map((p) => p.key).filter((k) => hasHeater || k !== "heaterOutput");
     }
 
-    await db.transaction(async (tx) => {
-      await tx.insert(ahus).values({
+    // Phase 5c: registration writes the RTDB registry + default thresholds natively.
+    const rtdb = await (async () => {
+      const { tryGetAhuRtdb } = await import("@/lib/rtdb/live-read");
+      const rtdb = await tryGetAhuRtdb();
+      if (!rtdb) throw new Error("Firebase RTDB is not configured");
+      return rtdb;
+    })();
+    const { writeRtdbAhu, setRtdbThreshold, setRtdbDevice } = await import("@/lib/rtdb/registry");
+    const nowMs = Date.now();
+    await writeRtdbAhu(rtdb, {
+      id: rawId,
+      name,
+      location,
+      commTimeoutSec,
+      hasHeater,
+      installedSensors: sensors,
+      currentStatus: "OFFLINE",
+      lastSeenAt: null,
+      controlMode: "AUTO",
+      desiredRunState,
+      setpoint,
+      faultCode: null,
+      physicalControlEnabled: false,
+      mapX: placement.snappedX,
+      mapZ: placement.snappedZ,
+      mapRotation: rotation,
+      mapZone: placement.zone!.label,
+      updatedAt: nowMs,
+    });
+    for (const p of PARAMETERS) {
+      const isInstalled = sensors.includes(p.key);
+      await setRtdbThreshold(rtdb, {
+        id: `${rawId}:${p.key}`,
+        ahuId: rawId,
+        parameter: p.key,
+        enabled: isInstalled && (p.defaultLow !== null || p.defaultHigh !== null),
+        lowLimit: p.defaultLow,
+        highLimit: p.defaultHigh,
+        delaySec: p.key === "current" ? 10 : 5,
+        priority: p.defaultPriority,
+        validMin: p.validMin,
+        validMax: p.validMax,
+        unit: p.unit,
+        label: p.label,
+        trendEnabled: isInstalled && p.trendByDefault,
+        updatedAt: nowMs,
+      });
+    }
+    if (provisionSimulator) {
+      await setRtdbDevice(rtdb, {
+        id: randomId(),
+        ahuId: rawId,
+        label: `${rawId} Simulation Controller`,
+        token: `sim_${rawId.toLowerCase().replace(/[^a-z0-9]/g, "")}_${randomHex(8)}`,
+        sourceType: "SIMULATION",
+        enabled: true,
+        createdAt: nowMs,
+      });
+    }
+    await writeAudit({
+      userId: actor.user.id,
+      userEmail: actor.user.email,
+      action: "AHU_CREATED",
+      entity: `ahu:${rawId}`,
+      ipAddress: ip,
+      details: {
         id: rawId,
         name,
         location,
-        commTimeoutSec,
         hasHeater,
-        installedSensors: sensors,
-        currentStatus: "OFFLINE",
-        controlMode: "AUTO",
-        desiredRunState,
         setpoint,
-        physicalControlEnabled: false,
+        provisionSimulator,
         mapX: placement.snappedX,
         mapZ: placement.snappedZ,
         mapRotation: rotation,
         mapZone: placement.zone!.label,
-      });
-
-      await tx.insert(sensorThresholds).values(
-        PARAMETERS.map((p) => {
-          const isInstalled = sensors.includes(p.key);
-          return {
-            id: `${rawId}:${p.key}`,
-            ahuId: rawId,
-            parameter: p.key,
-            enabled: isInstalled && (p.defaultLow !== null || p.defaultHigh !== null),
-            lowLimit: p.defaultLow,
-            highLimit: p.defaultHigh,
-            delaySec: p.key === "current" ? 10 : 5,
-            priority: p.defaultPriority,
-            validMin: p.validMin,
-            validMax: p.validMax,
-            unit: p.unit,
-            label: p.label,
-            trendEnabled: isInstalled && p.trendByDefault,
-          };
-        }),
-      );
-
-      if (provisionSimulator) {
-        await tx.insert(devices).values({
-          id: randomId(),
-          ahuId: rawId,
-          label: `${rawId} Simulation Controller`,
-          token: `sim_${rawId.toLowerCase().replace(/[^a-z0-9]/g, "")}_${randomHex(8)}`,
-          sourceType: "SIMULATION",
-          enabled: true,
-        });
-      }
-
-      await writeAudit(
-        {
-          userId: actor.user.id,
-          userEmail: actor.user.email,
-          action: "AHU_CREATED",
-          entity: `ahu:${rawId}`,
-          ipAddress: ip,
-          details: {
-            id: rawId,
-            name,
-            location,
-            hasHeater,
-            setpoint,
-            provisionSimulator,
-            mapX: placement.snappedX,
-            mapZ: placement.snappedZ,
-            mapRotation: rotation,
-            mapZone: placement.zone!.label,
-          },
-        },
-        tx,
-      );
+      },
     });
 
     // Clear short overview cache so the newly added AHU appears immediately

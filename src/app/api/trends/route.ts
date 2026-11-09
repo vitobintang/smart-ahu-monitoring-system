@@ -1,9 +1,6 @@
-import { and, desc, eq } from "drizzle-orm";
-import { db } from "@/db";
-import { mirrorToRtdb } from "@/lib/rtdb/live-read";
-import { ackRtdbTrendAlert } from "@/lib/rtdb/trends";
-import { trendAlerts } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
+import { requireRtdb } from "@/lib/rtdb/live-read";
+import { ackRtdbTrendAlert, readRtdbTrendHistory, trendToRow, TREND_ALERTS_NODE, type RtdbTrendRecord } from "@/lib/rtdb/trends";
 import { publishRealtime } from "@/lib/realtime";
 import { analyseTrendsBatch } from "@/lib/trends";
 
@@ -17,21 +14,21 @@ export async function GET(req: Request) {
     const ahuId = url.searchParams.get("ahuId");
     const unackedOnly = url.searchParams.get("unacked") === "1";
 
-    const conds = [];
-    if (ahuId) conds.push(eq(trendAlerts.ahuId, ahuId));
-    if (unackedOnly) conds.push(eq(trendAlerts.acknowledged, false));
-
+    const rtdb = await requireRtdb();
     const [analyses, history] = await Promise.all([
       analyseTrendsBatch(ahuId ? [ahuId] : undefined),
-      db
-        .select()
-        .from(trendAlerts)
-        .where(conds.length ? and(...conds) : undefined)
-        .orderBy(desc(trendAlerts.createdAt))
-        .limit(200),
+      ahuId
+        ? readRtdbTrendHistory(rtdb, ahuId, 200)
+        : (async () => {
+            const tree = (await rtdb.get<Record<string, RtdbTrendRecord>>(TREND_ALERTS_NODE)) ?? {};
+            return Object.values(tree)
+              .sort((a, b) => b.createdAt - a.createdAt)
+              .slice(0, 200);
+          })(),
     ]);
+    const filteredHistory = unackedOnly ? history.filter((t) => !t.acknowledged) : history;
 
-    return Response.json({ analyses, history });
+    return Response.json({ analyses, history: filteredHistory.map(trendToRow) });
   } catch (err) {
     return jsonError(err);
   }
@@ -43,16 +40,12 @@ export async function POST(req: Request) {
     const actor = await requireAuth("ack", { mutating: true });
     const body = (await req.json()) as { trendId?: string };
     if (!body.trendId) return Response.json({ error: "trendId is required" }, { status: 400 });
-    const rows = await db.select().from(trendAlerts).where(eq(trendAlerts.id, body.trendId)).limit(1);
-    const trend = rows[0];
+    const rtdb = await requireRtdb();
+    const tree = (await rtdb.get<Record<string, RtdbTrendRecord>>(TREND_ALERTS_NODE)) ?? {};
+    const trend = tree[body.trendId];
     if (!trend) return Response.json({ error: "Trend alert not found" }, { status: 404 });
 
-    await db
-      .update(trendAlerts)
-      .set({ acknowledged: true, acknowledgedBy: actor.user.id, acknowledgedAt: new Date() })
-      .where(eq(trendAlerts.id, trend.id));
-    // Phase 5b dual-write: the acknowledgement mirrors into RTDB.
-    mirrorToRtdb((rtdb) => ackRtdbTrendAlert(rtdb, trend.id, actor.user.id, Date.now()));
+    await ackRtdbTrendAlert(rtdb, trend.id, actor.user.id, Date.now());
 
     const ip = await getClientIp();
     await writeAudit({

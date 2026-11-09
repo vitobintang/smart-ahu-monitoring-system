@@ -340,7 +340,7 @@ export default function AppShell({
             <p className="text-[12px] font-bold text-white">System Status</p>
             <p className="mt-1.5 flex items-center gap-2 text-[11.5px] font-semibold text-white">
               <span className="h-2.5 w-2.5 rounded-full bg-[#22c55e] shadow-[0_0_10px_rgba(34,197,94,0.9)]" />
-              {liveSync?.mode === "LOCAL" ? "Local PostgreSQL Active" : "Firebase RTDB Connected"}
+              {liveSync?.firebaseConfigured === false ? "RTDB Connecting…" : "Firebase RTDB Connected"}
             </p>
             <div className="mt-2 space-y-1 text-[10.5px] text-[#9db1d0]">
               <p className="flex items-center gap-2">

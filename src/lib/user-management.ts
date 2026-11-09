@@ -1,36 +1,61 @@
-import { and, eq, isNull, ne, sql } from "drizzle-orm";
-import { db } from "@/db";
-import { accessDevices, users } from "@/db/schema";
-import type { Role, UserRow } from "@/db/schema";
-import { invalidateSessionCache, safePublicUser, writeAudit } from "@/lib/auth";
-import { ROLES } from "@/lib/domain";
-import { isAdminRole, normalizeUsername } from "@/lib/role-auth";
-import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
+import type { Role, UserRow } from "@/lib/types";
+import { invalidateSessionCache, safePublicUser } from "@/lib/auth";
+import { isAdminRole } from "@/lib/role-auth";
+import { requireRtdb } from "@/lib/rtdb/live-read";
 import { auditRtdb } from "@/lib/rtdb/lifecycle";
-import { deleteRtdbUser, getRtdbUserById, type RtdbUser } from "@/lib/rtdb/users";
-import { changeRtdbUsername } from "@/lib/firebase/provision";
-
-type DbClient = typeof db;
+import { deleteRtdbUser, getRtdbUserById, listAllRtdbUsers, type RtdbUser } from "@/lib/rtdb/users";
+import { changeRtdbUsername, revokeFirebaseUserSessions } from "@/lib/firebase/provision";
 
 export type UserLifecycleResult<T> =
   | { ok: true; status: number; data: T }
   | { ok: false; status: number; error: string };
 
+function toLifecycleError(err: unknown): UserLifecycleResult<never> {
+  if (err instanceof Error && /already (taken|registered|in use)/i.test(err.message)) {
+    return { ok: false, status: 409, error: err.message } as never;
+  }
+  throw err;
+}
+
+function rtdbToPublic(user: RtdbUser): ReturnType<typeof safePublicUser> {
+  return {
+    id: user.id,
+    email: user.email,
+    username: user.username,
+    fullName: user.fullName,
+    role: user.role,
+    createdAt: user.createdAt,
+  };
+}
+
+async function countAdminsRtdb(rtdb: NonNullable<Awaited<ReturnType<typeof requireRtdb>>>): Promise<number> {
+  const all = await listAllRtdbUsers(rtdb);
+  return all.filter((u) => isAdminRole(u.role)).length;
+}
+
+async function applyRtdbUserFields(
+  rtdb: NonNullable<Awaited<ReturnType<typeof requireRtdb>>>,
+  target: RtdbUser,
+  fields: { role: Role; username: string; fullName: string | null },
+): Promise<RtdbUser> {
+  const next: RtdbUser = { ...target, ...fields, updatedAt: Date.now() };
+  const { userNode } = await import("@/lib/rtdb/users");
+  await rtdb.set(userNode(target.id), next);
+  return next;
+}
+
 /**
  * FR-20 / FR-29: Update any user's role (Admin, Engineering, Operator),
  * username, and/or display name with strict self-demotion and last-Admin guards.
  */
-export async function updateManagedUser(
-  input: {
-    actor: Pick<UserRow, "id" | "email">;
-    targetUserId: string;
-    role?: string;
-    username?: string;
-    fullName?: string;
-    ipAddress?: string | null;
-  },
-  client: DbClient = db,
-): Promise<UserLifecycleResult<{ user: ReturnType<typeof safePublicUser> }>> {
+export async function updateManagedUser(input: {
+  actor: Pick<UserRow, "id" | "email">;
+  targetUserId: string;
+  role?: string;
+  username?: string;
+  fullName?: string;
+  ipAddress?: string | null;
+}): Promise<UserLifecycleResult<{ user: ReturnType<typeof safePublicUser> }>> {
   const targetId = input.targetUserId.trim();
   if (!targetId) {
     return { ok: false, status: 400, error: "Target userId is required" };
@@ -38,15 +63,15 @@ export async function updateManagedUser(
 
   let nextRole: Role | undefined;
   if (input.role !== undefined) {
-    if (!ROLES.includes(input.role as Role)) {
-      return { ok: false, status: 400, error: `Role must be one of: ${ROLES.join(", ")}` };
+    if (!["Admin", "Engineering", "Operator"].includes(input.role)) {
+      return { ok: false, status: 400, error: `Role must be one of: Admin, Engineering, Operator` };
     }
     nextRole = input.role as Role;
   }
 
   let nextUsername: string | undefined;
   if (input.username !== undefined) {
-    const parsed = normalizeUsername(input.username);
+    const parsed = (await import("@/lib/role-auth")).normalizeUsername(input.username);
     if (!parsed.ok) {
       return { ok: false, status: 400, error: parsed.error };
     }
@@ -66,72 +91,10 @@ export async function updateManagedUser(
     return { ok: false, status: 400, error: "No user changes specified" };
   }
 
-  // Phase 5b slice 3: user updates are RTDB-native when Firebase is
-  // configured — guards read the users tree, username changes go through the
-  // transactional claim swap, and the audit trail is RTDB-only.
   try {
-    const rtdb = await tryGetAhuRtdb();
-    if (rtdb) {
-      const target = await getRtdbUserById(rtdb, targetId);
-      if (!target) return { ok: false, status: 404, error: "User account not found" };
-
-      const effectiveRole = nextRole ?? target.role;
-      const effectiveUsername = nextUsername !== undefined ? nextUsername : target.username;
-      const effectiveFullName = nextFullName !== undefined ? nextFullName : target.fullName;
-
-      if (isAdminRole(target.role) && !isAdminRole(effectiveRole)) {
-        if (target.id === input.actor.id) {
-          return { ok: false, status: 409, error: "You cannot demote your own active Administrator account." };
-        }
-        const admins = await countAdminsRtdb(rtdb);
-        if (admins <= 1) {
-          return { ok: false, status: 409, error: "Cannot demote the last remaining Administrator account." };
-        }
-      }
-
-      if (nextUsername !== undefined && nextUsername !== target.username) {
-        await changeRtdbUsername(target.id, nextUsername);
-      }
-
-      const updated = await applyRtdbUserFields(rtdb, target, {
-        role: effectiveRole,
-        username: effectiveUsername,
-        fullName: effectiveFullName,
-      });
-
-      const action = target.role !== updated.role ? "USER_ROLE_CHANGED" : "USER_UPDATED";
-      await auditRtdb(rtdb, {
-        userId: input.actor.id,
-        userEmail: input.actor.email,
-        action,
-        entity: `user:${target.id}`,
-        ipAddress: input.ipAddress ?? null,
-        details: {
-          previousRole: target.role,
-          role: updated.role,
-          previousUsername: target.username ?? null,
-          username: updated.username ?? null,
-          previousFullName: target.fullName,
-          fullName: updated.fullName,
-        },
-      });
-
-      invalidateSessionCache();
-      return { ok: true, status: 200, data: { user: safePublicUser(rtdbToPublic(updated)) } };
-    }
-  } catch (err) {
-    if (err instanceof Error && /already (taken|registered|in use)/i.test(err.message)) {
-      return { ok: false, status: 409, error: err.message };
-    }
-    console.error("[users] RTDB update failed, using PostgreSQL:", err instanceof Error ? err.message : err);
-  }
-
-  const outcome = await client.transaction(async (tx): Promise<UserLifecycleResult<{ user: UserRow }>> => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended('users:admin_guard', 0))`);
-    const [target] = await tx.select().from(users).where(eq(users.id, targetId)).limit(1);
-    if (!target) {
-      return { ok: false, status: 404, error: "User account not found" };
-    }
+    const rtdb = await requireRtdb();
+    const target = await getRtdbUserById(rtdb, targetId);
+    if (!target) return { ok: false, status: 404, error: "User account not found" };
 
     const effectiveRole = nextRole ?? target.role;
     const effectiveUsername = nextUsername !== undefined ? nextUsername : target.username;
@@ -139,153 +102,104 @@ export async function updateManagedUser(
 
     if (isAdminRole(target.role) && !isAdminRole(effectiveRole)) {
       if (target.id === input.actor.id) {
-        return {
-          ok: false,
-          status: 409,
-          error: "You cannot demote your own active Administrator account.",
-        };
+        return { ok: false, status: 409, error: "You cannot demote your own active Administrator account." };
       }
-      const admins = await tx
-        .select({ id: users.id })
-        .from(users)
-        .where(eq(users.role, "Admin"));
-      if (admins.length <= 1) {
-        return {
-          ok: false,
-          status: 409,
-          error: "Cannot demote the last remaining Administrator account.",
-        };
+      const admins = await countAdminsRtdb(rtdb);
+      if (admins <= 1) {
+        return { ok: false, status: 409, error: "Cannot demote the last remaining Administrator account." };
       }
     }
 
-    if (nextUsername !== undefined) {
-      const [conflict] = await tx
-        .select({ id: users.id })
-        .from(users)
-        .where(and(sql`lower(${users.username}) = ${nextUsername}`, ne(users.id, target.id)))
-        .limit(1);
-      if (conflict) {
-        return {
-          ok: false,
-          status: 409,
-          error: `Username "${nextUsername}" is already in use`,
-        };
-      }
+    if (nextUsername !== undefined && nextUsername !== target.username) {
+      await changeRtdbUsername(target.id, nextUsername);
     }
 
-    const [updated] = await tx
-      .update(users)
-      .set({
-        role: effectiveRole,
-        username: effectiveUsername,
-        fullName: effectiveFullName,
-      })
-      .where(eq(users.id, target.id))
-      .returning();
+    const updated = await applyRtdbUserFields(rtdb, target, {
+      role: effectiveRole,
+      username: effectiveUsername,
+      fullName: effectiveFullName,
+    });
 
     const action = target.role !== updated.role ? "USER_ROLE_CHANGED" : "USER_UPDATED";
-    await writeAudit(
-      {
-        userId: input.actor.id,
-        userEmail: input.actor.email,
-        action,
-        entity: `user:${target.id}`,
-        ipAddress: input.ipAddress ?? null,
-        details: {
-          previousRole: target.role,
-          role: updated.role,
-          previousUsername: target.username ?? null,
-          username: updated.username ?? null,
-          previousFullName: target.fullName,
-          fullName: updated.fullName,
-        },
+    await auditRtdb(rtdb, {
+      userId: input.actor.id,
+      userEmail: input.actor.email,
+      action,
+      entity: `user:${target.id}`,
+      ipAddress: input.ipAddress ?? null,
+      details: {
+        previousRole: target.role,
+        role: updated.role,
+        previousUsername: target.username ?? null,
+        username: updated.username ?? null,
+        previousFullName: target.fullName,
+        fullName: updated.fullName,
       },
-      tx,
-    );
+    });
 
-    return { ok: true, status: 200, data: { user: updated } };
-  });
-
-  if (!outcome.ok) return outcome;
-  invalidateSessionCache();
-  return {
-    ok: true,
-    status: outcome.status,
-    data: { user: safePublicUser(outcome.data.user) },
-  };
+    invalidateSessionCache();
+    return { ok: true, status: 200, data: { user: safePublicUser(rtdbToPublic(updated)) } };
+  } catch (err) {
+    try {
+      return toLifecycleError(err);
+    } catch {
+      throw err;
+    }
+  }
 }
 
 /**
- * Legacy helper retained for backward compatibility with existing audit/device tables:
- * revokes any lingering rows in `access_devices` for a user.
+ * Revokes every active session for the target account: the Firebase refresh
+ * tokens are revoked (all clients must re-authenticate) and the in-process
+ * session cache is dropped. Returns 404 when the account does not exist.
  */
-export async function revokeAllUserSessions(
-  input: {
-    actor: Pick<UserRow, "id" | "email">;
-    targetUserId: string;
-    ipAddress?: string | null;
-    now?: Date;
-  },
-  client: DbClient = db,
-): Promise<UserLifecycleResult<{ revokedCount: number }>> {
+export async function revokeAllUserSessions(input: {
+  actor: Pick<UserRow, "id" | "email">;
+  targetUserId: string;
+  ipAddress?: string | null;
+  now?: Date;
+}): Promise<UserLifecycleResult<{ revokedCount: number }>> {
   const targetId = input.targetUserId.trim();
   if (!targetId) {
     return { ok: false, status: 400, error: "Target userId is required" };
   }
-  const now = input.now ?? new Date();
 
-  const outcome = await client.transaction(
-    async (tx): Promise<UserLifecycleResult<{ revokedCount: number }>> => {
-      const [target] = await tx.select().from(users).where(eq(users.id, targetId)).limit(1);
-      if (!target) {
-        return { ok: false, status: 404, error: "User account not found" };
-      }
+  const rtdb = await requireRtdb();
+  const target = await getRtdbUserById(rtdb, targetId);
+  if (!target) {
+    return { ok: false, status: 404, error: "User account not found" };
+  }
 
-      const revoked = await tx
-        .update(accessDevices)
-        .set({ revokedAt: now })
-        .where(and(eq(accessDevices.userId, target.id), isNull(accessDevices.revokedAt)))
-        .returning({ id: accessDevices.id });
+  await revokeFirebaseUserSessions(target.id);
 
-      await writeAudit(
-        {
-          userId: input.actor.id,
-          userEmail: input.actor.email,
-          action: "USER_SESSIONS_REVOKED",
-          entity: `user:${target.id}`,
-          ipAddress: input.ipAddress ?? null,
-          details: {
-            role: target.role,
-            fullName: target.fullName,
-            revokedCount: revoked.length,
-          },
-        },
-        tx,
-      );
-
-      return { ok: true, status: 200, data: { revokedCount: revoked.length } };
+  await auditRtdb(rtdb, {
+    userId: input.actor.id,
+    userEmail: input.actor.email,
+    action: "USER_SESSIONS_REVOKED",
+    entity: `user:${target.id}`,
+    ipAddress: input.ipAddress ?? null,
+    details: {
+      role: target.role,
+      fullName: target.fullName,
+      revokedCount: 1,
     },
-  );
+  });
 
-  if (!outcome.ok) return outcome;
   invalidateSessionCache();
-  return outcome;
+  return { ok: true, status: 200, data: { revokedCount: 1 } };
 }
 
 /**
  * FR-20 / FR-29: Removes a user account with strict self-lockout and last-Admin
- * protection, cleaning up Supabase Auth credentials and preserving historical
- * audit_logs, alarms, and trend_alerts.
+ * protection, deleting the Firebase Auth credential and RTDB profile while
+ * preserving historical audit_logs, alarms, and trend alerts.
  */
-export async function removeManagedUser(
-  input: {
-    actor: Pick<UserRow, "id" | "email">;
-    targetUserId: string;
-    ipAddress?: string | null;
-    deleteSupabaseAuthUser?: (userId: string) => Promise<void>;
-  },
-  client: DbClient = db,
-): Promise<UserLifecycleResult<{ removedUserId: string; role: Role }>> {
+export async function removeManagedUser(input: {
+  actor: Pick<UserRow, "id" | "email">;
+  targetUserId: string;
+  ipAddress?: string | null;
+  deleteAuthUser?: (userId: string) => Promise<void>;
+}): Promise<UserLifecycleResult<{ removedUserId: string; role: Role }>> {
   const targetId = input.targetUserId.trim();
   if (!targetId) {
     return { ok: false, status: 400, error: "Target userId is required" };
@@ -298,132 +212,41 @@ export async function removeManagedUser(
     };
   }
 
-  // Phase 5b slice 3: RTDB-native removal path (guards + profile deletion
-  // from the users tree; Firebase Auth cleanup stays the caller's job).
-  try {
-    const rtdb = await tryGetAhuRtdb();
-    if (rtdb) {
-      const target = await getRtdbUserById(rtdb, targetId);
-      if (!target) return { ok: false, status: 404, error: "User account not found" };
-      if (isAdminRole(target.role)) {
-        const admins = await countAdminsRtdb(rtdb);
-        if (admins <= 1) {
-          return { ok: false, status: 409, error: "Cannot remove the last remaining Administrator account." };
-        }
-      }
-      await deleteRtdbUser(rtdb, target.id);
-      await auditRtdb(rtdb, {
-        userId: input.actor.id,
-        userEmail: input.actor.email,
-        action: "USER_REMOVED",
-        entity: `user:${target.id}`,
-        ipAddress: input.ipAddress ?? null,
-        details: {
-          email: target.email,
-          username: target.username ?? null,
-          fullName: target.fullName,
-          role: target.role,
-        },
-      });
-      invalidateSessionCache();
-      return { ok: true, status: 200, data: { removedUserId: target.id, role: target.role } };
+  const rtdb = await requireRtdb();
+  const target = await getRtdbUserById(rtdb, targetId);
+  if (!target) return { ok: false, status: 404, error: "User account not found" };
+  if (isAdminRole(target.role)) {
+    const admins = await countAdminsRtdb(rtdb);
+    if (admins <= 1) {
+      return { ok: false, status: 409, error: "Cannot remove the last remaining Administrator account." };
     }
-  } catch (err) {
-    console.error("[users] RTDB remove failed, using PostgreSQL:", err instanceof Error ? err.message : err);
   }
-
-  let deletedTarget: UserRow | null = null;
-  const outcome = await client.transaction(
-    async (tx): Promise<UserLifecycleResult<{ removedUserId: string; role: Role }>> => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended('users:admin_guard', 0))`);
-      const [target] = await tx.select().from(users).where(eq(users.id, targetId)).limit(1);
-      if (!target) {
-        return { ok: false, status: 404, error: "User account not found" };
-      }
-
-      if (isAdminRole(target.role)) {
-        const admins = await tx
-          .select({ id: users.id })
-          .from(users)
-          .where(eq(users.role, "Admin"));
-        if (admins.length <= 1) {
-          return {
-            ok: false,
-            status: 409,
-            error: "Cannot remove the last remaining Administrator account.",
-          };
-        }
-      }
-
-      await tx.delete(users).where(eq(users.id, target.id));
-      deletedTarget = target;
-
-      await writeAudit(
-        {
-          userId: input.actor.id,
-          userEmail: input.actor.email,
-          action: "USER_REMOVED",
-          entity: `user:${target.id}`,
-          ipAddress: input.ipAddress ?? null,
-          details: {
-            email: target.email,
-            username: target.username ?? null,
-            fullName: target.fullName,
-            role: target.role,
-          },
-        },
-        tx,
-      );
-
-      return { ok: true, status: 200, data: { removedUserId: target.id, role: target.role } };
+  await deleteRtdbUser(rtdb, target.id);
+  await auditRtdb(rtdb, {
+    userId: input.actor.id,
+    userEmail: input.actor.email,
+    action: "USER_REMOVED",
+    entity: `user:${target.id}`,
+    ipAddress: input.ipAddress ?? null,
+    details: {
+      email: target.email,
+      username: target.username ?? null,
+      fullName: target.fullName,
+      role: target.role,
     },
-  );
-
-  if (!outcome.ok) return outcome;
+  });
   invalidateSessionCache();
 
-  if (deletedTarget && input.deleteSupabaseAuthUser) {
+  if (input.deleteAuthUser) {
     try {
-      await input.deleteSupabaseAuthUser((deletedTarget as UserRow).id);
+      await input.deleteAuthUser(target.id);
     } catch (err) {
       console.warn(
-        "[AHU] Removed user DB row but Supabase Auth cleanup reported an error:",
+        "[AHU] Removed user profile but Firebase Auth cleanup reported an error:",
         err instanceof Error ? err.message : err,
       );
     }
   }
 
-  return outcome;
-}
-
-/* ------------------------------------------------------------------ */
-/* Phase 5b: RTDB-native user helpers                                  */
-/* ------------------------------------------------------------------ */
-
-function rtdbToPublic(user: RtdbUser): ReturnType<typeof safePublicUser> {
-  return {
-    id: user.id,
-    email: user.email,
-    username: user.username,
-    fullName: user.fullName,
-    role: user.role,
-    createdAt: user.createdAt,
-  };
-}
-
-async function countAdminsRtdb(rtdb: NonNullable<Awaited<ReturnType<typeof tryGetAhuRtdb>>>): Promise<number> {
-  const { listAllRtdbUsers } = await import("@/lib/rtdb/users");
-  const all = await listAllRtdbUsers(rtdb);
-  return all.filter((u) => isAdminRole(u.role)).length;
-}
-
-async function applyRtdbUserFields(
-  rtdb: NonNullable<Awaited<ReturnType<typeof tryGetAhuRtdb>>>,
-  target: RtdbUser,
-  fields: { role: Role; username: string; fullName: string | null },
-): Promise<RtdbUser> {
-  const next: RtdbUser = { ...target, ...fields, updatedAt: Date.now() };
-  const { userNode } = await import("@/lib/rtdb/users");
-  await rtdb.set(userNode(target.id), next);
-  return next;
+  return { ok: true, status: 200, data: { removedUserId: target.id, role: target.role } };
 }

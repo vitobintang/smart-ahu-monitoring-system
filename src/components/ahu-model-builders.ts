@@ -1,12 +1,13 @@
 import * as THREE from "three";
-import type { AhuStatus } from "@/db/schema";
+import type { AhuStatus } from "@/lib/types";
 import type { OutdoorTreeCandidate } from "@/lib/facility-placement";
 const STATUS_HEX: Record<AhuStatus, number> = {
   RUN: 0x10b981,
   STOP: 0x64748b,
   FAULT: 0xef4444,
   OFFLINE: 0xf43f5e,
-};
+};
+
 
 /** Procedurally generates a crisp 3D architectural tree (deciduous shade canopy or layered pine) with planter ring. */
 export function buildOutdoorTree3D(spec: OutdoorTreeCandidate): { group: THREE.Group; crown: THREE.Group } {
@@ -82,7 +83,8 @@ export function buildOutdoorTree3D(spec: OutdoorTreeCandidate): { group: THREE.G
   group.add(crown);
   group.position.set(spec.x, 0, spec.z);
   return { group, crown };
-}
+}
+
 
 /** Deeply disposes a group's geometries + per-model materials before clearing (stops GC churn from frequent rebuilds). */
 export function disposeGroupDeep(group: THREE.Group) {
@@ -94,7 +96,8 @@ export function disposeGroupDeep(group: THREE.Group) {
     else if (mat) mat.dispose();
   });
   group.clear();
-}
+}
+
 
 /** Builds a detailed daylight-lit industrial 3D Air Handling Unit on a raised mounting plinth. */
 export function buildAhuModel3D(opts: {
@@ -331,4 +334,5 @@ export function buildAhuModel3D(opts: {
   group.add(beacon);
 
   return { group, rotor, halo, beaconMat };
-}
+}
+

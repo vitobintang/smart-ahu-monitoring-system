@@ -1,10 +1,6 @@
-import { and, desc, eq, gte, isNotNull, sql } from "drizzle-orm";
-import { db } from "@/db";
-import { alarms, telemetry, trendAlerts } from "@/db/schema";
 import { requireAuth, jsonError } from "@/lib/auth";
 import { getDashboard } from "@/lib/queries";
 import { getSyncStatus } from "@/lib/realtime";
-import { authoritativeTelemetry } from "@/lib/source";
 import { maybePulseWorkers } from "@/lib/workers";
 import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
 import { readTelemetryRange } from "@/lib/rtdb/history";
@@ -32,14 +28,9 @@ async function fleetSeries(windowMin: number) {
       return bucketFleetSeries(rows, windowMin);
     }
   } catch (err) {
-    console.error("[overview] RTDB fleet series failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+    console.error("[overview] RTDB fleet series failed:", err instanceof Error ? err.message : err);
+    throw err instanceof Error ? err : new Error(String(err));
   }
-  const rows = await db
-    .select({ ahuId: telemetry.ahuId, t: telemetry.timestamp, v: telemetry.supplyTemp })
-    .from(telemetry)
-    .where(and(gte(telemetry.timestamp, since), isNotNull(telemetry.supplyTemp), authoritativeTelemetry()))
-    .orderBy(telemetry.timestamp);
-  return bucketFleetSeries(rows, windowMin);
 }
 
 function bucketFleetSeries(
@@ -103,21 +94,8 @@ async function loadOverview(windowMin: number, lite: boolean): Promise<Record<st
           .map(alarmToRow);
         recentTrends = (await readRtdbUnackedTrends(rtdb, 8)).map(trendToRow);
       } else {
-        recentAlarms = await db
-          .select()
-          .from(alarms)
-          .where(eq(alarms.isActive, true))
-          .orderBy(
-            sql`case ${alarms.priority} when 'CRITICAL' then 0 when 'HIGH' then 1 when 'MEDIUM' then 2 else 3 end`,
-            desc(alarms.triggeredAt),
-          )
-          .limit(12);
-        recentTrends = await db
-          .select()
-          .from(trendAlerts)
-          .where(eq(trendAlerts.acknowledged, false))
-          .orderBy(desc(trendAlerts.createdAt))
-          .limit(8);
+        recentAlarms = [];
+        recentTrends = [];
       }
     }
 

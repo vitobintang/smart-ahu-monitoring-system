@@ -1,5 +1,4 @@
 import { USER_ROLES, type UserRole } from "./ahu";
-import { hasPermission, type Permission } from "./permissions";
 
 export type LoginIdentifierType = "email" | "username";
 
@@ -131,40 +130,3 @@ export function parseLoginPayload(body: unknown): ParsedLoginPayload {
   };
 }
 
-export type RoleSessionDependencies<TUser extends { id: string; role: UserRole }> = {
-  getSupabaseUserId: () => Promise<string | null>;
-  getUserById: (id: string) => Promise<TUser | null>;
-};
-
-/**
- * Resolves the active session for ALL roles (Admin, Engineering, Operator)
- * exclusively from a verified Supabase Auth session matched against `ahu_private.users`.
- */
-export async function resolveRoleSession<TUser extends { id: string; role: UserRole }>(
-  deps: RoleSessionDependencies<TUser>,
-): Promise<TUser | null> {
-  try {
-    const authUserId = await deps.getSupabaseUserId();
-    if (!authUserId || !authUserId.trim() || authUserId.length > 128) {
-      return null;
-    }
-    const candidate = await deps.getUserById(authUserId);
-    if (!candidate || candidate.id !== authUserId || !isValidUserRole(candidate.role)) {
-      return null;
-    }
-    return candidate;
-  } catch {
-    return null;
-  }
-}
-
-export async function authorizeRolePermission<TUser extends { id: string; role: UserRole }>(
-  deps: RoleSessionDependencies<TUser>,
-  permission: Permission,
-): Promise<{ id: string; role: UserRole } | null> {
-  const user = await resolveRoleSession(deps);
-  if (!user || !hasPermission(user.role, permission)) {
-    return null;
-  }
-  return { id: user.id, role: user.role };
-}

@@ -1,6 +1,3 @@
-import { asc, eq } from "drizzle-orm";
-import { db } from "@/db";
-import { ahus, sensorThresholds } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { getAhuDetail, getSeries } from "@/lib/queries";
 import { PARAM_KEYS, PARAM_MAP, type ParamKey } from "@/lib/domain";
@@ -8,8 +5,15 @@ import { normalizeRotation } from "@/lib/facility-layout";
 import { resolveAhuPlacement, validatePlatformPlacement } from "@/lib/facility-placement";
 import { getActiveFloorplan } from "@/lib/floorplan-store";
 import { maybePulseWorkers } from "@/lib/workers";
-import { mirrorToRtdb } from "@/lib/rtdb/live-read";
-import { patchRtdbAhu, setRtdbThreshold, type RtdbThresholdRecord } from "@/lib/rtdb/registry";
+import { patchRtdbAhu, setRtdbThreshold, readRtdbAhu, readRtdbAhus, type RtdbAhuRecord, type RtdbThresholdRecord } from "@/lib/rtdb/registry";
+import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
+
+async function requireRtdb() {
+  const rtdb = await tryGetAhuRtdb();
+  if (!rtdb) throw new Error("Firebase RTDB is not configured");
+  return rtdb;
+}
+
 
 export const dynamic = "force-dynamic";
 
@@ -74,20 +78,21 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
     // The fleet snapshot doubles as map-placement validation input AND the audit "before" row —
     // one parallel fetch replaces the old separate SELECT (saves a full round trip on every save).
-    let allRows: Array<typeof ahus.$inferSelect> | null = null;
+    let allRows: RtdbAhuRecord[] | null = null;
     let floorplan: Awaited<ReturnType<typeof getActiveFloorplan>> | null = null;
-    let before: typeof ahus.$inferSelect | undefined;
+    let before: RtdbAhuRecord | undefined;
 
+    const rtdb = await requireRtdb();
     if (isMapMove) {
-      const [rows, plan] = await Promise.all([
-        db.select().from(ahus).orderBy(asc(ahus.id)),
+      const [registry, plan] = await Promise.all([
+        readRtdbAhus(rtdb),
         getActiveFloorplan(),
       ]);
-      allRows = rows;
+      allRows = [...registry.values()].sort((a, b) => a.id.localeCompare(b.id));
       floorplan = plan;
-      before = rows.find((r) => r.id === id);
+      before = allRows.find((r) => r.id === id);
     } else {
-      before = (await db.select().from(ahus).where(eq(ahus.id, id)).limit(1))[0];
+      before = (await readRtdbAhu(rtdb, id)) ?? undefined;
     }
     if (!before) return Response.json({ error: `AHU ${id} not found` }, { status: 404 });
 
@@ -164,9 +169,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     }
 
     if (Object.keys(patch).length > 0) {
-      await db.update(ahus).set(patch).where(eq(ahus.id, id));
-      // Phase 5b dual-write: registry patch mirrors into RTDB.
-      mirrorToRtdb((rtdb) => patchRtdbAhu(rtdb, id, patch));
+      await patchRtdbAhu(rtdb, id, patch);
       const g = globalThis as typeof globalThis & { __ahuOverviewCache?: Map<string, unknown> };
       g.__ahuOverviewCache?.clear();
     }
@@ -174,13 +177,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
     const thresholdChanges: unknown[] = [];
     for (const th of body.thresholds ?? []) {
       if (!PARAM_KEYS.includes(th.parameter as ParamKey)) continue;
-      const existing = (
-        await db
-          .select()
-          .from(sensorThresholds)
-          .where(eq(sensorThresholds.id, `${id}:${th.parameter}`))
-          .limit(1)
-      )[0];
+      const { readRtdbThresholds } = await import("@/lib/rtdb/registry");
+      const existing = (await readRtdbThresholds(rtdb, id)).find((t) => t.parameter === th.parameter);
       const meta = PARAM_MAP[th.parameter as ParamKey];
       const next = {
         enabled: th.enabled ?? existing?.enabled ?? false,
@@ -206,13 +204,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
           existing.trendEnabled !== next.trendEnabled;
         if (!diff) continue;
         thresholdChanges.push({ parameter: th.parameter, from: existing, to: next });
-        await db.update(sensorThresholds).set(next).where(eq(sensorThresholds.id, existing.id));
-        // Phase 5b dual-write: threshold update mirrors into RTDB.
-        mirrorToRtdb((rtdb) =>
-          setRtdbThreshold(rtdb, { ...existing, ...next } as unknown as RtdbThresholdRecord),
-        );
+        await setRtdbThreshold(rtdb, { ...existing, ...next, updatedAt: Date.now() } as unknown as RtdbThresholdRecord);
       } else {
-        await db.insert(sensorThresholds).values({
+        thresholdChanges.push({ parameter: th.parameter, from: null, to: next });
+        await setRtdbThreshold(rtdb, {
           id: `${id}:${th.parameter}`,
           ahuId: id,
           parameter: th.parameter,
@@ -221,22 +216,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
           validMin: meta.validMin,
           validMax: meta.validMax,
           ...next,
-        });
-        thresholdChanges.push({ parameter: th.parameter, from: null, to: next });
-        // Phase 5b dual-write: threshold creation mirrors into RTDB.
-        mirrorToRtdb((rtdb) =>
-          setRtdbThreshold(rtdb, {
-            id: `${id}:${th.parameter}`,
-            ahuId: id,
-            parameter: th.parameter,
-            unit: meta.unit,
-            label: meta.label,
-            validMin: meta.validMin,
-            validMax: meta.validMax,
-            ...next,
-            updatedAt: Date.now(),
-          }),
-        );
+          updatedAt: Date.now(),
+        } as unknown as RtdbThresholdRecord);
       }
     }
 

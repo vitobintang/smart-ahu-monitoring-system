@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import { Activity, ArrowDownRight, ArrowLeft, ArrowUpRight, Check, Clock, Cpu, MapPin, Server, TriangleAlert } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import type { AhuStatus } from "@/db/schema";
+import type { AhuStatus } from "@/lib/types";
 import { api, fmtDateTime, LOCAL_POLL_MS, timeAgo, usePoll } from "@/lib/client";
 import {
   classifyQuality,

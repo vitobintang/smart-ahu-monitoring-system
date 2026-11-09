@@ -3,18 +3,19 @@
  *
  * Startup is deliberately NON-BLOCKING. `register()` installs process guards
  * and schedules the service boot, then returns immediately so the HTTP listener
- * (and readiness health checks) comes up without waiting for PostgreSQL.
+ * (and readiness health checks) comes up without waiting for Firebase RTDB.
  *
- * In container or cloud deployments PostgreSQL can become reachable after the
- * Node process starts, and a boot that awaited the database would delay or fail
- * health probes before the web server binds its port.
+ * In container or cloud deployments the RTDB (asia-southeast1) can become
+ * reachable after the Node process starts, and a boot that awaited the database
+ * would delay or fail health probes before the web server binds its port.
  *
- * Boot sequence (retried until the database answers):
- *  1. seed reference data — 7 AHUs, thresholds and devices
- *     (idempotent, so process restarts recover automatically)
- *  2. start the simulation engine (FR-28) and the monitor loop
+ * Boot sequence (retried until RTDB answers):
+ *  1. start the simulation engine (FR-28) and the monitor loop
  *     (communication-timeout alarms FR-14, command TTL FR-26, trend detection
  *     FR-16)
+ *
+ * Reference data (7 AHUs, thresholds, devices) is provisioned via
+ * scripts/backfill-registry.mjs — NOT re-seeded on every boot.
  */
 
 const BOOT_DELAY_MS = Number(process.env.WORKER_BOOT_DELAY_MS ?? 2500);
@@ -23,12 +24,15 @@ const BOOT_RETRY_MS = Number(process.env.WORKER_BOOT_RETRY_MS ?? 5000);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+function rtdbConfigured(): boolean {
+  return Boolean(
+    (process.env.FIREBASE_DATABASE_URL ?? process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL ?? "").trim(),
+  );
+}
+
 async function bootServices() {
   for (let attempt = 1; attempt <= BOOT_MAX_ATTEMPTS; attempt += 1) {
     try {
-      const { seed } = await import("@/db/seed");
-      await seed();
-
       const { startWorkers } = await import("@/lib/workers");
       startWorkers();
 
@@ -58,7 +62,8 @@ export async function register() {
     console.error("[AHU] guard install failed:", err instanceof Error ? err.message : err);
   }
 
-  if (!process.env.DATABASE_URL) return;
+  if (!rtdbConfigured()) return;
+  if (process.env.SIMULATION_ENABLED === "false") return;
 
   // Schedule once per process; never await — startup must stay fast.
   if (!g.__ahuBootScheduled) {

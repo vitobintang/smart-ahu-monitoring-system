@@ -3,16 +3,16 @@ import type { RtdbAdapter } from "./store";
 /**
  * Audit trail in the Realtime Database (Phase 2 Slice E).
  *
- * Tree layout (mirrors the PostgreSQL `audit_logs` table):
+ * Tree layout (one immutable audit entry per id):
  *   auditLogs/{entryId} → one append-only audit entry (epoch-ms timestamps)
  *
- * PostgreSQL's audit_logs table remains the source of truth until the Phase 5
+ * RTDB is the source of truth.
  * cutover; this tree receives the same entries via the writeAudit() hook.
  * Append-only and id-keyed — no cross-record invariants, so a plain set is
- * sufficient. Note: entries written inside a PostgreSQL transaction are
+ * Note: entries are
  * mirrored immediately; in the rare case that transaction later rolls back,
  * the RTDB mirror keeps a phantom entry (harmless in an append-only mirror,
- * PostgreSQL truth is unaffected).
+ * audit trail is append-only).
  */
 
 export const AUDIT_LOGS_NODE = "auditLogs";
@@ -38,7 +38,7 @@ export function writeRtdbAuditLog(rtdb: RtdbAdapter, record: RtdbAuditRecord): P
   return rtdb.set(auditLogNode(record.id), record);
 }
 
-/** PG-JSON shape for API responses (ISO timestamp like the PostgreSQL rows). */
+/** JSON shape for API responses (ISO timestamps). */
 export function auditEntryToJson(record: RtdbAuditRecord): Record<string, unknown> {
   return { ...record, createdAt: new Date(record.createdAt).toISOString() };
 }

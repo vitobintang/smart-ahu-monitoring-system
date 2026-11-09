@@ -2,13 +2,9 @@ import type { RtdbAdapter } from "./store";
 import { getLatestTelemetry, type RtdbTelemetryRecord } from "./telemetry";
 
 /**
- * Phase 2 Slice B: live dashboard reads from the RTDB telemetry mirror.
- *
- * The dashboard's newest-observation read tries `telemetryLatest/{ahuId}`
- * first and falls back to PostgreSQL per-AHU whenever the mirror cannot
- * serve a unit (not mirrored yet, RTDB error, or Firebase not configured).
- * PostgreSQL remains the source of truth until the Phase 5 cutover — the
- * fallback is the normal path, not an error path.
+ * Live dashboard reads from `telemetryLatest/{ahuId}` — RTDB is the sole
+ * source of truth. Individual per-AHU misses are tolerated (allSettled) so a
+ * single gap never blanks the whole fleet card row.
  */
 
 /** True when the environment carries both the public config and admin credentials. */
@@ -33,7 +29,7 @@ export async function tryGetAhuRtdb(env: NodeJS.ProcessEnv = process.env): Promi
 /**
  * Reads `telemetryLatest/{ahuId}` for every id in parallel. Individual
  * failures/misses are skipped (allSettled), so the result holds the units the
- * mirror could serve; the caller backfills the rest from PostgreSQL.
+ * mirror could serve; the dashboard shows those units without latest data.
  */
 export async function readLatestTelemetry(
   rtdb: RtdbAdapter,
@@ -47,11 +43,16 @@ export async function readLatestTelemetry(
   return hits;
 }
 
+/** RTDB or throw — every server path now requires the RTDB to be configured. */
+export async function requireRtdb(env: NodeJS.ProcessEnv = process.env): Promise<RtdbAdapter> {
+  const rtdb = await tryGetAhuRtdb(env);
+  if (!rtdb) throw new Error("Firebase RTDB is not configured");
+  return rtdb;
+}
+
 /**
- * Fire-and-forget RTDB mirror runner shared by the Phase 2 data-plane hooks
- * (telemetry ingest, command lifecycle, alarm lifecycle). Silent no-op when
- * Firebase env vars are absent (local/PGlite runs stay pure PostgreSQL);
- * failures are logged and never propagate to the caller.
+ * Fire-and-forget RTDB write runner. Silent no-op when Firebase is not
+ * configured; failures are logged and never propagate to the caller.
  */
 export function mirrorToRtdb(fn: (rtdb: RtdbAdapter) => Promise<void>): void {
   if (!firebaseEnvConfigured()) return;
@@ -64,9 +65,8 @@ export function mirrorToRtdb(fn: (rtdb: RtdbAdapter) => Promise<void>): void {
 }
 
 /**
- * The subset of the PostgreSQL telemetry row the dashboard card build
- * consumes (see getDashboard in src/lib/queries.ts). The full PG row is
- * structurally assignable to this; RTDB records are mapped via toLatestRow.
+ * The telemetry-row subset the dashboard card build consumes (see
+ * getDashboard in src/lib/queries.ts); RTDB records are mapped via toLatestRow.
  */
 export interface LatestRow {
   timestamp: Date;
@@ -94,7 +94,7 @@ export interface LatestRow {
 /**
  * RTDB stores no null object fields (they are stripped on write), so missing
  * keys read back as undefined. Every row mapper normalizes them back to null
- * to preserve the exact PostgreSQL/JSON API shapes the UI was built against.
+ * to preserve the exact JSON API shapes the UI was built against.
  */
 function n<T>(value: T | undefined): T | null {
   return value === undefined ? null : (value as T);

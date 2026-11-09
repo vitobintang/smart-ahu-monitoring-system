@@ -23,14 +23,13 @@ import {
 import { getLatestTelemetry, writeTelemetryMirror, telemetryNode, telemetryDateKey, type RtdbTelemetryRecord } from "./telemetry";
 import { removeRtdbBreachTimersForAhu } from "./alarms";
 import { writeRtdbAuditLog, type RtdbAuditRecord } from "./audit";
-import { patchRtdbAhu, readRtdbAhu, readRtdbDeviceByToken, readRtdbEnabledSourceTypes, readRtdbThresholds, type RtdbAhuRecord, type RtdbDeviceRecord, type RtdbThresholdRecord } from "./registry";
+import { patchRtdbAhu, readRtdbAhu, readRtdbDeviceByToken, readRtdbEnabledSourceTypes, readRtdbThresholds, type RtdbAhuRecord, type RtdbThresholdRecord } from "./registry";
 
 /**
  * Phase 5b slice 3: RTDB-native command/alarm/ingest lifecycle.
  *
  * These functions are the authoritative runtime paths when Firebase is
- * configured — the PostgreSQL implementations in src/lib/engine.ts /
- * src/lib/ingest.ts become the legacy fallback (used by PGlite test runs).
+ * configured.
  * Semantics mirror the SQL originals one-for-one (FR-13/25/26/27, NFR-02):
  * the one-active-command claim is an RTDB transaction (emulator-verified),
  * expiry marks TTL-elapsed commands EXPIRED, simulation readings confirm
@@ -45,7 +44,7 @@ export type LifecycleAuditInput = Partial<Pick<RtdbAuditRecord, "userId" | "user
   createdAt?: number;
 };
 
-/** Awaited audit write into the RTDB audit trail (no PostgreSQL involved). */
+/** Awaited audit write into the RTDB audit trail. */
 export async function auditRtdb(rtdb: RtdbAdapter, input: LifecycleAuditInput): Promise<string> {
   const id = randomId();
   await writeRtdbAuditLog(rtdb, {

@@ -35,7 +35,7 @@ import {
   Users,
   Wifi,
 } from "lucide-react";
-import type { AhuStatus } from "@/db/schema";
+import type { AhuStatus } from "@/lib/types";
 import { LOCAL_POLL_MS, timeAgo, usePoll } from "@/lib/client";
 import { useSessionUser } from "@/components/AppShell";
 import { PARAM_MAP, type ParamKey } from "@/lib/domain";
@@ -45,7 +45,7 @@ import { Bars, HealthRow, Progress, Tile, UnitCard, type Card } from "./cards";
 interface Overview {
   cards: Card[];
   totals: { ahus: number; online: number; run: number; fault: number; offline: number; activeAlarms: number; unackedAlarms: number; trendAlerts: number };
-  liveSource?: "rtdb" | "postgres";
+  liveSource?: "rtdb";
   sync: { mode: "CLOUD" | "LOCAL"; pollingIntervalSec: number; queuedItems: number; lastSuccessAt: string | null };
   recentAlarms: { id: string; ahuId: string; parameter: string; priority: string; message: string; triggeredAt: string; acknowledged: boolean; observedValue: number | null }[];
   recentTrends: { id: string; ahuId: string; parameter: string; estimatedMin: number; direction: string; createdAt: string }[];
@@ -600,7 +600,7 @@ export default function DashboardPage() {
                   <HealthRow
                     icon={<Database size={15} />}
                     label="Live data"
-                    value={data.liveSource === "rtdb" ? "Firebase RTDB" : "PostgreSQL"}
+                    value="Firebase RTDB"
                   />
                   <HealthRow icon={<Database size={15} />} label="Database" value={health.data?.database === "connected" ? "Healthy" : "Warming up"} />
                   <HealthRow icon={<Cpu size={15} />} label="Simulation Engine" value={simFresh ? "Running" : "Idle"} />

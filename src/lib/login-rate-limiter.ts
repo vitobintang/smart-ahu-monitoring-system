@@ -1,13 +1,6 @@
-import { eq, sql } from "drizzle-orm";
-import { db } from "@/db";
-import { loginAttempts } from "@/db/schema";
-import { LOGIN_RATE_LIMIT } from "@/lib/domain";
-import { secretHash } from "@/lib/device-access";
+import { secretHash } from "@/lib/auth";
 import { normalizeLoginIp } from "@/lib/login-rate-key";
-import { releaseRtdbLoginAttempt, reserveRtdbLoginAttempt } from "@/lib/rtdb/security";
-import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
 
-type RateDbClient = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
  * Canonicalizes a forwarded/real client IP string into a stable per-IP identifier:
@@ -60,59 +53,21 @@ export interface LoginRateReservation {
 export async function reserveLoginAttempt(
   rateKey: string,
   opts?: {
-    client?: RateDbClient;
     now?: Date;
     max?: number;
     windowMs?: number;
   },
 ): Promise<LoginRateReservation> {
-  // Phase 5b primary flip: the per-IP bucket lives in RTDB (transactional
-  // increment, identical window semantics); PostgreSQL is the fallback.
-  try {
-    const rtdb = await tryGetAhuRtdb();
-    if (rtdb) {
-      return await reserveRtdbLoginAttempt(rtdb, rateKey, {
-        now: opts?.now?.getTime(),
-        max: opts?.max,
-        windowMs: opts?.windowMs,
-      });
-    }
-  } catch (err) {
-    console.error("[login-rate] RTDB reserve failed, using PostgreSQL:", err instanceof Error ? err.message : err);
-  }
-  const client = opts?.client ?? db;
-  const now = opts?.now ?? new Date();
-  const max = opts?.max ?? LOGIN_RATE_LIMIT.max;
-  const windowMs = opts?.windowMs ?? LOGIN_RATE_LIMIT.windowMs;
-  const cutoff = new Date(now.getTime() - windowMs);
-
-  const [attempt] = await client
-    .insert(loginAttempts)
-    .values({ key: rateKey, count: 1, windowStart: now })
-    .onConflictDoUpdate({
-      target: loginAttempts.key,
-      set: {
-        count: sql`case when ${loginAttempts.windowStart} <= ${cutoff} then 1 else ${loginAttempts.count} + 1 end`,
-        windowStart: sql`case when ${loginAttempts.windowStart} <= ${cutoff} then ${now} else ${loginAttempts.windowStart} end`,
-      },
-    })
-    .returning({
-      count: loginAttempts.count,
-      windowStart: loginAttempts.windowStart,
-    });
-
-  const count = attempt?.count ?? 1;
-  const windowStart = attempt?.windowStart ?? now;
-  const allowed = count <= max;
-  const expiresAtMs = windowStart.getTime() + windowMs;
-  const retryAfterSec = allowed ? 0 : Math.max(1, Math.ceil((expiresAtMs - now.getTime()) / 1000));
-
-  return {
-    allowed,
-    count,
-    remaining: Math.max(0, max - count),
-    retryAfterSec,
-  };
+  // Phase 5c: the per-IP bucket lives exclusively in RTDB (transactional
+  // increment, identical window semantics to the retired SQL upsert).
+  const { requireRtdb } = await import("@/lib/rtdb/live-read");
+  const rtdb = await requireRtdb();
+  const { reserveRtdbLoginAttempt } = await import("@/lib/rtdb/security");
+  return reserveRtdbLoginAttempt(rtdb, rateKey, {
+    now: opts?.now?.getTime(),
+    max: opts?.max,
+    windowMs: opts?.windowMs,
+  });
 }
 
 /**
@@ -121,26 +76,11 @@ export async function reserveLoginAttempt(
  * 2) Prior failed attempts in the same 15-minute window are preserved and CANNOT
  *    be cleared by signing in with a low-privilege member token.
  */
-export async function releaseLoginAttempt(
-  rateKey: string,
-  opts?: { client?: RateDbClient },
-): Promise<void> {
-  try {
-    const rtdb = await tryGetAhuRtdb();
-    if (rtdb) {
-      await releaseRtdbLoginAttempt(rtdb, rateKey);
-      return;
-    }
-  } catch (err) {
-    console.error("[login-rate] RTDB release failed, using PostgreSQL:", err instanceof Error ? err.message : err);
-  }
-  const client = opts?.client ?? db;
-  const [updated] = await client
-    .update(loginAttempts)
-    .set({ count: sql`greatest(${loginAttempts.count} - 1, 0)` })
-    .where(eq(loginAttempts.key, rateKey))
-    .returning({ count: loginAttempts.count });
-  if (updated && updated.count <= 0) {
-    await client.delete(loginAttempts).where(eq(loginAttempts.key, rateKey));
-  }
+export async function releaseLoginAttempt(rateKey: string): Promise<void> {
+  // Phase 5c: RTDB-only (see reserveLoginAttempt).
+  const { tryGetAhuRtdb } = await import("@/lib/rtdb/live-read");
+  const rtdb = await tryGetAhuRtdb();
+  if (!rtdb) throw new Error("Firebase RTDB is not configured");
+  const { releaseRtdbLoginAttempt } = await import("@/lib/rtdb/security");
+  await releaseRtdbLoginAttempt(rtdb, rateKey);
 }

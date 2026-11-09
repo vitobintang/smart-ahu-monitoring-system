@@ -1,6 +1,3 @@
-import { eq } from "drizzle-orm";
-import { db } from "@/db";
-import { users } from "@/db/schema";
 import { getAhuRtdb } from "@/lib/firebase/admin";
 import { changeRtdbUsername, updateFirebaseUserPassword } from "@/lib/firebase/provision";
 import {
@@ -80,27 +77,18 @@ export async function PATCH(req: Request) {
 
     let updatedUser = actor.user;
     if (Object.keys(patch).length > 0) {
-      await db
-        .update(users)
-        .set(patch)
-        .where(eq(users.id, actor.user.id));
       updatedUser = {
         ...actor.user,
         ...(patch.username !== undefined ? { username: patch.username } : {}),
         ...(patch.fullName !== undefined ? { fullName: patch.fullName } : {}),
       };
-      // RTDB is the session-authorization source: mirror the profile change.
+      // RTDB is the session-authorization source: apply the profile change there.
       if (patch.username) {
-        await changeRtdbUsername(actor.user.id, patch.username).catch(() => undefined);
+        await changeRtdbUsername(actor.user.id, patch.username);
       }
       if (patch.fullName !== undefined) {
-        const { getRtdbUserById } = await import("@/lib/rtdb/users");
-        const current = await getRtdbUserById(await getAhuRtdb(), actor.user.id).catch(() => null);
-        if (current) {
-          const { getFirebaseDb } = await import("@/lib/firebase/admin");
-          const { createAdminRtdbAdapter } = await import("@/lib/rtdb/store");
-          await createAdminRtdbAdapter(await getFirebaseDb()).set(`users/${actor.user.id}/fullName`, patch.fullName);
-        }
+        const rtdb = await getAhuRtdb();
+        await rtdb.set(`users/${actor.user.id}/fullName`, patch.fullName);
       }
       await writeAudit({
         userId: actor.user.id,

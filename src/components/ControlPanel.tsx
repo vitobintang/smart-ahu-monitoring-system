@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Gauge, Play, Power, Settings, Square, X } from "lucide-react";
-import type { AhuStatus } from "@/db/schema";
+import type { AhuStatus } from "@/lib/types";
 import { api } from "@/lib/client";
 import { Btn, CommandStatusBadge, StatusBadge, cx, inputClass } from "@/components/ui";
 import { COMMAND_TTL_SEC, SETPOINT_MAX, SETPOINT_MIN } from "@/lib/domain";

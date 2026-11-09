@@ -4,7 +4,7 @@ import { drainSyncOutbox, getSyncStatus } from "@/lib/realtime";
 export const dynamic = "force-dynamic";
 
 /**
- * FR-24 sync-mode indicator (Supabase database polling).
+ * FR-24 sync-mode indicator (Firebase RTDB polling).
  */
 export async function GET() {
   try {

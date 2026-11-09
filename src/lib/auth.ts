@@ -1,14 +1,16 @@
 import { cookies, headers } from "next/headers";
 import { randomHex, randomId, safeEqual } from "@/lib/ids";
-import { db } from "@/db";
-import { auditLogs } from "@/db/schema";
 import type { UserRole } from "@/lib/ahu";
 import { type Activity, can } from "@/lib/domain";
-import { revokeCurrentDeviceCookie, secretHash } from "@/lib/device-access";
 import { getRtdbUserById, type RtdbUser } from "@/lib/rtdb/users";
-import { mirrorToRtdb } from "@/lib/rtdb/live-read";
 import { writeRtdbAuditLog } from "@/lib/rtdb/audit";
 import type { RtdbAdapter } from "@/lib/rtdb/store";
+
+/** SHA-256 hex digest used for cache keys and rate-limit keys. */
+export async function secretHash(value: string): Promise<string> {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 // Firebase Admin uses Node built-ins (fs/crypto) — imported lazily so Edge
 // bundles (proxy/middleware) never pull them in statically.
@@ -114,7 +116,6 @@ export async function setCsrfCookie() {
 
 export async function destroySession() {
   invalidateSessionCache();
-  await revokeCurrentDeviceCookie();
   const { clearSessionCookie } = await firebaseSession();
   await clearSessionCookie();
   (await cookies()).delete(CSRF_COOKIE);
@@ -162,11 +163,10 @@ export async function writeAudit(
     details?: Record<string, unknown>;
     ipAddress?: string | null;
   },
-  client: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0] = db,
 ) {
+  // Phase 5c: the audit trail is RTDB-only (auditLogs/{id}).
   const id = randomId();
-  const createdAt = new Date();
-  await client.insert(auditLogs).values({
+  await writeRtdbAuditLog(await ahuRtdb(), {
     id,
     userId: input.userId ?? null,
     userEmail: input.userEmail ?? null,
@@ -174,25 +174,8 @@ export async function writeAudit(
     entity: input.entity,
     details: input.details ?? {},
     ipAddress: input.ipAddress ?? null,
-    createdAt,
+    createdAt: Date.now(),
   });
-
-  // Phase 2 Slice E dual-write: the audit trail mirrors into RTDB
-  // (auditLogs/{id}, see src/lib/rtdb/audit.ts). Fire-and-forget — silent
-  // no-op without Firebase env vars; failures only log. PostgreSQL stays
-  // the source of truth until the cutover.
-  mirrorToRtdb((rtdb) =>
-    writeRtdbAuditLog(rtdb, {
-      id,
-      userId: input.userId ?? null,
-      userEmail: input.userEmail ?? null,
-      action: input.action,
-      entity: input.entity,
-      details: input.details ?? {},
-      ipAddress: input.ipAddress ?? null,
-      createdAt: createdAt.getTime(),
-    }),
-  );
 }
 
 /* ------------------------------------------------------------------ */

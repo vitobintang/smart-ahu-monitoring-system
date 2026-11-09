@@ -2,12 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  authorizeRolePermission,
   isAdminRole,
   isValidUserRole,
   normalizeUsername,
   parseLoginPayload,
-  resolveRoleSession,
   suggestUsernameFromEmail,
 } from "../src/lib/role-auth";
 
@@ -87,56 +85,4 @@ test("parseLoginPayload accepts email or username + password for all roles and r
   assert.equal(parseLoginPayload({ identifier: "vizobintang", password: "" }).ok, false);
   assert.equal(parseLoginPayload({ identifier: "not@valid", password: "secret" }).ok, false);
   assert.equal(parseLoginPayload(null).ok, false);
-});
-
-test("resolveRoleSession authenticates Admin, Engineering, and Operator via verified Supabase Auth", async () => {
-  for (const role of ["Admin", "Engineering", "Operator"] as const) {
-    const resolved = await resolveRoleSession({
-      getSupabaseUserId: async () => `uid-${role.toLowerCase()}`,
-      getUserById: async (id) => ({ id, role }),
-    });
-    assert.deepEqual(resolved, { id: `uid-${role.toLowerCase()}`, role });
-  }
-
-  const unauthenticated = await resolveRoleSession({
-    getSupabaseUserId: async () => null,
-    getUserById: async () => ({ id: "uid-admin", role: "Admin" as const }),
-  });
-  assert.equal(unauthenticated, null);
-
-  const mismatchedId = await resolveRoleSession({
-    getSupabaseUserId: async () => "uid-a",
-    getUserById: async () => ({ id: "uid-b", role: "Operator" as const }),
-  });
-  assert.equal(mismatchedId, null);
-});
-
-test("authorizeRolePermission enforces RBAC permissions on verified credential sessions", async () => {
-  const adminManage = await authorizeRolePermission(
-    {
-      getSupabaseUserId: async () => "admin-1",
-      getUserById: async () => ({ id: "admin-1", role: "Admin" as const }),
-    },
-    "users:create",
-  );
-  assert.deepEqual(adminManage, { id: "admin-1", role: "Admin" });
-
-  const engineeringConfig = await authorizeRolePermission(
-    {
-      getSupabaseUserId: async () => "eng-1",
-      getUserById: async () => ({ id: "eng-1", role: "Engineering" as const }),
-    },
-    "configuration:edit",
-  );
-  assert.deepEqual(engineeringConfig, { id: "eng-1", role: "Engineering" });
-
-  const operatorControl = await authorizeRolePermission(
-    {
-      getSupabaseUserId: async () => "op-1",
-      getUserById: async () => ({ id: "op-1", role: "Operator" as const }),
-    },
-    "commands:request",
-  );
-  assert.deepEqual(operatorControl, { id: "op-1", role: "Operator" });
-
 });

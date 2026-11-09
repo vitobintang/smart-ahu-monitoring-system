@@ -3,7 +3,7 @@ import { getFirebaseClientConfig } from "@/lib/firebase/config";
 import { stageFirebasePassword } from "@/lib/firebase/password-auth";
 import { publishSessionCookie } from "@/lib/firebase/session";
 import { getAhuRtdb } from "@/lib/firebase/admin";
-import { clearDeviceCookie } from "@/lib/device-access";
+
 import { getRtdbUserByEmail, getRtdbUserByUsername } from "@/lib/rtdb/users";
 import {
   canonicalizeClientIp,
@@ -127,7 +127,8 @@ export async function POST(req: Request) {
   await staged.discard();
 
   invalidateSessionCache();
-  await clearDeviceCookie();
+  const cookieStore = await (await import("next/headers")).cookies();
+  cookieStore.delete("ahu_device");
   await releaseLoginAttempt(rateKey);
   const csrfToken = await setCsrfCookie();
   await writeAudit({

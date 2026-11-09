@@ -1,7 +1,4 @@
-import { eq, sql } from "drizzle-orm";
-import { db } from "@/db";
-import { users } from "@/db/schema";
-import type { Role } from "@/db/schema";
+import type { Role } from "@/lib/types";
 import {
   getClientIp,
   invalidateSessionCache,
@@ -11,16 +8,16 @@ import {
   writeAudit,
 } from "@/lib/auth";
 import { ROLES } from "@/lib/domain";
-import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
 import { normalizeUsername, suggestUsernameFromEmail } from "@/lib/role-auth";
 import {
   createFirebaseAuthUser,
   deleteFirebaseAuthUser,
-  ensurePgUserMirror,
   provisionRtdbUser,
   removeRtdbUser,
   updateFirebaseUserPassword,
 } from "@/lib/firebase/provision";
+import { requireRtdb } from "@/lib/rtdb/live-read";
+import { getRtdbUserByEmail, getRtdbUserById, getRtdbUserByUsername, listAllRtdbUsers } from "@/lib/rtdb/users";
 import {
   removeManagedUser,
   revokeAllUserSessions,
@@ -32,33 +29,17 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const actor = await requireAuth("manageUsers");
-    // Phase 5b slice 3: the user list reads the RTDB users tree when Firebase
-    // is configured; PostgreSQL remains the fallback.
-    let rows: Array<{ id: string; email: string; username: string | null; fullName: string | null; role: Role; createdAt: Date | number }> = [];
-    const rtdb = await tryGetAhuRtdb();
-    if (rtdb) {
-      const { listAllRtdbUsers } = await import("@/lib/rtdb/users");
-      rows = (await listAllRtdbUsers(rtdb)).map((u) => ({
+    const rtdb = await requireRtdb();
+    const rows = (await listAllRtdbUsers(rtdb))
+      .map((u) => ({
         id: u.id,
         email: u.email,
         username: u.username,
         fullName: u.fullName,
         role: u.role,
         createdAt: u.createdAt,
-      }));
-    } else {
-      rows = await db
-        .select({
-          id: users.id,
-          email: users.email,
-          username: users.username,
-          fullName: users.fullName,
-          role: users.role,
-          createdAt: users.createdAt,
-        })
-        .from(users)
-        .orderBy(users.createdAt);
-    }
+      }))
+      .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
     return Response.json({
       users: rows,
       roles: ROLES,
@@ -105,21 +86,14 @@ export async function POST(req: Request) {
     }
     const username = parsedUsername.username;
 
-    const existingEmail = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.email, email))
-      .limit(1);
-    if (existingEmail.length > 0) {
+    const rtdb = await requireRtdb();
+    const existingEmail = await getRtdbUserByEmail(rtdb, email);
+    if (existingEmail) {
       return Response.json({ error: "A user with this email already exists" }, { status: 409 });
     }
 
-    const existingUsername = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(sql`lower(${users.username}) = ${username}`)
-      .limit(1);
-    if (existingUsername.length > 0) {
+    const existingUsername = await getRtdbUserByUsername(rtdb, username);
+    if (existingUsername) {
       return Response.json(
         { error: `Username "${username}" is already taken. Choose another username.` },
         { status: 409 },
@@ -136,14 +110,6 @@ export async function POST(req: Request) {
       }
       throw err;
     }
-    try {
-      await ensurePgUserMirror({ id, email, username, fullName, role });
-    } catch (err) {
-      await removeRtdbUser(id).catch(() => undefined);
-      await deleteFirebaseAuthUser(id).catch(() => undefined);
-      throw err;
-    }
-
     const ip = await getClientIp();
     await writeAudit({
       userId: actor.user.id,
@@ -154,20 +120,10 @@ export async function POST(req: Request) {
       details: { email, username, role, fullName, authMethod: "password" },
     });
 
-    // Phase 5b slice 3: creation is RTDB-native (provisionRtdbUser) — read
-    // the created profile back from RTDB first, PG mirror as fallback.
-    let created: Record<string, unknown> | undefined;
-    const rtdbCreated = await tryGetAhuRtdb();
-    if (rtdbCreated) {
-      const { getRtdbUserById } = await import("@/lib/rtdb/users");
-      const profile = await getRtdbUserById(rtdbCreated, id);
-      if (profile)
-        created = { id: profile.id, email: profile.email, username: profile.username, fullName: profile.fullName, role: profile.role, createdAt: profile.createdAt };
-    }
-    if (!created) {
-      const [row] = await db.select().from(users).where(eq(users.id, id)).limit(1);
-      created = row;
-    }
+    const profile = await getRtdbUserById(rtdb, id);
+    const created = profile
+      ? { id: profile.id, email: profile.email, username: profile.username, fullName: profile.fullName, role: profile.role, createdAt: profile.createdAt }
+      : { id, email, username, fullName, role, createdAt: Date.now() };
     return Response.json({ ok: true, user: safePublicUser(created as never) }, { status: 201 });
   } catch (err) {
     return jsonError(err);
@@ -219,17 +175,10 @@ export async function PATCH(req: Request) {
       return Response.json({ error: "Password must be at least 8 characters" }, { status: 400 });
     }
 
-    // Phase 5b slice 3: the password-change target resolves from RTDB first.
+    const rtdbPassword = await requireRtdb();
+    const profile = await getRtdbUserById(rtdbPassword, userId);
     let target: { id: string; email: string; username: string | null; role: Role } | undefined;
-    const rtdbPassword = await tryGetAhuRtdb();
-    if (rtdbPassword) {
-      const { getRtdbUserById } = await import("@/lib/rtdb/users");
-      const profile = await getRtdbUserById(rtdbPassword, userId);
-      if (profile) target = { id: profile.id, email: profile.email, username: profile.username, role: profile.role };
-    } else {
-      const [row] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-      if (row) target = row;
-    }
+    if (profile) target = { id: profile.id, email: profile.email, username: profile.username, role: profile.role };
     if (!target) {
       return Response.json({ error: "User account not found" }, { status: 404 });
     }
@@ -282,7 +231,7 @@ export async function DELETE(req: Request) {
       actor: actor.user,
       targetUserId: userId,
       ipAddress: ip,
-      deleteSupabaseAuthUser: async (authUserId) => {
+      deleteAuthUser: async (authUserId: string) => {
         await deleteFirebaseAuthUser(authUserId);
         await removeRtdbUser(authUserId).catch(() => undefined);
       },

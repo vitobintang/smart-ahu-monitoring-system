@@ -8,7 +8,7 @@ const NextImage =
   typeof Image === "function"
     ? Image
     : ((Image as unknown as { default: typeof Image }).default ?? Image);
-import type { AhuStatus, DataSource } from "@/db/schema";
+import type { AhuStatus, DataSource } from "@/lib/types";
 import { classifyQuality, type DataQuality } from "@/lib/domain";
 import { cx, QualityTag, Segmented, StatusBadge } from "@/components/ui";
 import { TONE, type Stage, type StageDef } from "./schematic-meta";

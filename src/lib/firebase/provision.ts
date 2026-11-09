@@ -1,19 +1,13 @@
-import { eq } from "drizzle-orm";
-import { db } from "@/db";
-import { users } from "@/db/schema";
 import type { UserRole } from "@/lib/ahu";
 import { getFirebaseAuth, getAhuRtdb } from "./admin";
 import { createRtdbUser, deleteRtdbUser, getRtdbUserById, updateRtdbUserRole } from "@/lib/rtdb/users";
 
 /**
- * Unified account provisioning across the three stores used during the
- * Firebase migration:
- *   1. Firebase Auth   — the identity (login credential, uid owner)
+ * Unified account provisioning across the two Firebase stores:
+ *   1. Firebase Auth    — the identity (login credential, uid owner)
  *   2. RTDB users/{uid} — the AUTH-SESSION profile (role, username, email)
- *   3. PG users row     — admin management mirror until Phase 2 moves the
- *                         remaining tables (keeps audit FKs + admin UI alive)
  *
- * Invariants: uid is identical in all three; failures roll the prior store back.
+ * Invariant: the uid is identical in both; failures roll the prior store back.
  */
 
 export class FirebaseAuthAdminError extends Error {
@@ -69,6 +63,15 @@ export async function deleteFirebaseAuthUser(uid: string): Promise<void> {
   }
 }
 
+/** Revokes all refresh tokens for the uid — every signed-in session must re-authenticate. */
+export async function revokeFirebaseUserSessions(uid: string): Promise<void> {
+  try {
+    await (await getFirebaseAuth()).revokeRefreshTokens(uid);
+  } catch (err) {
+    throw new FirebaseAuthAdminError(400, describeFirebaseError(err, "Could not revoke user sessions"));
+  }
+}
+
 /** RTDB auth-profile write-through (record + uniqueness mirrors). */
 export async function provisionRtdbUser(input: {
   uid: string;
@@ -90,28 +93,6 @@ export async function removeRtdbUser(uid: string): Promise<void> {
 
 export async function getRtdbProfile(uid: string) {
   return getRtdbUserById(await getAhuRtdb(), uid);
-}
-
-/**
- * PG mirror (admin UI + audit FKs) — insert-if-absent so legacy rows and new
- * Firebase accounts coexist. Never throws on duplicate (idempotent).
- */
-export async function ensurePgUserMirror(input: {
-  id: string;
-  email: string;
-  username: string | null;
-  fullName: string | null;
-  role: UserRole;
-}): Promise<void> {
-  const existing = await db.select({ id: users.id }).from(users).where(eq(users.id, input.id)).limit(1);
-  if (existing.length > 0) return;
-  await db.insert(users).values({
-    id: input.id,
-    email: input.email,
-    username: input.username,
-    fullName: input.fullName,
-    role: input.role,
-  });
 }
 
 /** Moves the RTDB username mirror after a username change (claim + release). */

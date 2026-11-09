@@ -1,13 +1,40 @@
-import { and, eq, lt, sql } from "drizzle-orm";
 import { randomId } from "@/lib/ids";
-import { dbWork, isOfflineNetworkError, isTransientDbError, summarizeDbError } from "@/db";
-import { ahus, devices, syncOutbox, telemetry } from "@/db/schema";
-import type { AhuRow, DeviceRow } from "@/db/schema";
+import type { AhuRow, DeviceRow } from "@/lib/types";
 import { acceptPendingCommands, expireStaleCommands, failActiveCommands, refreshAhuStatus } from "@/lib/engine";
 import { ingestTelemetry } from "@/lib/ingest";
 import { runTrendDetection } from "@/lib/trends";
-import { drainSyncOutbox } from "@/lib/realtime";
 import { PARAM_MAP, type ParamKey } from "@/lib/domain";
+import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
+import { readRtdbAhus, readRtdbDevices } from "@/lib/rtdb/registry";
+import { getLatestTelemetry } from "@/lib/rtdb/telemetry";
+import type { RtdbAdapter } from "@/lib/rtdb/store";
+
+async function requireRtdb(): Promise<RtdbAdapter> {
+  const rtdb = await tryGetAhuRtdb();
+  if (!rtdb) throw new Error("Firebase RTDB is not configured");
+  return rtdb;
+}
+
+function summarizeErr(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function toLatestRowShape(latest: { roomTemp: number | null; supplyTemp: number | null; returnTemp: number | null; humidity: number | null; filterDiffPressure: number | null; fanSpeed: number | null; coilTemp: number | null; damperPosition: number | null; current: number | null; voltage: number | null; runHours: number | null; heaterOutput: number | null; runState: string | null }) {
+  return {
+    roomTemp: latest.roomTemp ?? undefined,
+    supplyTemp: latest.supplyTemp ?? undefined,
+    returnTemp: latest.returnTemp ?? undefined,
+    humidity: latest.humidity ?? undefined,
+    filterDiffPressure: latest.filterDiffPressure ?? undefined,
+    fanSpeed: latest.fanSpeed ?? undefined,
+    coilTemp: latest.coilTemp ?? undefined,
+    damperPosition: latest.damperPosition ?? undefined,
+    current: latest.current ?? undefined,
+    voltage: latest.voltage ?? undefined,
+    runHours: latest.runHours ?? undefined,
+    heaterOutput: latest.heaterOutput ?? undefined,
+  };
+}
 
 /* ------------------------------------------------------------------ */
 /* FR-28: built-in telemetry & control simulator                      */
@@ -54,30 +81,10 @@ const simStates: Map<string, SimState> = (g.__simStates ??= new Map());
 export const simOverrides: Map<string, SimOverride> = (g.__simOverrides ??= new Map());
 
 function engageDbBackoff(tag: string, err: unknown): void {
-  const streak = (g.__dbBackoffStreak ?? 0) + 1;
-  g.__dbBackoffStreak = streak;
-  const cooldownMs = Math.min(30_000, 10_000 + streak * 5_000);
-  g.__dbBackoffUntil = Date.now() + cooldownMs;
-  if (!g.__dbDegradedLogged || streak % 4 === 1) {
-    g.__dbDegradedLogged = true;
-    console.warn(
-      `[${tag}] database unavailable (${summarizeDbError(err)}) — pausing background worker for ${Math.round(cooldownMs / 1000)}s`,
-    );
-  }
+  console.error(`[${tag}] worker failed — skipping this tick:`, summarizeErr(err));
 }
+function clearDbBackoffIfRecovered(): void {}
 
-function clearDbBackoffIfRecovered(): void {
-  if (g.__dbDegradedLogged) {
-    console.log("[AHU][workers] database connectivity restored — resuming normal telemetry & monitoring cadence");
-  }
-  g.__dbBackoffStreak = 0;
-  g.__dbBackoffUntil = 0;
-  g.__dbDegradedLogged = false;
-}
-
-function isDbCircuitOpen(): boolean {
-  return Boolean(g.__dbBackoffUntil && Date.now() < g.__dbBackoffUntil);
-}
 
 /** Runs background worker ticks one-at-a-time so simulator & monitor never contend for pool slots simultaneously. */
 function runSerializedWorker(fn: () => Promise<void>): Promise<void> {
@@ -119,7 +126,7 @@ const noise = (amp: number) => (Math.random() * 2 - 1) * amp;
 const walk = (v: number, target: number, rate: number, amp: number, lo: number, hi: number) =>
   clamp(v + (target - v) * rate + noise(amp), lo, hi);
 
-async function loadState(ahu: AhuRow, last: typeof telemetry.$inferSelect | undefined): Promise<SimState> {
+async function loadState(ahu: AhuRow, last: Partial<Record<"roomTemp" | "supplyTemp" | "returnTemp" | "humidity" | "filterDiffPressure" | "fanSpeed" | "coilTemp" | "damperPosition" | "current" | "voltage" | "runHours" | "heaterOutput", number>> | undefined): Promise<SimState> {
   const cached = simStates.get(ahu.id);
   if (cached) return cached;
   const base: SimState = {
@@ -193,15 +200,12 @@ async function simulateAhu(ahu: AhuRow, device: DeviceRow, tickSec: number) {
   if (ov.commLoss) return;
 
   // Only query historical telemetry once when cold-starting simStates for this AHU!
-  let lastRow: typeof telemetry.$inferSelect | undefined;
+  let lastRow: Record<string, unknown> | undefined;
   if (!simStates.has(ahu.id)) {
-    const lastRows = await dbWork
-      .select()
-      .from(telemetry)
-      .where(eq(telemetry.ahuId, ahu.id))
-      .orderBy(sql`${telemetry.timestamp} desc`)
-      .limit(1);
-    lastRow = lastRows[0];
+    const latest = await getLatestTelemetry(await requireRtdb(), ahu.id);
+    if (latest) {
+      lastRow = { ...toLatestRowShape(latest) };
+    }
   }
 
   const state = await loadState(ahu, lastRow);
@@ -244,7 +248,7 @@ async function simulateAhu(ahu: AhuRow, device: DeviceRow, tickSec: number) {
     faultCode: ov.forcedFault,
     setpoint: ahu.setpoint,
     controlMode: ahu.controlMode,
-  }, dbWork);
+  });
 }
 
 export async function simulationTick() {
@@ -253,51 +257,38 @@ export async function simulationTick() {
   g.__lastSimTickAt = Date.now();
   const tickSec = 5;
   try {
-    const allAhus = await dbWork.select().from(ahus);
-    const devs = await dbWork
-      .select()
-      .from(devices)
-      .where(and(eq(devices.sourceType, "SIMULATION"), eq(devices.enabled, true)));
-    const physical = await dbWork
-      .select({ ahuId: devices.ahuId })
-      .from(devices)
-      .where(and(eq(devices.sourceType, "PHYSICAL"), eq(devices.enabled, true)));
-    const physicalIds = new Set(physical.map((d) => d.ahuId));
+    const rtdb = await requireRtdb();
+    const registry = await readRtdbAhus(rtdb);
+    const allDevices = await readRtdbDevices(rtdb);
+    const devs = allDevices.filter((d) => d.sourceType === "SIMULATION" && d.enabled);
+    const physicalIds = new Set(allDevices.filter((d) => d.sourceType === "PHYSICAL" && d.enabled).map((d) => d.ahuId));
 
-    for (let ahu of allAhus) {
+    for (const record of [...registry.values()].sort((a, b) => a.id.localeCompare(b.id))) {
+      const ahu = record as unknown as AhuRow;
       if (physicalIds.has(ahu.id)) continue;
       const device = devs.find((d) => d.ahuId === ahu.id);
       if (!device) continue;
       try {
         const ov = getOverride(ahu.id);
         if (ov.rejectCommands && !ov.commLoss) {
-          const rejected = await failActiveCommands(dbWork, ahu.id, {
+          await failActiveCommands(rtdb, ahu.id, {
             reason: "Rejected by controller: local selector switch / actuator NACK (FR-26)",
             revertDesiredState: true,
           });
-          if (rejected.length > 0) {
-            const [reloaded] = await dbWork.select().from(ahus).where(eq(ahus.id, ahu.id)).limit(1);
-            if (reloaded) ahu = reloaded;
-          }
         }
-        await simulateAhu(ahu, device, tickSec);
+        await simulateAhu(ahu, device as unknown as DeviceRow, tickSec);
         if (!ov.rejectCommands) {
-          await acceptPendingCommands(ahu.id, dbWork);
+          await acceptPendingCommands(ahu.id);
         }
       } catch (err) {
-        if (isOfflineNetworkError(err) || isTransientDbError(err)) {
-          engageDbBackoff("simulator", err);
-          return;
-        }
-        console.error(`[simulator] ${ahu.id} tick failed:`, summarizeDbError(err));
+        engageDbBackoff("simulator", err);
+        console.error(`[simulator] ${ahu.id} tick failed:`, summarizeErr(err));
       }
     }
     clearDbBackoffIfRecovered();
   } catch (err) {
-    if (isOfflineNetworkError(err) || isTransientDbError(err)) {
-      engageDbBackoff("simulator", err);
-      return;
-    }
+    engageDbBackoff("simulator", err);
+    return;
     throw err;
   } finally {
     g.__simRunning = false;
@@ -315,58 +306,47 @@ export async function monitorTick() {
   if (g.__monitorRunning) return;
   g.__monitorRunning = true;
   try {
-    const all = await dbWork.select().from(ahus);
+    const rtdb = await requireRtdb();
+    const registry = await readRtdbAhus(rtdb);
+    const all = [...registry.values()].sort((a, b) => a.id.localeCompare(b.id));
     monitorTickCount += 1;
     const doTrends = monitorTickCount % TREND_EVERY_N_TICKS === 0;
 
     try {
-      await expireStaleCommands(new Date(), dbWork);
+      await expireStaleCommands(new Date());
     } catch (err) {
-      if (isOfflineNetworkError(err) || isTransientDbError(err)) {
-        engageDbBackoff("monitor", err);
-        return;
-      }
-      console.error("[monitor] command TTL sweep failed:", summarizeDbError(err));
+      engageDbBackoff("monitor", err);
+      return;
     }
 
-    for (const ahu of all) {
+    for (const record of all) {
+      const ahuId = record.id;
       try {
-        await refreshAhuStatus(ahu.id, new Date(), dbWork);
-        if (doTrends) await runTrendDetection(ahu.id, new Date(), dbWork);
+        await refreshAhuStatus(ahuId, new Date());
+        if (doTrends) await runTrendDetection(ahuId, new Date());
       } catch (err) {
-        if (isOfflineNetworkError(err) || isTransientDbError(err)) {
-          engageDbBackoff("monitor", err);
-          return;
-        }
-        console.error(`[monitor] ${ahu.id} failed:`, summarizeDbError(err));
+        engageDbBackoff("monitor", err);
+        console.error(`[monitor] ${ahuId} failed:`, summarizeErr(err));
       }
     }
 
+    // Phase 5c: the legacy outbox is gone — retention is RTDB-only.
     try {
-      await drainSyncOutbox();
-      await dbWork
-        .delete(syncOutbox)
-        .where(
-          and(
-            lt(syncOutbox.createdAt, new Date(Date.now() - 15 * 60 * 1000)),
-            sql`${syncOutbox.status} <> 'PENDING'`,
-          ),
-        );
-    } catch (err) {
-      if (isOfflineNetworkError(err) || isTransientDbError(err)) {
-        engageDbBackoff("monitor", err);
-        return;
+      const { pruneTelemetryShards } = await import("@/lib/rtdb/telemetry");
+      const daysToKeep = Number(process.env.TELEMETRY_RETENTION_DAYS ?? 30);
+      if (Number.isFinite(daysToKeep) && daysToKeep > 0) {
+        const ids = all.map((r) => r.id);
+        const removed = await pruneTelemetryShards(rtdb, ids, Math.min(366, daysToKeep));
+        if (removed > 0) console.log(`[monitor] pruned ${removed} telemetry shard(s)`);
       }
-      console.error("[monitor] outbox maintenance failed:", summarizeDbError(err));
+    } catch (err) {
+      console.error("[monitor] retention sweep failed:", summarizeErr(err));
     }
 
     clearDbBackoffIfRecovered();
   } catch (err) {
-    if (isOfflineNetworkError(err) || isTransientDbError(err)) {
-      engageDbBackoff("monitor", err);
-      return;
-    }
-    throw err;
+    engageDbBackoff("monitor", err);
+    return;
   } finally {
     g.__monitorRunning = false;
   }
@@ -380,21 +360,21 @@ export function startWorkers() {
 
   if (process.env.SIMULATION_ENABLED !== "false") {
     const t1 = setInterval(() => {
-      if (isDbCircuitOpen() || g.__simRunning) return;
+      if (g.__simRunning) return;
       void runSerializedWorker(() => simulationTick()).catch((e) =>
-        console.error("[simulator]", summarizeDbError(e)),
+        console.error("[simulator]", summarizeErr(e)),
       );
     }, simInterval);
     t1.unref?.();
     void runSerializedWorker(() => simulationTick()).catch((e) =>
-      console.error("[simulator:prime]", summarizeDbError(e)),
+      console.error("[simulator:prime]", summarizeErr(e)),
     );
   }
 
   const t2 = setInterval(() => {
-    if (isDbCircuitOpen() || g.__monitorRunning) return;
+    if (g.__monitorRunning) return;
     void runSerializedWorker(() => monitorTick()).catch((e) =>
-      console.error("[monitor]", summarizeDbError(e)),
+      console.error("[monitor]", summarizeErr(e)),
     );
   }, monitorInterval);
   t2.unref?.();
@@ -417,7 +397,7 @@ export function startWorkers() {
   }, retentionCheckMs);
   t3.unref?.();
   void runSerializedWorker(() => monitorTick()).catch((e) =>
-    console.error("[monitor:prime]", summarizeDbError(e)),
+    console.error("[monitor:prime]", summarizeErr(e)),
   );
 
   console.log(
@@ -432,11 +412,10 @@ export function startWorkers() {
  */
 export function maybePulseWorkers(minIntervalMs = 4800): void {
   if (process.env.SIMULATION_ENABLED === "false") return;
-  if (isDbCircuitOpen()) return;
   const last = g.__lastSimTickAt ?? 0;
   if (!g.__simRunning && Date.now() - last >= minIntervalMs) {
     void runSerializedWorker(() => simulationTick()).catch((e) =>
-      console.error("[simulator:pulse]", summarizeDbError(e)),
+      console.error("[simulator:pulse]", summarizeErr(e)),
     );
   }
 }

@@ -1,14 +1,14 @@
 import type { RtdbAdapter } from "./store";
 
 /**
- * Login rate limiting (Phase 5b) — previously the PostgreSQL `login_attempts`
+ * Login rate limiting — the RTDB replacement for the legacy `login_attempts`
  * table (NFR-02: max attempts per client-IP hash per 15-minute window).
  *
  * Tree layout:
  *   loginAttempts/{rateKey} → { key, count, windowStart (epoch-ms) }
  *
  * `rateKey` is a SHA-256 hash of the canonical client IP, so the key is
- * RTDB-safe (hex only). Semantics match the PostgreSQL upsert exactly:
+ * RTDB-safe (hex only). Upsert semantics:
  * - reserve: create/patch the bucket; if the stored window has expired the
  *   counter restarts at 1 with a fresh windowStart, else it increments.
  * - release: decrement exactly one reservation (the successful login's);

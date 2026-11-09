@@ -1,8 +1,12 @@
-import { and, desc, eq, sql } from "drizzle-orm";
-import { db } from "@/db";
-import { mirrorToRtdb, tryGetAhuRtdb } from "@/lib/rtdb/live-read";
-import { alarmToJson, applyAlarmAck, readActiveAlarmRecords } from "@/lib/rtdb/alarms";
-import { alarms } from "@/db/schema";
+import { requireRtdb } from "@/lib/rtdb/live-read";
+import {
+  ALARMS_NODE,
+  alarmNode,
+  alarmToJson,
+  applyAlarmAck,
+  readActiveAlarmRecords,
+  type RtdbAlarmRecord,
+} from "@/lib/rtdb/alarms";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { publishRealtime } from "@/lib/realtime";
 
@@ -15,42 +19,25 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const state = url.searchParams.get("state") ?? "active";
     const ahuId = url.searchParams.get("ahuId");
-    const conds = [];
-    if (state === "active") conds.push(eq(alarms.isActive, true));
-    if (state === "resolved") conds.push(eq(alarms.isActive, false));
-    if (ahuId) conds.push(eq(alarms.ahuId, ahuId));
-    // Phase 3 Slice 1: the ACTIVE list reads the RTDB alarmsActive index
-    // (resolve/ack transitions already maintained it since Slice D).
-    // Resolved history stays on PostgreSQL until the history backfill lands.
+
+    const rtdb = await requireRtdb();
+    let records: RtdbAlarmRecord[];
     if (state === "active") {
-      try {
-        const rtdb = await tryGetAhuRtdb();
-        if (rtdb) {
-          const records = await readActiveAlarmRecords(rtdb);
-          const filtered = ahuId ? records.filter((r) => r.ahuId === ahuId) : records;
-          filtered.sort((a, b) => b.triggeredAt - a.triggeredAt);
-          return Response.json({
-            alarms: filtered.slice(0, 400).map(alarmToJson),
-            activeCount: records.length,
-            state,
-          });
-        }
-      } catch (err) {
-        console.error("[alarms] RTDB active read failed, using PostgreSQL:", err instanceof Error ? err.message : err);
-      }
+      // The ACTIVE list reads the alarmsActive index (kept in sync by the
+      // engine on every raise/resolve transition).
+      records = await readActiveAlarmRecords(rtdb);
+    } else {
+      // Resolved history scans the full alarms node.
+      const tree = (await rtdb.get<Record<string, RtdbAlarmRecord>>(ALARMS_NODE)) ?? {};
+      records = Object.values(tree).filter((r) => !r.isActive);
     }
-    const [rows, counts] = await Promise.all([
-      db
-        .select()
-        .from(alarms)
-        .where(conds.length ? and(...conds) : undefined)
-        .orderBy(desc(alarms.triggeredAt))
-        .limit(400),
-      db
-        .select({ active: sql<number>`count(*) filter (where ${alarms.isActive})::int` })
-        .from(alarms),
-    ]);
-    return Response.json({ alarms: rows, activeCount: counts[0]?.active ?? 0, state });
+    const filtered = ahuId ? records.filter((r) => r.ahuId === ahuId) : records;
+    filtered.sort((a, b) => b.triggeredAt - a.triggeredAt);
+    return Response.json({
+      alarms: filtered.slice(0, 400).map(alarmToJson),
+      activeCount: (await readActiveAlarmRecords(rtdb)).length,
+      state,
+    });
   } catch (err) {
     return jsonError(err);
   }
@@ -65,15 +52,13 @@ export async function POST(req: Request) {
     const actor = await requireAuth("ack", { mutating: true });
     const body = (await req.json()) as { alarmId?: string };
     if (!body.alarmId) return Response.json({ error: "alarmId is required" }, { status: 400 });
-    const rows = await db.select().from(alarms).where(eq(alarms.id, body.alarmId)).limit(1);
-    const alarm = rows[0];
+
+    const rtdb = await requireRtdb();
+    const alarm = await rtdb.get<RtdbAlarmRecord>(alarmNode(body.alarmId));
     if (!alarm) return Response.json({ error: "Alarm not found" }, { status: 404 });
 
     const acknowledgedAt = new Date();
-    await db
-      .update(alarms)
-      .set({ acknowledged: true, acknowledgedBy: actor.user.id, acknowledgedAt })
-      .where(eq(alarms.id, alarm.id));
+    await applyAlarmAck(rtdb, alarm.id, actor.user.id, acknowledgedAt.getTime());
 
     const ip = await getClientIp();
     await writeAudit({
@@ -97,10 +82,16 @@ export async function POST(req: Request) {
       by: actor.user.email,
       at: new Date().toISOString(),
     });
-    // Phase 2 dual-write: mirror the acknowledgement into RTDB (fire-and-forget)
-    mirrorToRtdb((rtdb) => applyAlarmAck(rtdb, alarm.id, actor.user.id, acknowledgedAt.getTime()));
 
-    return Response.json({ ok: true, alarm: { ...alarm, acknowledged: true, acknowledgedBy: actor.user.id } });
+    return Response.json({
+      ok: true,
+      alarm: alarmToJson({
+        ...alarm,
+        acknowledged: true,
+        acknowledgedBy: actor.user.id,
+        acknowledgedAt: acknowledgedAt.getTime(),
+      }),
+    });
   } catch (err) {
     return jsonError(err);
   }
