@@ -5,6 +5,7 @@ import type { AhuRow } from "@/db/schema";
 import { PARAM_KEYS, PARAM_MAP, computeAhuStatus, type ParamKey } from "@/lib/domain";
 import { publishRealtime } from "@/lib/realtime";
 import { authoritativeTelemetry } from "@/lib/source";
+import type { RtdbTelemetryRecord } from "@/lib/rtdb/telemetry";
 import {
   confirmCommandsFromReading,
   evaluateFaultAlarm,
@@ -306,6 +307,36 @@ export async function ingestTelemetry(token: string, payload: TelemetryPayload, 
     }
   });
 
+  // Phase 2 dual-write mirror: every message PostgreSQL accepted (fresh or
+  // historical) is mirrored into the RTDB telemetry tree. Fire-and-forget —
+  // a slow or failed RTDB write never blocks or fails ingestion while
+  // PostgreSQL remains the source of truth (until the Phase 5 cutover).
+  if (telemetryId > 0 && duplicatedTelemetryId === undefined && messageId) {
+    mirrorTelemetryToRtdb({
+      ahuId,
+      messageId,
+      source: device.sourceType,
+      timestamp: (ts as Date).getTime(),
+      receivedAt: Date.now(),
+      roomTemp: values.roomTemp ?? null,
+      supplyTemp: values.supplyTemp ?? null,
+      returnTemp: values.returnTemp ?? null,
+      humidity: values.humidity ?? null,
+      filterDiffPressure: values.filterDiffPressure ?? null,
+      fanSpeed: values.fanSpeed ?? null,
+      coilTemp: values.coilTemp ?? null,
+      damperPosition: values.damperPosition ?? null,
+      current: values.current ?? null,
+      isCurrentFallback: Boolean(currentFallback),
+      voltage: values.voltage ?? null,
+      isVoltageFallback: Boolean(voltageFallback),
+      runHours: values.runHours ?? null,
+      heaterOutput: values.heaterOutput ?? null,
+      runState,
+      faultCode,
+    });
+  }
+
   if (sourceConflict)
     return { ok: false, status: 409, body: { error: "Device was disabled or another source became authoritative" } };
   if (duplicatedTelemetryId !== undefined)
@@ -343,3 +374,30 @@ export async function ingestTelemetry(token: string, payload: TelemetryPayload, 
     },
   };
 }
+
+/**
+ * Phase 2 Slice A: RTDB telemetry mirror (see src/lib/rtdb/telemetry.ts).
+ *
+ * Skipped entirely when Firebase env vars are absent, so local runs and the
+ * PGlite test suite (which have no Firebase credentials) stay silent —
+ * PostgreSQL simply remains the only store in those environments.
+ * firebase-admin is imported dynamically: this module is also part of the
+ * Edge instrumentation graph, which must never bundle Node-only code.
+ */
+function mirrorTelemetryToRtdb(record: RtdbTelemetryRecord): void {
+  const env = process.env;
+  const firebaseConfigured = Boolean(
+    env.NEXT_PUBLIC_FIREBASE_PROJECT_ID && (env.FIREBASE_SERVICE_ACCOUNT_PATH || env.FIREBASE_SERVICE_ACCOUNT_JSON),
+  );
+  if (!firebaseConfigured) return;
+
+  void (async () => {
+    const [{ getAhuRtdb }, { writeTelemetryMirror }] = await Promise.all([
+      import("@/lib/firebase/admin"),
+      import("@/lib/rtdb/telemetry"),
+    ]);
+    await writeTelemetryMirror(await getAhuRtdb(), record);
+  })().catch((err) => {
+    console.error("[telemetry-mirror] RTDB write failed:", err instanceof Error ? err.message : err);
+  });
+}
