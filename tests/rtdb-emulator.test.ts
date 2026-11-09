@@ -94,9 +94,13 @@ if (emulatorAvailable) {
   });
 
   after(async () => {
-    // wipe the namespace and tear the app down so nothing leaks across files
+    // wipe the namespace and tear the app down so nothing leaks across files.
+    // NOTE: the wipe MUST go through the Admin SDK — it bypasses security
+    // rules (docs: "the app has access to read and write all data, regardless
+    // of Security Rules"). A raw REST DELETE is subject to the locked rules
+    // and silently 401s.
     try {
-      await fetch(`http://${EMULATOR_HOST}/.json?ns=${NAMESPACE}`, { method: "DELETE" });
+      await admin?.raw.ref().remove();
     } catch {
       /* best effort */
     }
@@ -107,8 +111,12 @@ if (emulatorAvailable) {
     }
   });
 
+  // Clears the whole namespace through the Admin SDK, which bypasses security
+  // rules. (A raw REST DELETE would be denied by the locked database.rules.json
+  // and the wipe would silently do nothing — that bug made the prune test see
+  // shards leaked from the telemetry test.)
   const wipe = async () => {
-    await fetch(`http://${EMULATOR_HOST}/.json?ns=${NAMESPACE}`, { method: "DELETE" });
+    await admin!.raw.ref().remove();
   };
 
   /* ---------------------------------------------------------------- */
@@ -209,12 +217,16 @@ if (emulatorAvailable) {
     const latest = await admin!.db.get<Record<string, unknown>>("telemetryLatest/AHU-01");
     equal(latest?.messageId, "emu-m2", "latest never regresses on historical writes");
 
-    const range = await readTelemetryRange(admin!.db, "AHU-01", base, base + DAY);
+    // Range covers Nov 9 00:00:00.000 → Nov 11 00:00:00.000 inclusive:
+    // emu-m1 (Nov 9 +1s) and emu-m2 (Nov 10 +2s) are inside; emu-m3
+    // (Nov 8 23:59:59.500) is before the start and must stay excluded.
+    const range = await readTelemetryRange(admin!.db, "AHU-01", base, base + 2 * DAY);
     deepStrictEqual(
       range.map((r) => r.messageId),
       ["emu-m1", "emu-m2"],
       "cross-day range read from real shards",
     );
+    equal(range.some((r) => r.messageId === "emu-m3"), false, "sample before the range start stays excluded");
   });
 
   t("emulator: alarm lifecycle keeps the active index honest", async () => {
