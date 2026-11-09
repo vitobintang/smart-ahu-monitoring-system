@@ -49,3 +49,37 @@ export async function readTelemetryRange(
   out.sort((a, b) => a.timestamp - b.timestamp);
   return out;
 }
+
+/**
+ * Descending chunked iteration for the CSV exporter: reads one UTC day shard
+ * at a time (RAM bounded per shard), newest day first, records within a day
+ * newest first. Unlike readTelemetryRange (all-or-nothing BEFORE the stream
+ * starts), a shard failure mid-stream throws — the caller's stream errors and
+ * the client sees a truncated download, which the CSV contract already
+ * accepts for PostgreSQL failures.
+ */
+export async function* streamTelemetryRangeDescending(
+  rtdb: RtdbAdapter,
+  ahuId: string,
+  fromMs: number,
+  toMs: number,
+  source: "ALL" | "PHYSICAL" | "SIMULATION",
+  chunkSize = 1000,
+): AsyncGenerator<RtdbTelemetryRecord[]> {
+  const days = listUtcDays(fromMs, toMs).reverse();
+  for (const day of days) {
+    const shard = await rtdb.get<Record<string, RtdbTelemetryRecord>>(`${TELEMETRY_NODE}/${ahuId}/${day}`);
+    if (!shard) continue;
+    const dayRecords = Object.values(shard)
+      .filter(
+        (r) =>
+          r.timestamp >= fromMs &&
+          r.timestamp <= toMs &&
+          (source === "ALL" || r.source === source),
+      )
+      .sort((a, b) => b.timestamp - a.timestamp);
+    for (let i = 0; i < dayRecords.length; i += chunkSize) {
+      yield dayRecords.slice(i, i + chunkSize);
+    }
+  }
+}

@@ -11,7 +11,8 @@ import {
   tryGetAhuRtdb,
   type LatestRow,
 } from "@/lib/rtdb/live-read";
-import { readTelemetryRange } from "@/lib/rtdb/history";
+import { readTelemetryRange, streamTelemetryRangeDescending } from "@/lib/rtdb/history";
+import type { RtdbTelemetryRecord } from "@/lib/rtdb/telemetry";
 import type { RtdbAdapter } from "@/lib/rtdb/store";
 
 export const COLUMN: Record<ParamKey, string> = {
@@ -229,16 +230,20 @@ export interface SeriesPoint {
 }
 
 /** FR-08: live chart series with RUN sample proportion. */
-export async function getSeries(ahuId: string, windowMin: number): Promise<{ points: SeriesPoint[]; runProportion: number; buckets: { t: number; run: number; total: number }[] }> {
-  const since = new Date(Date.now() - windowMin * 60 * 1000);
-  const rows = await db
-    .select()
-    .from(telemetry)
-    .where(and(eq(telemetry.ahuId, ahuId), gte(telemetry.timestamp, since), authoritativeTelemetry()))
-    .orderBy(telemetry.timestamp)
-    .limit(2000);
-  const points: SeriesPoint[] = rows.map((r) => ({
-    t: r.timestamp.getTime(),
+function seriesPointFromRow(r: {
+  timestamp: Date | number;
+  source: string;
+  runState: string | null;
+  fanSpeed: number | null;
+  isCurrentFallback: boolean;
+  current: number | null;
+  supplyTemp: number | null;
+  roomTemp: number | null;
+  humidity: number | null;
+  filterDiffPressure: number | null;
+}): SeriesPoint {
+  return {
+    t: (r.timestamp instanceof Date ? r.timestamp.getTime() : r.timestamp),
     current: r.isCurrentFallback ? null : r.current,
     supplyTemp: r.supplyTemp,
     roomTemp: r.roomTemp,
@@ -247,7 +252,10 @@ export async function getSeries(ahuId: string, windowMin: number): Promise<{ poi
     filterDiffPressure: r.filterDiffPressure,
     run: r.runState === "RUN" || (r.fanSpeed ?? 0) > 0,
     source: r.source,
-  }));
+  };
+}
+
+function finishSeries(points: SeriesPoint[], windowMin: number) {
   const bucketMs = windowMin <= 5 ? 30_000 : 60_000;
   const bucketMap = new Map<number, { run: number; total: number }>();
   for (const p of points) {
@@ -262,6 +270,41 @@ export async function getSeries(ahuId: string, windowMin: number): Promise<{ poi
     .map(([t, v]) => ({ t, ...v }));
   const runProportion = points.length === 0 ? 0 : points.filter((p) => p.run).length / points.length;
   return { points, runProportion, buckets };
+}
+
+/**
+ * The mirror approximation of PostgreSQL's authoritativeTelemetry(): when any
+ * PHYSICAL sample exists in the window the physical device is authoritative
+ * and simulation samples are dropped. (The SQL rule reads the enabled-devices
+ * table; the PG fallback path below stays exact.)
+ */
+function authoritativeMirrorFilter(records: RtdbTelemetryRecord[]): RtdbTelemetryRecord[] {
+  const hasPhysical = records.some((r) => r.source === "PHYSICAL");
+  return hasPhysical ? records.filter((r) => r.source === "PHYSICAL") : records;
+}
+
+export async function getSeries(
+  ahuId: string,
+  windowMin: number,
+  rtdbOverride?: RtdbAdapter | null,
+): Promise<{ points: SeriesPoint[]; runProportion: number; buckets: { t: number; run: number; total: number }[] }> {
+  const since = new Date(Date.now() - windowMin * 60 * 1000);
+  try {
+    const rtdb = rtdbOverride ?? (await tryGetAhuRtdb());
+    if (rtdb) {
+      const records = authoritativeMirrorFilter(await readTelemetryRange(rtdb, ahuId, since.getTime(), Date.now()));
+      return finishSeries(records.slice(-2000).map(seriesPointFromRow), windowMin);
+    }
+  } catch (err) {
+    console.error("[series] RTDB read failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+  }
+  const rows = await db
+    .select()
+    .from(telemetry)
+    .where(and(eq(telemetry.ahuId, ahuId), gte(telemetry.timestamp, since), authoritativeTelemetry()))
+    .orderBy(telemetry.timestamp)
+    .limit(2000);
+  return finishSeries(rows.map(seriesPointFromRow), windowMin);
 }
 
 export async function getAhuDetail(ahuId: string) {
@@ -574,9 +617,74 @@ export function reportToCsv(report: ReportResult): string {
   return lines.join("\n");
 }
 
-/** Stream every selected sample in deterministic descending timestamp/id order.
- * Chunking avoids silently truncating large reports or loading them all in RAM. */
-export function streamReportCsv(input: { ahuId: string; from: Date; to: Date; source: "ALL" | "PHYSICAL" | "SIMULATION" }): ReadableStream<Uint8Array> {
+/**
+ * FR-12 full CSV export. Phase 3: streams from the RTDB day shards (one shard
+ * in RAM at a time, newest day first) when Firebase is configured; falls back
+ * to the PostgreSQL cursor pagination otherwise or when the first RTDB read
+ * fails before any bytes are emitted.
+ */
+export function streamReportCsv(
+  input: { ahuId: string; from: Date; to: Date; source: "ALL" | "PHYSICAL" | "SIMULATION" },
+  rtdbOverride?: RtdbAdapter | null,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  let first = true;
+  const iterator = (async function* () {
+    let rtdb: RtdbAdapter | null = null;
+    try {
+      rtdb = rtdbOverride ?? (await tryGetAhuRtdb());
+    } catch {
+      rtdb = null;
+    }
+    if (!rtdb) return;
+    for await (const chunk of streamTelemetryRangeDescending(rtdb, input.ahuId, input.from.getTime(), input.to.getTime(), input.source)) {
+      yield chunk.map((record) => toLatestRow({ ...record, ahuId: input.ahuId }));
+    }
+  })();
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { value, done } = await iterator.next();
+        if (done) {
+          if (first) {
+            // configured RTDB but an empty range — emit the header-only CSV
+            const csv = reportToCsv({ samples: [] } as unknown as ReportResult);
+            controller.enqueue(encoder.encode(csv + "\n"));
+          }
+          controller.close();
+          return;
+        }
+        if (value.length === 0) return; // skip empty chunks, keep pulling
+        const csv = reportToCsv({ samples: value } as unknown as ReportResult);
+        const output = first ? csv : csv.slice(csv.indexOf("\n") + 1);
+        first = false;
+        controller.enqueue(encoder.encode(output + "\n"));
+      } catch (err) {
+        console.error("[csv] RTDB stream failed:", err instanceof Error ? err.message : err);
+        if (first) {
+          // Nothing emitted yet — clean PostgreSQL fallback.
+          const reader = streamReportCsvFromPostgres(input).getReader();
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            const csv = first ? new TextDecoder().decode(value) : new TextDecoder().decode(value).slice(new TextDecoder().decode(value).indexOf("\n") + 1);
+            first = false;
+            controller.enqueue(encoder.encode(csv + "\n"));
+          }
+          controller.close();
+        } else {
+          // Mid-stream: error like the PostgreSQL streamer does (truncated
+          // download) — restarting would duplicate already-emitted rows.
+          controller.error(err instanceof Error ? err : new Error(String(err)));
+        }
+      }
+    },
+  });
+}
+
+/** PostgreSQL cursor-paginated CSV streamer (RAM bounded, descending order). */
+function streamReportCsvFromPostgres(input: { ahuId: string; from: Date; to: Date; source: "ALL" | "PHYSICAL" | "SIMULATION" }): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let cursor: number | undefined;
   let first = true;
