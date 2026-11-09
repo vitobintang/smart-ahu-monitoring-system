@@ -2,6 +2,9 @@ import { test } from "node:test";
 import { deepStrictEqual, equal } from "node:assert/strict";
 
 import { InMemoryRtdb } from "../src/lib/rtdb/store";
+import { alarmToRow } from "../src/lib/rtdb/alarms";
+import { commandToRow } from "../src/lib/rtdb/commands";
+import { trendToRow } from "../src/lib/rtdb/trends";
 import {
   readRtdbAhu,
   readRtdbAhus,
@@ -282,4 +285,92 @@ test("InMemoryRtdb.transaction abort semantics match the adapter contract", asyn
   const aborted = await db.transaction<{ n: number }>("x/y", () => undefined);
   equal(aborted.committed, false, "undefined aborts");
   equal(aborted.value?.n, 1, "value unchanged after abort");
+});
+
+/* ── RTDB null-stripping regression (the dashboard toFixed crash) ──── */
+
+test("row mappers normalize RTDB-stripped nulls back to null (sparse records)", async () => {
+  // RTDB removes null object fields on write, so real records read back
+  // WITHOUT the nullable keys. These fixtures mimic exactly that shape.
+  const sparseAlarm = alarmToRow({
+    id: "a9",
+    ahuId: "AHU-01",
+    parameter: "FAULT",
+    priority: "CRITICAL",
+    message: "Controller fault reported: E3",
+    isActive: true,
+    acknowledged: false,
+    triggeredAt: T0,
+  } as unknown as Parameters<typeof alarmToRow>[0]) as Record<string, unknown>;
+  equal(sparseAlarm.observedValue, null, "undefined observedValue must map to null — UI guards on !== null");
+  equal(sparseAlarm.thresholdValue, null);
+  equal(sparseAlarm.acknowledgedBy, null);
+  equal(sparseAlarm.acknowledgedAt, null);
+  equal(sparseAlarm.resolvedAt, null);
+  equal(sparseAlarm.breachDirection, null);
+
+  const sparseTrend = trendToRow({
+    id: "t9",
+    ahuId: "AHU-01",
+    parameter: "roomTemp",
+    estimatedMin: 45,
+    direction: "HIGH",
+    isReliable: false,
+    sampleCount: 0,
+    acknowledged: false,
+    createdAt: T0,
+  } as unknown as Parameters<typeof trendToRow>[0]) as Record<string, unknown>;
+  equal(sparseTrend.variance, null);
+  equal(sparseTrend.slopePerMin, null);
+  equal(sparseTrend.minutesToBreach, null);
+  equal(sparseTrend.unreliabilityReason, null);
+
+  const sparseCmd = commandToRow({
+    id: "c9",
+    ahuId: "AHU-01",
+    commandType: "START",
+    status: "REQUESTED",
+    createdAt: T0,
+    updatedAt: T0,
+    expiresAt: T0 + 60_000,
+  } as unknown as Parameters<typeof commandToRow>[0]) as Record<string, unknown>;
+  equal(sparseCmd.rejectionReason, null);
+  equal(sparseCmd.confirmedAt, null);
+  equal(sparseCmd.payload, null);
+  equal(sparseCmd.userEmail, null);
+
+  const sparseThreshold = thresholdToRow({
+    id: "AHU-01:current",
+    ahuId: "AHU-01",
+    parameter: "current",
+    enabled: true,
+    delaySec: 0,
+    priority: "HIGH",
+    trendEnabled: true,
+    updatedAt: T0,
+  } as unknown as Parameters<typeof thresholdToRow>[0]) as Record<string, unknown>;
+  equal(sparseThreshold.lowLimit, null);
+  equal(sparseThreshold.highLimit, null);
+  equal(sparseThreshold.unit, null);
+
+  const sparseAhu = ahuToRow({
+    id: "AHU-01",
+    name: "u",
+    location: "r",
+    commTimeoutSec: 30,
+    hasHeater: false,
+    currentStatus: "STOP",
+    controlMode: "AUTO",
+    desiredRunState: "STOP",
+    setpoint: 22,
+    physicalControlEnabled: false,
+    mapRotation: 0,
+    updatedAt: T0,
+  } as unknown as Parameters<typeof ahuToRow>[0]) as Record<string, unknown>;
+  equal(sparseAhu.lastSeenAt, null);
+  equal(sparseAhu.faultCode, null);
+  equal(sparseAhu.mapX, null);
+  equal(sparseAhu.mapZ, null);
+  equal(sparseAhu.mapZone, null);
+  deepStrictEqual(sparseAhu.installedSensors, [], "stripped array defaults to empty");
 });

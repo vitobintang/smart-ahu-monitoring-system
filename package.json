@@ -32,8 +32,6 @@
   },
   "homepage": "https://github.com/vitobintang/smart-ahu-monitoring-system#readme",
   "dependencies": {
-    "@supabase/ssr": "^0.12.7",
-    "@supabase/supabase-js": "^2.118.0",
     "@types/three": "^0.187.0",
     "dotenv": "^17.3.1",
     "drizzle-orm": "^0.45.2",

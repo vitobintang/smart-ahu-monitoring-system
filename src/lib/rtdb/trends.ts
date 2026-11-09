@@ -81,6 +81,8 @@ export async function readRtdbTrendHistory(rtdb: RtdbAdapter, ahuId: string, lim
 
 /** Maps a mirror record onto the PostgreSQL trend_alerts row shape (Dates). */
 export function trendToRow(record: RtdbTrendRecord): Record<string, unknown> {
+  // `n()` restores nulls RTDB stripped (see live-read.ts).
+  const n = <T,>(value: T | undefined): T | null => (value === undefined ? null : (value as T));
   return {
     id: record.id,
     ahuId: record.ahuId,
@@ -88,17 +90,17 @@ export function trendToRow(record: RtdbTrendRecord): Record<string, unknown> {
     estimatedMin: record.estimatedMin,
     direction: record.direction,
     isReliable: record.isReliable,
-    unreliabilityReason: record.unreliabilityReason,
+    unreliabilityReason: n(record.unreliabilityReason),
     sampleCount: record.sampleCount,
-    variance: record.variance,
-    slopePerMin: record.slopePerMin,
-    currentValue: record.currentValue,
-    projectedValue: record.projectedValue,
-    thresholdValue: record.thresholdValue,
-    minutesToBreach: record.minutesToBreach,
+    variance: n(record.variance),
+    slopePerMin: n(record.slopePerMin),
+    currentValue: n(record.currentValue),
+    projectedValue: n(record.projectedValue),
+    thresholdValue: n(record.thresholdValue),
+    minutesToBreach: n(record.minutesToBreach),
     acknowledged: record.acknowledged,
-    acknowledgedBy: record.acknowledgedBy,
-    acknowledgedAt: record.acknowledgedAt === null ? null : new Date(record.acknowledgedAt),
+    acknowledgedBy: n(record.acknowledgedBy),
+    acknowledgedAt: record.acknowledgedAt == null ? null : new Date(record.acknowledgedAt),
     createdAt: new Date(record.createdAt),
   };
 }
