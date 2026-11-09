@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { ahus, devices } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
-import { ingestTelemetry } from "@/lib/engine";
+import { ingestTelemetry } from "@/lib/ingest";
 import { getOverride, setOverride, simulationTick, simOverrides } from "@/lib/workers";
 import { AHU_IDS } from "@/lib/domain";
 

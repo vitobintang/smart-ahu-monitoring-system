@@ -9,86 +9,29 @@ import {
   Activity,
   AtSign,
   Bell,
-  Building2,
   CheckCircle2,
   ChevronDown,
-  ClipboardList,
   Database,
-  FileText,
-  Home,
   KeyRound,
   LogOut,
   Mail,
   Menu,
   Search,
-  Settings,
   ShieldCheck,
-  TrendingUp,
   UserCog,
   Users,
-  Wrench,
   X,
-  Zap,
 } from "lucide-react";
 import { api, fmtDateTime, timeAgo, type SessionUser, type SyncInfo } from "@/lib/client";
 import { can } from "@/lib/domain";
 import { BUILD_STAMP } from "@/lib/build";
 import { Btn, Field, cx, inputClass } from "@/components/ui";
+import { isActive, NAV, rolePermissionsSummary, type Feed } from "./nav-config";
 
 const SessionUserContext = createContext<SessionUser | null>(null);
 
 export function useSessionUser(): SessionUser | null {
   return useContext(SessionUserContext);
-}
-
-type Activity2 = Parameters<typeof can>[1];
-
-interface NavItem {
-  href: string;
-  label: string;
-  icon: typeof Home;
-  activity: Activity2;
-  badge?: "alarms";
-}
-
-const NAV: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: Home, activity: "view" },
-  { href: "/ahu", label: "AHU Units", icon: Building2, activity: "view" },
-  { href: "/alarms", label: "Alarms", icon: Bell, activity: "view", badge: "alarms" },
-  { href: "/trends", label: "Trend Analysis", icon: TrendingUp, activity: "view" },
-  { href: "/reports", label: "Reports & Data Logger", icon: FileText, activity: "view" },
-  { href: "/energy", label: "Energy Management", icon: Zap, activity: "view" },
-  { href: "/maintenance", label: "Maintenance", icon: Wrench, activity: "view" },
-  { href: "/admin?tab=devices", label: "AHU Modules", icon: Database, activity: "manageUsers" },
-  { href: "/admin?tab=users", label: "Users", icon: Users, activity: "manageUsers" },
-  { href: "/config", label: "Configurations", icon: Settings, activity: "configure" },
-  { href: "/audit", label: "Audit Logs", icon: ClipboardList, activity: "viewAudit" },
-];
-
-interface Feed {
-  alarms: { id: string; ahuId: string; parameter: string; priority: string; message: string; triggeredAt: string; acknowledged: boolean }[];
-  trends: { id: string; ahuId: string; parameter: string; estimatedMin: number; direction: string; createdAt: string }[];
-  commands: { id: string; ahuId: string; commandType: string; status: string; expiresAt: string }[];
-}
-
-function isActive(item: NavItem, pathname: string | null, search: URLSearchParams | null): boolean {
-  const [path, query] = item.href.split("?");
-  if (path === "/ahu") return Boolean(pathname?.startsWith("/ahu"));
-  if (pathname !== path) return false;
-  const want = new URLSearchParams(query ?? "");
-  for (const [k, v] of want.entries()) {
-    if ((search?.get(k) ?? (k === "tab" && path === "/reports" ? "summary" : k === "tab" ? "users" : null)) !== v) return false;
-  }
-  if (path === "/reports" && !want.has("tab") && search?.get("tab") === "logger") return false;
-  if (path === "/admin" && !want.has("tab") && (search?.get("tab") ?? "users") !== "users") return false;
-  return true;
-}
-
-function rolePermissionsSummary(role: SessionUser["role"]): string[] {
-  if (role === "Admin") return ["Monitoring & Reports", "AHU Control", "Thresholds & Config", "Users & AHU Modules"];
-  if (role === "Engineering") return ["Monitoring & Reports", "AHU Control", "Thresholds & Config", "Audit Logs"];
-  if (role === "Operator") return ["Monitoring & Reports", "AHU Control", "Alarm & Trend Ack"];
-  return ["Read-Only Monitoring & Reports"];
 }
 
 export default function AppShell({
@@ -193,7 +136,6 @@ export default function AppShell({
       clearInterval(id);
       clearInterval(syncId);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

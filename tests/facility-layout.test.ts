@@ -4,7 +4,6 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
-  collidesWithAnyWall,
   computeExteriorWallSegments,
   computePolygonAreaSqM,
   DEFAULT_AHU_PLACEMENTS,
@@ -13,21 +12,24 @@ import {
   dragFloorWall,
   extrudeWingOnWall,
   FACILITY_ZONES,
-  generateRandomTreePool,
   insertVertexOnWall,
+  MIN_AHU_SPACING,
+  moveFloorVertex,
+  normalizeRotation,
+  ROOM_GRID_SNAP_STEP,
+  validateFloorplanPolygon,
+} from "../src/lib/facility-layout";
+import {
+  collidesWithAnyWall,
+  generateRandomTreePool,
   isFootprintOnPlatform,
   isOutdoorTreeSpotClear,
   MAX_VISIBLE_OUTDOOR_TREES,
-  MIN_AHU_SPACING,
-  moveFloorVertex,
   resolveAhuPlacement,
   resolveWallPhysicsAndSnap,
-  normalizeRotation,
-  ROOM_GRID_SNAP_STEP,
   suggestCleanPlatformSlot,
-  validateFloorplanPolygon,
   validatePlatformPlacement,
-} from "../src/lib/facility-layout";
+} from "../src/lib/facility-placement";
 import { commandFeedbackMatches, computeAhuStatus } from "../src/lib/domain";
 import { isOfflineNetworkError, isTransientDbError, summarizeDbError } from "../src/db";
 import AhuSchematic from "../src/components/AhuSchematic";

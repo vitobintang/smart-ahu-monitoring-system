@@ -21,14 +21,8 @@ import { useSessionUser } from "@/components/AppShell";
 import ControlPanel from "@/components/ControlPanel";
 import type { FacilityAhuItem, PendingPlacement } from "@/components/AhuFacilityMap3D";
 import { can } from "@/lib/domain";
-import {
-  DEFAULT_ROOM_VERTICES,
-  normalizeRotation,
-  resolveAhuPlacement,
-  resolveWallPhysicsAndSnap,
-  suggestCleanPlatformSlot,
-  type FloorVertex,
-} from "@/lib/facility-layout";
+import { DEFAULT_ROOM_VERTICES, normalizeRotation, type FloorVertex } from "@/lib/facility-layout";
+import { resolveAhuPlacement, resolveWallPhysicsAndSnap, suggestCleanPlatformSlot } from "@/lib/facility-placement";
 import { Btn, Empty, ErrorNote, Field, Spinner, StatusBadge, cx, inputClass } from "@/components/ui";
 
 const AhuFacilityMap3D = dynamic(() => import("@/components/AhuFacilityMap3D"), {

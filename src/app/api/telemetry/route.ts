@@ -1,4 +1,4 @@
-import { ingestTelemetry, type TelemetryPayload } from "@/lib/engine";
+import { ingestTelemetry, type TelemetryPayload } from "@/lib/ingest";
 
 export const dynamic = "force-dynamic";
 
