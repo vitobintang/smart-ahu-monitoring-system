@@ -16,9 +16,14 @@ export interface RtdbAdapter {
   /**
    * RTDB transaction: `compute` receives the current value and returns the next.
    * Returning `undefined` aborts the transaction (committed: false) — used for
-   * claim-style uniqueness (e.g. one owner per username key).
+   * claim-style uniqueness (e.g. one owner per username key). Returning `null`
+   * deletes the node. Returning the unchanged current value COMMITS (it is not
+   * an abort) — return `undefined` when the intent is "do nothing".
    */
-  transaction<T>(path: string, compute: (current: T | null) => T | undefined): Promise<{ committed: boolean; value: T | null }>;
+  transaction<T>(
+    path: string,
+    compute: (current: T | null) => T | null | undefined,
+  ): Promise<{ committed: boolean; value: T | null }>;
 }
 
 /** Segments must never contain "/", ".", "#", "$", "[", "]" (RTDB key rules). */
@@ -130,7 +135,7 @@ export class InMemoryRtdb implements RtdbAdapter {
 
   async transaction<T>(
     path: string,
-    compute: (current: T | null) => T | undefined,
+    compute: (current: T | null) => T | null | undefined,
   ): Promise<{ committed: boolean; value: T | null }> {
     const current = (await this.get<T>(path)) ?? null;
     const next = compute(current);
