@@ -1,6 +1,9 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { ahus, facilityFloorplan } from "@/db/schema";
+import { mirrorToRtdb, tryGetAhuRtdb } from "@/lib/rtdb/live-read";
+import { patchRtdbAhu } from "@/lib/rtdb/registry";
+import { readRtdbFloorplan, removeRtdbFloorplan, writeRtdbFloorplan } from "@/lib/rtdb/facility";
 import {
   computePolygonAreaSqM,
   DEFAULT_ROOM_VERTICES,
@@ -36,6 +39,27 @@ export async function getActiveFloorplan(): Promise<StoredFloorplanState> {
   }
 
   try {
+    // Phase 5b primary flip: the floorplan document is read from RTDB when
+    // Firebase is configured; PostgreSQL remains the fallback.
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      const record = await readRtdbFloorplan(rtdb);
+      if (record && Array.isArray(record.vertices) && record.vertices.length >= 3) {
+        const check = validateFloorplanPolygon(record.vertices);
+        if (check.valid) {
+          const state: StoredFloorplanState = {
+            vertices: record.vertices,
+            isCustom: true,
+            areaSqM: check.areaSqM,
+            updatedBy: record.updatedBy,
+            updatedAt: new Date(record.updatedAt).toISOString(),
+          };
+          globalThis.__ahuFloorplanCache = { data: state, expiresAt: now + CACHE_TTL_MS };
+          return state;
+        }
+      }
+    }
+
     const rows = await db
       .select()
       .from(facilityFloorplan)
@@ -111,6 +135,9 @@ export async function saveCustomFloorplan(
       },
     });
 
+  // Phase 5b dual-write: the floorplan document mirrors into RTDB.
+  mirrorToRtdb((rtdb) => writeRtdbFloorplan(rtdb, cleanVertices, actorUsername, nowDate.getTime()));
+
   // Check existing AHUs and gently nudge any unit touched by a newly moved wall,
   // and refresh indoor/outdoor zone labels if a wing expanded or contracted over an AHU.
   const allRows = await db.select().from(ahus).orderBy(asc(ahus.id));
@@ -146,12 +173,23 @@ export async function saveCustomFloorplan(
             mapZone: nudged.zone.label,
           })
           .where(eq(ahus.id, item.id));
+        const id = item.id;
+        const patch = {
+          mapX: nudged.snappedX,
+          mapZ: nudged.snappedZ,
+          mapRotation: nudged.rotation,
+          mapZone: nudged.zone.label,
+        };
+        mirrorToRtdb((rtdb) => patchRtdbAhu(rtdb, id, patch));
       }
     } else {
       const row = allRows.find((r) => r.id === item.id);
       const zInfo = findZoneAt(item.x, item.z, cleanVertices);
       if (row && zInfo && row.mapZone !== zInfo.label) {
         await db.update(ahus).set({ mapZone: zInfo.label }).where(eq(ahus.id, item.id));
+        const id = item.id;
+        const zone = zInfo.label;
+        mirrorToRtdb((rtdb) => patchRtdbAhu(rtdb, id, { mapZone: zone }));
       }
     }
   }
@@ -169,6 +207,7 @@ export async function saveCustomFloorplan(
 
 export async function resetCustomFloorplan(): Promise<StoredFloorplanState> {
   await db.delete(facilityFloorplan).where(eq(facilityFloorplan.id, 1));
+  mirrorToRtdb((rtdb) => removeRtdbFloorplan(rtdb));
   const state: StoredFloorplanState = {
     vertices: DEFAULT_ROOM_VERTICES,
     isCustom: false,

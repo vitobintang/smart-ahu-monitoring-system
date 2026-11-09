@@ -4,6 +4,8 @@ import { loginAttempts } from "@/db/schema";
 import { LOGIN_RATE_LIMIT } from "@/lib/domain";
 import { secretHash } from "@/lib/device-access";
 import { normalizeLoginIp } from "@/lib/login-rate-key";
+import { releaseRtdbLoginAttempt, reserveRtdbLoginAttempt } from "@/lib/rtdb/security";
+import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
 
 type RateDbClient = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -64,6 +66,20 @@ export async function reserveLoginAttempt(
     windowMs?: number;
   },
 ): Promise<LoginRateReservation> {
+  // Phase 5b primary flip: the per-IP bucket lives in RTDB (transactional
+  // increment, identical window semantics); PostgreSQL is the fallback.
+  try {
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      return await reserveRtdbLoginAttempt(rtdb, rateKey, {
+        now: opts?.now?.getTime(),
+        max: opts?.max,
+        windowMs: opts?.windowMs,
+      });
+    }
+  } catch (err) {
+    console.error("[login-rate] RTDB reserve failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+  }
   const client = opts?.client ?? db;
   const now = opts?.now ?? new Date();
   const max = opts?.max ?? LOGIN_RATE_LIMIT.max;
@@ -109,6 +125,15 @@ export async function releaseLoginAttempt(
   rateKey: string,
   opts?: { client?: RateDbClient },
 ): Promise<void> {
+  try {
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      await releaseRtdbLoginAttempt(rtdb, rateKey);
+      return;
+    }
+  } catch (err) {
+    console.error("[login-rate] RTDB release failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+  }
   const client = opts?.client ?? db;
   const [updated] = await client
     .update(loginAttempts)

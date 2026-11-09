@@ -6,17 +6,46 @@ import { getDashboard } from "@/lib/queries";
 import { getSyncStatus } from "@/lib/realtime";
 import { authoritativeTelemetry } from "@/lib/source";
 import { maybePulseWorkers } from "@/lib/workers";
+import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
+import { readTelemetryRange } from "@/lib/rtdb/history";
+import { readRtdbAhus } from "@/lib/rtdb/registry";
+import { readActiveAlarmRecords, alarmToRow } from "@/lib/rtdb/alarms";
+import { readRtdbUnackedTrends, trendToRow } from "@/lib/rtdb/trends";
 
 export const dynamic = "force-dynamic";
 
 /** Per-AHU supply-temperature series, bucketed per minute (dashboard trend). */
 async function fleetSeries(windowMin: number) {
   const since = new Date(Date.now() - windowMin * 60_000);
+  // Phase 5b primary flip: series read from RTDB day shards when configured.
+  try {
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      const registry = await readRtdbAhus(rtdb);
+      const ids = [...registry.keys()].sort();
+      const ranges = await Promise.all(ids.map((id) => readTelemetryRange(rtdb, id, since.getTime(), Date.now())));
+      const rows = ranges.flatMap((samples, i) =>
+        samples
+          .filter((s) => s.supplyTemp !== null)
+          .map((s) => ({ ahuId: ids[i], t: new Date(s.timestamp), v: s.supplyTemp as number })),
+      );
+      return bucketFleetSeries(rows, windowMin);
+    }
+  } catch (err) {
+    console.error("[overview] RTDB fleet series failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+  }
   const rows = await db
     .select({ ahuId: telemetry.ahuId, t: telemetry.timestamp, v: telemetry.supplyTemp })
     .from(telemetry)
     .where(and(gte(telemetry.timestamp, since), isNotNull(telemetry.supplyTemp), authoritativeTelemetry()))
     .orderBy(telemetry.timestamp);
+  return bucketFleetSeries(rows, windowMin);
+}
+
+function bucketFleetSeries(
+  rows: Array<{ ahuId: string; t: Date; v: number | null }>,
+  windowMin: number,
+): Record<string, { t: number; v: number }[]> {
   const bucketMs = windowMin <= 5 ? 30_000 : 60_000;
   const acc = new Map<string, Map<number, { sum: number; n: number }>>();
   for (const r of rows) {
@@ -59,9 +88,22 @@ async function loadOverview(windowMin: number, lite: boolean): Promise<Record<st
     maybePulseWorkers();
     const dash = await getDashboard();
     const sync = await getSyncStatus();
-    const recentAlarms = lite
-      ? []
-      : await db
+    // Phase 5b primary flip: recent active alarms (priority-ordered) and
+    // unacknowledged trends read from RTDB when configured.
+    let recentAlarms: Array<Record<string, unknown>> = [];
+    let recentTrends: Array<Record<string, unknown>> = [];
+    if (!lite) {
+      const rtdb = await tryGetAhuRtdb();
+      if (rtdb) {
+        const rank = { CRITICAL: 0, HIGH: 1, MEDIUM: 2 } as Record<string, number>;
+        const records = await readActiveAlarmRecords(rtdb);
+        recentAlarms = records
+          .sort((a, b) => (rank[a.priority] ?? 3) - (rank[b.priority] ?? 3) || b.triggeredAt - a.triggeredAt)
+          .slice(0, 12)
+          .map(alarmToRow);
+        recentTrends = (await readRtdbUnackedTrends(rtdb, 8)).map(trendToRow);
+      } else {
+        recentAlarms = await db
           .select()
           .from(alarms)
           .where(eq(alarms.isActive, true))
@@ -70,14 +112,15 @@ async function loadOverview(windowMin: number, lite: boolean): Promise<Record<st
             desc(alarms.triggeredAt),
           )
           .limit(12);
-    const recentTrends = lite
-      ? []
-      : await db
+        recentTrends = await db
           .select()
           .from(trendAlerts)
           .where(eq(trendAlerts.acknowledged, false))
           .orderBy(desc(trendAlerts.createdAt))
           .limit(8);
+      }
+    }
+
     const series = lite ? {} : await fleetSeries(windowMin);
 
     const payload: Record<string, unknown> = {
