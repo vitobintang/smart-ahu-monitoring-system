@@ -70,6 +70,67 @@ export async function readActiveAlarmRecords(rtdb: RtdbAdapter): Promise<RtdbAla
   return records.filter((r): r is RtdbAlarmRecord => r !== null);
 }
 
+/** Per-AHU active-alarm counts (the dashboard card aggregation). */
+export interface AlarmCountRow {
+  ahuId: string;
+  active: number;
+  critical: number;
+  unacked: number;
+}
+
+/**
+ * Aggregates the active index into per-AHU counts — the RTDB replacement for
+ * the PostgreSQL `count(*) filter (...) group by ahu_id` dashboard query.
+ */
+export async function readAlarmCounts(rtdb: RtdbAdapter, ahuIds: string[]): Promise<Map<string, AlarmCountRow>> {
+  const records = await readActiveAlarmRecords(rtdb);
+  const map = new Map<string, AlarmCountRow>(ahuIds.map((id) => [id, { ahuId: id, active: 0, critical: 0, unacked: 0 }]));
+  for (const r of records) {
+    const row = map.get(r.ahuId);
+    if (!row) continue;
+    row.active += 1;
+    if (r.priority === "CRITICAL") row.critical += 1;
+    if (!r.acknowledged) row.unacked += 1;
+  }
+  return map;
+}
+
+/**
+ * Full alarm history for one AHU (active + resolved), newest triggered first —
+ * the RTDB replacement for the unit page's `order by triggered_at desc limit N`
+ * PostgreSQL query.
+ */
+export async function readAlarmHistory(rtdb: RtdbAdapter, ahuId: string, limit = 60): Promise<RtdbAlarmRecord[]> {
+  const tree = (await rtdb.get<Record<string, RtdbAlarmRecord>>(ALARMS_NODE)) ?? {};
+  return Object.values(tree)
+    .filter((r) => r.ahuId === ahuId)
+    .sort((a, b) => b.triggeredAt - a.triggeredAt)
+    .slice(0, limit);
+}
+
+/**
+ * Maps a mirror record onto the PostgreSQL alarms row shape (Date instances,
+ * same field names) so JSON responses keep their exact API shape.
+ */
+export function alarmToRow(record: RtdbAlarmRecord): Record<string, unknown> {
+  return {
+    id: record.id,
+    ahuId: record.ahuId,
+    parameter: record.parameter,
+    priority: record.priority,
+    message: record.message,
+    breachDirection: record.breachDirection,
+    observedValue: record.observedValue,
+    thresholdValue: record.thresholdValue,
+    isActive: record.isActive,
+    acknowledged: record.acknowledged,
+    acknowledgedBy: record.acknowledgedBy,
+    acknowledgedAt: record.acknowledgedAt === null ? null : new Date(record.acknowledgedAt),
+    triggeredAt: new Date(record.triggeredAt),
+    resolvedAt: record.resolvedAt === null ? null : new Date(record.resolvedAt),
+  };
+}
+
 /** PG-JSON shape for API responses (ISO timestamps like the PostgreSQL rows). */
 export function alarmToJson(record: RtdbAlarmRecord): Record<string, unknown> {
   return {

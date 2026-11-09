@@ -12,6 +12,9 @@ import {
   type LatestRow,
 } from "@/lib/rtdb/live-read";
 import { readTelemetryRange, streamTelemetryRangeDescending } from "@/lib/rtdb/history";
+import { readAlarmCounts, readAlarmHistory, alarmToRow } from "@/lib/rtdb/alarms";
+import { readCommandHistory, commandToRow } from "@/lib/rtdb/commands";
+import { getLatestTelemetry } from "@/lib/rtdb/telemetry";
 import type { RtdbTelemetryRecord } from "@/lib/rtdb/telemetry";
 import type { RtdbAdapter } from "@/lib/rtdb/store";
 
@@ -108,16 +111,29 @@ export async function getDashboard(): Promise<{
   // Group into two compact waves so getDashboard never grabs 5 pool connections at once
   const [{ rows: latest, liveSource }, alarmRows] = await Promise.all([
     latestRows(ids),
-    db
-      .select({
-        ahuId: alarms.ahuId,
-        active: sql<number>`count(*) filter (where ${alarms.isActive})::int`.as("active"),
-        critical: sql<number>`count(*) filter (where ${alarms.isActive} and ${alarms.priority} = 'CRITICAL')::int`.as("critical"),
-        unacked: sql<number>`count(*) filter (where ${alarms.isActive} and not ${alarms.acknowledged})::int`.as("unacked"),
-      })
-      .from(alarms)
-      .where(inArray(alarms.ahuId, ids))
-      .groupBy(alarms.ahuId),
+    (async () => {
+      // Phase 5a primary flip: per-AHU alarm counts come from the RTDB active
+      // index when Firebase is configured; PostgreSQL on any failure.
+      try {
+        const rtdb = await tryGetAhuRtdb();
+        if (rtdb) {
+          const counts = await readAlarmCounts(rtdb, ids);
+          return [...counts.values()];
+        }
+      } catch (err) {
+        console.error("[dashboard] RTDB alarm counts failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+      }
+      return db
+        .select({
+          ahuId: alarms.ahuId,
+          active: sql<number>`count(*) filter (where ${alarms.isActive})::int`.as("active"),
+          critical: sql<number>`count(*) filter (where ${alarms.isActive} and ${alarms.priority} = 'CRITICAL')::int`.as("critical"),
+          unacked: sql<number>`count(*) filter (where ${alarms.isActive} and not ${alarms.acknowledged})::int`.as("unacked"),
+        })
+        .from(alarms)
+        .where(inArray(alarms.ahuId, ids))
+        .groupBy(alarms.ahuId);
+    })(),
   ]);
 
   const [trendRows, cmdRows, filterThresholdRows] = await Promise.all([
@@ -320,7 +336,31 @@ export async function getAhuDetail(ahuId: string) {
           : telemetry[key];
   }
 
-  const [ahuRows, latest, thresholdRows, deviceRows, alarmRows, cmdRows, trendRows, trendSampleRows] =
+  // Phase 5a primary flip: the newest observation, alarm history and command
+  // history read from the RTDB mirror when Firebase is configured, with the
+  // PostgreSQL queries as fallback. Thresholds/devices/trends remain on
+  // PostgreSQL (no RTDB tree yet — Phase 5b).
+  const mirrored = await (async () => {
+    try {
+      const rtdb = await tryGetAhuRtdb();
+      if (!rtdb) return null;
+      const [latestRecord, alarmRecords, commandRecords] = await Promise.all([
+        getLatestTelemetry(rtdb, ahuId),
+        readAlarmHistory(rtdb, ahuId, 60),
+        readCommandHistory(rtdb, ahuId, 25),
+      ]);
+      return {
+        latest: latestRecord ? ([{ ...toLatestRow(latestRecord), ahuId }] as (LatestRow & { ahuId: string })[]) : [],
+        alarms: alarmRecords.map(alarmToRow),
+        commands: commandRecords.map(commandToRow),
+      };
+    } catch (err) {
+      console.error("[detail] RTDB reads failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+      return null;
+    }
+  })();
+
+  const [ahuRows, pgLatest, thresholdRows, deviceRows, pgAlarms, pgCmds, trendRows, trendSampleRows] =
     await Promise.all([
       db.select().from(ahus).where(eq(ahus.id, ahuId)).limit(1),
       db.select().from(telemetry).where(and(eq(telemetry.ahuId, ahuId), authoritativeTelemetry())).orderBy(desc(telemetry.timestamp)).limit(1),
@@ -335,6 +375,9 @@ export async function getAhuDetail(ahuId: string) {
         .where(and(eq(telemetry.ahuId, ahuId), gt(telemetry.timestamp, since), authoritativeTelemetry()))
         .orderBy(telemetry.timestamp) as unknown as Promise<Array<Record<string, unknown>>>,
     ]);
+  const latest = mirrored ? mirrored.latest : pgLatest;
+  const alarmRows = mirrored ? mirrored.alarms : pgAlarms;
+  const cmdRows = mirrored ? mirrored.commands : pgCmds;
   const ahu = ahuRows[0];
   if (!ahu) return null;
   const row = latest[0];

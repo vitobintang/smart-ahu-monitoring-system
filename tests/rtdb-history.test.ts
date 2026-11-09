@@ -3,7 +3,17 @@ import { deepStrictEqual, equal, rejects } from "node:assert/strict";
 
 import { InMemoryRtdb, type RtdbAdapter } from "../src/lib/rtdb/store";
 import { listUtcDays, readTelemetryRange, streamTelemetryRangeDescending } from "../src/lib/rtdb/history";
-import { alarmToJson, applyAlarmResolve, readActiveAlarmRecords, writeRtdbAlarm, type RtdbAlarmRecord } from "../src/lib/rtdb/alarms";
+import {
+  alarmToRow,
+  alarmToJson,
+  applyAlarmResolve,
+  readAlarmCounts,
+  readAlarmHistory,
+  readActiveAlarmRecords,
+  writeRtdbAlarm,
+  type RtdbAlarmRecord,
+} from "../src/lib/rtdb/alarms";
+import { commandToRow, readCommandHistory, writeRtdbCommand, type RtdbCommandRecord } from "../src/lib/rtdb/commands";
 import { auditEntryToJson, distinctAuditActions, filterAuditEntries, writeRtdbAuditLog, type RtdbAuditRecord } from "../src/lib/rtdb/audit";
 import { pruneTelemetryShards, writeTelemetryMirror, type RtdbTelemetryRecord } from "../src/lib/rtdb/telemetry";
 import { buildReportFromRows, getSeries, streamReportCsv, type ReportSampleRow } from "../src/lib/queries";
@@ -304,4 +314,92 @@ test("streamReportCsv streams RTDB shards newest-first; empty range emits header
     streamReportCsv({ ahuId: "AHU-02", from: new Date(T0), to: new Date(T0 + DAY), source: "ALL" }, db),
   );
   equal(empty.trim().split("\n").length, 1, "empty range → header-only");
+});
+
+
+function alarmFixture(id: string, ahuId: string, triggeredAt: number, overrides: Partial<RtdbAlarmRecord> = {}): RtdbAlarmRecord {
+  return {
+    id,
+    ahuId,
+    parameter: "supplyTemp",
+    priority: "HIGH",
+    message: "breach",
+    breachDirection: "HIGH",
+    observedValue: 18,
+    thresholdValue: 16,
+    isActive: true,
+    acknowledged: false,
+    acknowledgedBy: null,
+    acknowledgedAt: null,
+    triggeredAt,
+    resolvedAt: null,
+    ...overrides,
+  };
+}
+
+test("readAlarmCounts aggregates active/critical/unacked per AHU from the active index", async () => {
+  const db = new InMemoryRtdb();
+  await writeRtdbAlarm(db, alarmFixture("a1", "AHU-01", T0, { priority: "CRITICAL" }));
+  await writeRtdbAlarm(db, alarmFixture("a2", "AHU-01", T0 + 1));
+  await writeRtdbAlarm(db, alarmFixture("a3", "AHU-01", T0 + 2, { acknowledged: true, acknowledgedBy: "u", acknowledgedAt: T0 }));
+  await writeRtdbAlarm(db, alarmFixture("a4", "AHU-02", T0 + 3, { priority: "LOW" }));
+  await writeRtdbAlarm(db, alarmFixture("x1", "AHU-09", T0 + 4)); // outside the fleet → ignored
+
+  const counts = await readAlarmCounts(db, ["AHU-01", "AHU-02", "AHU-03"]);
+  deepStrictEqual(counts.get("AHU-01"), { ahuId: "AHU-01", active: 3, critical: 1, unacked: 2 });
+  deepStrictEqual(counts.get("AHU-02"), { ahuId: "AHU-02", active: 1, critical: 0, unacked: 1 });
+  deepStrictEqual(counts.get("AHU-03"), { ahuId: "AHU-03", active: 0, critical: 0, unacked: 0 });
+  equal(counts.has("AHU-09"), false);
+});
+
+test("readAlarmHistory returns the AHU's full history newest-first; alarmToRow maps Dates", async () => {
+  const db = new InMemoryRtdb();
+  await writeRtdbAlarm(db, alarmFixture("h1", "AHU-01", T0));
+  await writeRtdbAlarm(db, alarmFixture("h2", "AHU-02", T0 + 1));
+  await writeRtdbAlarm(db, alarmFixture("h3", "AHU-01", T0 + 5, { isActive: false, resolvedAt: T0 + 9 }));
+
+  const history = await readAlarmHistory(db, "AHU-01", 60);
+  deepStrictEqual(history.map((a) => a.id), ["h3", "h1"], "newest triggered first, other AHUs excluded");
+
+  const row = alarmToRow(history[0]) as { triggeredAt: Date; resolvedAt: Date | null; isActive: boolean };
+  equal(row.triggeredAt instanceof Date, true);
+  equal(row.triggeredAt.getTime(), T0 + 5);
+  equal((row.resolvedAt as Date).getTime(), T0 + 9);
+  equal(row.isActive, false);
+});
+
+function commandFixture(id: string, ahuId: string, createdAt: number): RtdbCommandRecord {
+  return {
+    id,
+    ahuId,
+    userId: "uid-1",
+    userEmail: "op@example.invalid",
+    commandType: "START",
+    payload: { setpoint: 22 },
+    status: "SUCCEEDED",
+    rejectionReason: null,
+    createdAt,
+    updatedAt: createdAt + 1_000,
+    expiresAt: createdAt + 60_000,
+    confirmedAt: createdAt + 2_000,
+  };
+}
+
+test("readCommandHistory returns the AHU's commands newest-first; commandToRow maps Dates", async () => {
+  const db = new InMemoryRtdb();
+  await writeRtdbCommand(db, commandFixture("c1", "AHU-01", T0));
+  await writeRtdbCommand(db, commandFixture("c2", "AHU-02", T0 + 1));
+  await writeRtdbCommand(db, commandFixture("c3", "AHU-01", T0 + 7));
+
+  const history = await readCommandHistory(db, "AHU-01", 25);
+  deepStrictEqual(history.map((c) => c.id), ["c3", "c1"]);
+
+  const row = commandToRow(history[0]) as { createdAt: Date; confirmedAt: Date | null; payload: unknown };
+  equal(row.createdAt instanceof Date, true);
+  equal(row.createdAt.getTime(), T0 + 7);
+  equal((row.confirmedAt as Date).getTime(), T0 + 7 + 2_000, "confirmedAt = createdAt + 2 s");
+  deepStrictEqual(row.payload, { setpoint: 22 });
+
+  const paged = await readCommandHistory(db, "AHU-01", 1);
+  deepStrictEqual(paged.map((c) => c.id), ["c3"]);
 });

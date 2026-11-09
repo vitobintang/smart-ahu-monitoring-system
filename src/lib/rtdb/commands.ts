@@ -119,6 +119,41 @@ export function clearActiveCommand(
   });
 }
 
+/**
+ * Full command history for one AHU, newest created first — the RTDB
+ * replacement for the unit page's `order by created_at desc limit N`
+ * PostgreSQL query. (All command records live under commands/{id}; the set is
+ * operator-scale, so a full-tree read with an in-memory filter is appropriate.)
+ */
+export async function readCommandHistory(rtdb: RtdbAdapter, ahuId: string, limit = 25): Promise<RtdbCommandRecord[]> {
+  const tree = (await rtdb.get<Record<string, RtdbCommandRecord>>(COMMANDS_NODE)) ?? {};
+  return Object.values(tree)
+    .filter((r) => r.ahuId === ahuId)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, limit);
+}
+
+/**
+ * Maps a mirror record onto the PostgreSQL ahu_commands row shape (Date
+ * instances, same field names) so JSON responses keep their exact API shape.
+ */
+export function commandToRow(record: RtdbCommandRecord): Record<string, unknown> {
+  return {
+    id: record.id,
+    ahuId: record.ahuId,
+    userId: record.userId,
+    userEmail: record.userEmail,
+    commandType: record.commandType,
+    payload: record.payload,
+    status: record.status,
+    rejectionReason: record.rejectionReason,
+    createdAt: new Date(record.createdAt),
+    expiresAt: new Date(record.expiresAt),
+    updatedAt: new Date(record.updatedAt),
+    confirmedAt: record.confirmedAt === null ? null : new Date(record.confirmedAt),
+  };
+}
+
 export interface CommandStatusPatch {
   id: string;
   ahuId: string;
