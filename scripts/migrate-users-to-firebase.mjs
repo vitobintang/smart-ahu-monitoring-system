@@ -72,7 +72,7 @@ async function main() {
     SELECT u.id, u.email, u.username, u.full_name, u.role,
            a.encrypted_password, a.email_confirmed_at
     FROM ahu_private.users u
-    LEFT JOIN auth.users a ON a.id = u.id
+    LEFT JOIN auth.users a ON lower(a.email) = lower(u.email)
     ORDER BY u.created_at ASC
   `);
   console.log(`Found ${legacy.rows.length} legacy user(s) in Supabase.`);
