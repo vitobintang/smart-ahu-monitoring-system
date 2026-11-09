@@ -1,7 +1,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { mirrorToRtdb } from "@/lib/rtdb/live-read";
-import { applyAlarmAck } from "@/lib/rtdb/alarms";
+import { mirrorToRtdb, tryGetAhuRtdb } from "@/lib/rtdb/live-read";
+import { alarmToJson, applyAlarmAck, readActiveAlarmRecords } from "@/lib/rtdb/alarms";
 import { alarms } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { publishRealtime } from "@/lib/realtime";
@@ -19,6 +19,26 @@ export async function GET(req: Request) {
     if (state === "active") conds.push(eq(alarms.isActive, true));
     if (state === "resolved") conds.push(eq(alarms.isActive, false));
     if (ahuId) conds.push(eq(alarms.ahuId, ahuId));
+    // Phase 3 Slice 1: the ACTIVE list reads the RTDB alarmsActive index
+    // (resolve/ack transitions already maintained it since Slice D).
+    // Resolved history stays on PostgreSQL until the history backfill lands.
+    if (state === "active") {
+      try {
+        const rtdb = await tryGetAhuRtdb();
+        if (rtdb) {
+          const records = await readActiveAlarmRecords(rtdb);
+          const filtered = ahuId ? records.filter((r) => r.ahuId === ahuId) : records;
+          filtered.sort((a, b) => b.triggeredAt - a.triggeredAt);
+          return Response.json({
+            alarms: filtered.slice(0, 400).map(alarmToJson),
+            activeCount: records.length,
+            state,
+          });
+        }
+      } catch (err) {
+        console.error("[alarms] RTDB active read failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+      }
+    }
     const [rows, counts] = await Promise.all([
       db
         .select()

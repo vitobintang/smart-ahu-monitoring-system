@@ -2,6 +2,8 @@ import { and, desc, eq, like } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLogs } from "@/db/schema";
 import { jsonError, requireAuth } from "@/lib/auth";
+import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
+import { auditEntryToJson, distinctAuditActions, filterAuditEntries, type RtdbAuditRecord } from "@/lib/rtdb/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +18,18 @@ export async function GET(req: Request) {
     const conds = [];
     if (action) conds.push(like(auditLogs.action, `%${action}%`));
     if (entity) conds.push(eq(auditLogs.entity, entity));
+    // Phase 3 Slice 1: RTDB auditLogs first, PostgreSQL fallback on any failure.
+    try {
+      const rtdb = await tryGetAhuRtdb();
+      if (rtdb) {
+        const tree = (await rtdb.get<Record<string, RtdbAuditRecord>>("auditLogs")) ?? {};
+        const entries = Object.values(tree);
+        const logs = filterAuditEntries(entries, { action, entity, limit: Number.isFinite(limit) ? limit : 150 });
+        return Response.json({ logs: logs.map(auditEntryToJson), actions: distinctAuditActions(entries) });
+      }
+    } catch (err) {
+      console.error("[audit] RTDB read failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+    }
     const rows = await db
       .select()
       .from(auditLogs)
