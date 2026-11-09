@@ -21,10 +21,13 @@ const DATABASE_URL = `https://${NAMESPACE}.asia-southeast1.firebasedatabase.app`
 
 async function probeEmulator(): Promise<boolean> {
   try {
+    // ANY HTTP response proves the emulator server is up. (It answers 401 for
+    // unauthenticated REST because database.rules.json locks reads — the tests
+    // themselves connect via the Admin SDK, which bypasses rules entirely.)
     const res = await fetch(`http://${EMULATOR_HOST}/.json?ns=${NAMESPACE}`, {
-      signal: AbortSignal.timeout(1500),
+      signal: AbortSignal.timeout(2500),
     });
-    return res.ok || res.status === 404;
+    return res.status > 0;
   } catch {
     return false;
   }
