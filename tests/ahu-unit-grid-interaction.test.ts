@@ -58,18 +58,14 @@ test("search and clear filter the planned unit cards", async () => {
     assert.ok(setter);
 
     await act(async () => {
-      setter.call(input, "ahu-07");
+      setter.call(input, "gtm-daikin-001");
       input.dispatchEvent(
         new dom.window.Event("input", { bubbles: true }),
       );
     });
 
-    assert.match(container.textContent ?? "", /1 of 7 planned units/);
-    assert.ok(container.querySelector('a[href="/ahu/AHU-07"]'));
-    assert.equal(
-      container.querySelector('a[href="/ahu/AHU-01"]'),
-      null,
-    );
+    assert.match(container.textContent ?? "", /1 of 1 planned units/);
+    assert.ok(container.querySelector('a[href="/ahu/GTM-DAIKIN-001"]'));
 
     await act(async () => {
       setter.call(input, "AHU-99");
@@ -93,7 +89,7 @@ test("search and clear filter the planned unit cards", async () => {
       clear.click();
     });
 
-    assert.match(container.textContent ?? "", /7 of 7 planned units/);
+    assert.match(container.textContent ?? "", /1 of 1 planned units/);
   } finally {
     await act(async () => {
       root.unmount();

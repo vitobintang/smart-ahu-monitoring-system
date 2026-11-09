@@ -16,7 +16,7 @@ import {
 import ReportTrendExample from "../src/components/ReportTrendExample";
 
 const filter: ReportFilter = {
-  ahuId: "AHU-01",
+  ahuId: "GTM-DAIKIN-001",
   source: "SIMULATION",
   parameter: "roomTemp",
   start: "2026-01-01T09:00:00.000Z",
@@ -24,7 +24,7 @@ const filter: ReportFilter = {
 };
 
 const base = {
-  ahuId: "AHU-01",
+  ahuId: "GTM-DAIKIN-001",
   source: "SIMULATION",
   parameter: "roomTemp",
 };

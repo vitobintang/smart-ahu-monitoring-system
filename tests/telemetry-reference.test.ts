@@ -5,7 +5,7 @@ import { validateReferenceTelemetry } from "../src/lib/telemetry-reference";
 
 const referenceMessage = {
   messageId: "message-001",
-  ahuId: "AHU-01",
+  ahuId: "GTM-DAIKIN-001",
   timestamp: "2026-11-01T12:00:00.000Z",
   parameters: { roomTemp: 24.5, humidity: null },
 };
@@ -15,7 +15,7 @@ test("maps the supported reference-shaped subset to the local format", () => {
     ok: true,
     value: {
       messageId: "message-001",
-      ahuId: "AHU-01",
+      ahuId: "GTM-DAIKIN-001",
       measuredAt: "2026-11-01T12:00:00.000Z",
       readings: { roomTemp: 24.5, humidity: null },
     },

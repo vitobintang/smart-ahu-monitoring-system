@@ -156,7 +156,7 @@ export default function LoginPage() {
             </div>
 
             <p className="mt-5 max-w-md text-[13.5px] leading-relaxed text-[#d1def0]">
-              Continuous supervision of <span className="font-mono font-bold text-[#7dd3fc]">7 AHU</span> units across{" "}
+              Continuous supervision of <span className="font-mono font-bold text-[#7dd3fc]">live AHU</span> units across{" "}
               <span className="font-mono font-bold text-[#7dd3fc]">12</span> process parameters, with threshold &amp;
               fault alarming, trend proximity estimation, transactional data logging, and role-based control.
             </p>

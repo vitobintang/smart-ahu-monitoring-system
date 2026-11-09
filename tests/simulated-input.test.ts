@@ -33,7 +33,7 @@ test("rejects invalid syntax rather than guessing a value", () => {
 
 test("sample generation preserves defaults and accepts custom fictional readings", () => {
   const input = {
-    ahuId: "AHU-01",
+    ahuId: "GTM-DAIKIN-001",
     messageId: "simulation-example",
     measuredAt: "2026-01-01T10:00:00.000Z",
   };

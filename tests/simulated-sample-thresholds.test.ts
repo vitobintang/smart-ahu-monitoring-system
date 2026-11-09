@@ -15,7 +15,7 @@ import { createSimulationSample } from "../src/lib/simulation";
 
 function sampleReadings() {
   const result = createSimulationSample({
-    ahuId: "AHU-01",
+    ahuId: "GTM-DAIKIN-001",
     messageId: "simulation-test",
     measuredAt: "2026-01-01T10:00:00.000Z",
   });

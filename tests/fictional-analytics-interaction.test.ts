@@ -73,19 +73,12 @@ test("unit, metric and window filters change only fictional data", async () => {
 
     assert.match(
       container.textContent ?? "",
-      /Fixed invented values for AHU-01/,
-    );
-
-    await choose(0, "AHU-02");
-
-    assert.match(
-      container.textContent ?? "",
-      /Fixed invented values for AHU-02/,
+      /Fixed invented values for GTM-DAIKIN-001/,
     );
 
     assert.match(
       container.textContent ?? "",
-      /Example voltageUnavailable/,
+      /5 included, 1 missing/,
     );
 
     await choose(1, "voltage");
@@ -98,12 +91,12 @@ test("unit, metric and window filters change only fictional data", async () => {
 
     assert.match(
       container.textContent ?? "",
-      /1 included, 2 missing/,
+      /2 included, 1 missing/,
     );
 
     assert.equal(
       container.querySelectorAll("svg line").length,
-      0,
+      1,
     );
 
     assert.equal(requests, 0);

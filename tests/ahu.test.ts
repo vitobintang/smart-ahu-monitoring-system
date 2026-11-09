@@ -9,9 +9,8 @@ import {
   USER_ROLES,
 } from "../src/lib/ahu";
 
-test("there are seven unique AHU identifiers", () => {
-  equal(AHU_IDS.length, 7);
-  equal(new Set(AHU_IDS).size, 7);
+test("the fleet is the single adopted unit", () => {
+  deepStrictEqual([...AHU_IDS], ["GTM-DAIKIN-001"]);
 });
 
 test("there are twelve unique sensor types", () => {

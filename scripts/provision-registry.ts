@@ -1,9 +1,10 @@
 /**
- * provision-registry.ts — one-shot: create the 7-AHU fleet (units, thresholds,
+ * provision-registry.ts — one-shot: create the AHU registry (units, thresholds,
  * simulation gateway devices) directly in Firebase RTDB.
  *
- * Port of the former PostgreSQL seed (src/db/seed.ts, removed in the Phase 5c
- * cutover) for adopting a FRESH/EXISTING Firebase project without PostgreSQL.
+ * Sized for the ADOPTED project: the fleet is the single real unit
+ * `GTM-DAIKIN-001` (the friend's Daikin S21 monitor) living under the
+ * RTDB_PATH_PREFIX namespace — the owner's own root nodes are never touched.
  * Idempotent: existing AHUs/thresholds/devices are left untouched, so it is
  * safe to re-run.
  *
@@ -49,16 +50,25 @@ interface AhuSeed {
 }
 
 const ALL: ParamKey[] = PARAMETERS.map((p) => p.key);
-const without = (...keys: ParamKey[]) => ALL.filter((k) => !keys.includes(k));
 
+/**
+ * The single real unit on the adopted project. All 12 parameters are installed
+ * so the full app (thresholds, trends, simulator, reports) works out of the
+ * box; trim the per-sensor toggles in Admin → Config when a sensor is not
+ * physically present. Floor placement reuses the mapped spot of the former
+ * AHU-01 seed so the 3D facility view has a sensible position.
+ */
 const AHU_SEEDS: AhuSeed[] = [
-  { id: "AHU-01", name: "AHU-01 Cleanroom Supply", location: "Building A — Level 2 · ISO 7 Cleanroom", hasHeater: true, commTimeoutSec: 30, sensors: ALL, setpoint: 21.5, desiredRunState: "RUN" },
-  { id: "AHU-02", name: "AHU-02 Assembly Hall", location: "Building A — Level 1 · Assembly Hall", hasHeater: true, commTimeoutSec: 30, sensors: ALL, setpoint: 22.0, desiredRunState: "RUN" },
-  { id: "AHU-03", name: "AHU-03 Laboratory Wing", location: "Building B — Level 3 · Laboratory Wing", hasHeater: true, commTimeoutSec: 45, sensors: without("voltage"), setpoint: 20.5, desiredRunState: "RUN" },
-  { id: "AHU-04", name: "AHU-04 Packing & Logistics", location: "Building B — Level 1 · Packing Area", hasHeater: true, commTimeoutSec: 60, sensors: without("voltage", "runHours"), setpoint: 23.0, desiredRunState: "RUN" },
-  { id: "AHU-05", name: "AHU-05 Warehouse Comfort", location: "Building C — Ground Floor · Warehouse", hasHeater: false, commTimeoutSec: 45, sensors: without("heaterOutput"), setpoint: 24.0, desiredRunState: "RUN" },
-  { id: "AHU-06", name: "AHU-06 Office Tower Fresh Air", location: "Building C — Level 5 · Office Tower", hasHeater: false, commTimeoutSec: 30, sensors: without("heaterOutput", "coilTemp"), setpoint: 23.5, desiredRunState: "STOP" },
-  { id: "AHU-07", name: "AHU-07 Server Room Precision", location: "Building D — Basement · Server Room", hasHeater: false, commTimeoutSec: 20, sensors: without("heaterOutput", "filterDiffPressure"), setpoint: 19.0, desiredRunState: "RUN" },
+  {
+    id: "GTM-DAIKIN-001",
+    name: "GTM-DAIKIN-001 · Daikin S21 AC",
+    location: "GTM — Daikin S21 monitored unit",
+    hasHeater: false,
+    commTimeoutSec: 30,
+    sensors: ALL,
+    setpoint: 24.0,
+    desiredRunState: "RUN",
+  },
 ];
 
 /* ── bootstrap ───────────────────────────────────────────────────────────── */
@@ -111,7 +121,9 @@ const existingSimAhuIds = new Set(existingDevices.filter((d) => d.sourceType ===
 
 for (const seed of AHU_SEEDS) {
   if (!existingAhus.has(seed.id)) {
-    const mapPos = DEFAULT_AHU_PLACEMENTS[seed.id];
+    // The 3D facility catalog keeps its original placement keys; the real unit
+    // reuses the primary spot.
+    const mapPos = DEFAULT_AHU_PLACEMENTS[seed.id] ?? DEFAULT_AHU_PLACEMENTS["AHU-01"];
     await writeRtdbAhu(rtdb, {
       id: seed.id,
       name: seed.name,
@@ -163,7 +175,7 @@ for (const seed of AHU_SEEDS) {
   }
 
   if (!existingSimAhuIds.has(seed.id)) {
-    const token = `sim_${seed.id.toLowerCase().replace("-", "")}_${randomHex(8)}`;
+    const token = `sim_${seed.id.toLowerCase().replace(/-/g, "")}_${randomHex(8)}`;
     await setRtdbDevice(rtdb, {
       id: randomId(),
       ahuId: seed.id,

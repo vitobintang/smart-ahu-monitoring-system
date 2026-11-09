@@ -7,31 +7,31 @@ import {
   examplePoints,
   summarizeExample,
 } from "../src/lib/fictional-analytics";
+import { AHU_IDS } from "../src/lib/ahu";
 
 import FictionalAnalytics from "../src/components/FictionalAnalytics";
 
-test("fixtures differ by planned unit and are deterministic", () => {
-  const first = examplePoints("AHU-01");
+test("fixtures are deterministic, keyed to the fleet, and reject unknown units", () => {
+  const first = examplePoints(AHU_IDS[0]);
 
   assert.equal(first.length, 6);
-  assert.deepEqual(first, examplePoints("AHU-01"));
-  assert.notDeepEqual(first, examplePoints("AHU-02"));
+  assert.deepEqual(first, examplePoints(AHU_IDS[0]));
   assert.throws(() => examplePoints("AHU-99"));
 });
 
 test("missing examples remain unavailable and are excluded from summaries", () => {
   assert.equal(
-    examplePoints("AHU-01")[3].roomTemp,
+    examplePoints(AHU_IDS[0])[3].roomTemp,
     null,
   );
 
   assert.equal(
-    examplePoints("AHU-02")[5].voltage,
+    examplePoints(AHU_IDS[0])[3].voltage,
     null,
   );
 
   assert.equal(
-    examplePoints("AHU-03")[5].filterPressure,
+    examplePoints(AHU_IDS[0])[3].filterPressure,
     null,
   );
 

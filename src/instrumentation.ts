@@ -14,7 +14,7 @@
  *     (communication-timeout alarms FR-14, command TTL FR-26, trend detection
  *     FR-16)
  *
- * Reference data (7 AHUs, thresholds, devices) is provisioned via
+ * Reference data (AHU registry, thresholds, devices) is provisioned via
  * scripts/backfill-registry.mjs — NOT re-seeded on every boot.
  */
 

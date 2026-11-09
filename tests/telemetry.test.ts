@@ -6,7 +6,7 @@ import { validateTelemetry } from "../src/lib/telemetry";
 
 const validMessage = {
   messageId: "message-001",
-  ahuId: "AHU-01",
+  ahuId: "GTM-DAIKIN-001",
   measuredAt: "2026-11-01T12:00:00.000Z",
   readings: {
     roomTemp: 24.5,

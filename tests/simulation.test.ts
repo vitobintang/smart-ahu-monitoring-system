@@ -5,7 +5,7 @@ import { AHU_IDS } from "../src/lib/ahu";
 import { createSimulationSample } from "../src/lib/simulation";
 
 const input = {
-  ahuId: "AHU-01",
+  ahuId: "GTM-DAIKIN-001",
   messageId: "simulation-001",
   measuredAt: "2026-11-01T12:00:00.000Z",
 };
@@ -16,7 +16,7 @@ test("creates an explicitly labelled synthetic sample", () => {
     sample: {
       source: "SIMULATION",
       message: {
-        ahuId: "AHU-01",
+        ahuId: "GTM-DAIKIN-001",
         messageId: "simulation-001",
         measuredAt: "2026-11-01T12:00:00.000Z",
         readings: { roomTemp: 22, humidity: 50 },
