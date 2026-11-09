@@ -6,6 +6,7 @@ import { PARAM_KEYS, PARAM_MAP, computeAhuStatus, type ParamKey } from "@/lib/do
 import { publishRealtime } from "@/lib/realtime";
 import { authoritativeTelemetry } from "@/lib/source";
 import type { RtdbTelemetryRecord } from "@/lib/rtdb/telemetry";
+import { firebaseEnvConfigured } from "@/lib/rtdb/live-read";
 import {
   confirmCommandsFromReading,
   evaluateFaultAlarm,
@@ -373,7 +374,8 @@ export async function ingestTelemetry(token: string, payload: TelemetryPayload, 
       },
     },
   };
-}
+}
+
 
 /**
  * Phase 2 Slice A: RTDB telemetry mirror (see src/lib/rtdb/telemetry.ts).
@@ -385,11 +387,7 @@ export async function ingestTelemetry(token: string, payload: TelemetryPayload, 
  * Edge instrumentation graph, which must never bundle Node-only code.
  */
 function mirrorTelemetryToRtdb(record: RtdbTelemetryRecord): void {
-  const env = process.env;
-  const firebaseConfigured = Boolean(
-    env.NEXT_PUBLIC_FIREBASE_PROJECT_ID && (env.FIREBASE_SERVICE_ACCOUNT_PATH || env.FIREBASE_SERVICE_ACCOUNT_JSON),
-  );
-  if (!firebaseConfigured) return;
+  if (!firebaseEnvConfigured()) return;
 
   void (async () => {
     const [{ getAhuRtdb }, { writeTelemetryMirror }] = await Promise.all([

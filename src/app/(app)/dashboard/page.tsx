@@ -45,6 +45,7 @@ import { Bars, HealthRow, Progress, Tile, UnitCard, type Card } from "./cards";
 interface Overview {
   cards: Card[];
   totals: { ahus: number; online: number; run: number; fault: number; offline: number; activeAlarms: number; unackedAlarms: number; trendAlerts: number };
+  liveSource?: "rtdb" | "postgres";
   sync: { mode: "CLOUD" | "LOCAL"; pollingIntervalSec: number; queuedItems: number; lastSuccessAt: string | null };
   recentAlarms: { id: string; ahuId: string; parameter: string; priority: string; message: string; triggeredAt: string; acknowledged: boolean; observedValue: number | null }[];
   recentTrends: { id: string; ahuId: string; parameter: string; estimatedMin: number; direction: string; createdAt: string }[];
@@ -596,6 +597,11 @@ export default function DashboardPage() {
                 </div>
                 <div className="space-y-3">
                   <HealthRow icon={<Cloud size={15} />} label="Supabase sync" value={`Polling ${data.sync.pollingIntervalSec}s`} />
+                  <HealthRow
+                    icon={<Database size={15} />}
+                    label="Live data"
+                    value={data.liveSource === "rtdb" ? "Firebase RTDB" : "PostgreSQL"}
+                  />
                   <HealthRow icon={<Database size={15} />} label="Database" value={health.data?.database === "connected" ? "Healthy" : "Warming up"} />
                   <HealthRow icon={<Cpu size={15} />} label="Simulation Engine" value={simFresh ? "Running" : "Idle"} />
                   <HealthRow icon={<Activity size={15} />} label="Trend Analysis" value="Running" />
