@@ -4,7 +4,6 @@ import { deepStrictEqual, equal } from "node:assert/strict";
 import { InMemoryRtdb } from "../src/lib/rtdb/store";
 import { alarmToRow } from "../src/lib/rtdb/alarms";
 import { commandToRow } from "../src/lib/rtdb/commands";
-import { trendToRow } from "../src/lib/rtdb/trends";
 import {
   readRtdbAhu,
   readRtdbAhus,

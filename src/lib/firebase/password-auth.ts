@@ -1,5 +1,10 @@
 import type { LoginInput } from "@/lib/login-input";
-import type { StagedLogin } from "@/lib/login-orchestrator";
+/** A staged, not-yet-committed login session (was login-orchestrator's contract). */
+export type StagedLogin<Session> = {
+  verifiedUserId: string;
+  takeSession: () => Session;
+  discard: () => Promise<void>;
+};
 
 /**
  * Firebase Authentication password sign-in for the staged login pipeline.
