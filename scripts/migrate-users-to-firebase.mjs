@@ -98,7 +98,8 @@ async function main() {
       email: row.email.trim().toLowerCase(),
       emailVerified: Boolean(row.email_confirmed_at),
       displayName: row.full_name || undefined,
-      passwordHash: Buffer.from(row.encrypted_password.replace(/^\$2y\$/, "$2b$")).toString("base64"),
+      // importUsers requires the raw hash bytes as a Buffer (not a base64 string)
+      passwordHash: Buffer.from(row.encrypted_password.replace(/^\$2y\$/, "$2b$"), "utf8"),
     });
   }
 
@@ -160,4 +161,10 @@ main()
     console.error("Migration failed:", err);
     process.exitCode = 1;
   })
-  .finally(() => pgClient.end());
+  .finally(async () => {
+    await pgClient.end().catch(() => {});
+    // firebase-admin leaves gRPC channels open — close the app and exit
+    // explicitly so the script terminates instead of hanging.
+    await app.delete().catch(() => {});
+    process.exit(process.exitCode ?? 0);
+  });
