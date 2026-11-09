@@ -116,9 +116,9 @@ export function toLatestRow(record: RtdbTelemetryRecord): LatestRow {
     coilTemp: n(record.coilTemp),
     damperPosition: n(record.damperPosition),
     current: n(record.current),
-    isCurrentFallback: n(record.isCurrentFallback),
+    isCurrentFallback: Boolean(record.isCurrentFallback),
     voltage: n(record.voltage),
-    isVoltageFallback: n(record.isVoltageFallback),
+    isVoltageFallback: Boolean(record.isVoltageFallback),
     runHours: n(record.runHours),
     heaterOutput: n(record.heaterOutput),
   };
