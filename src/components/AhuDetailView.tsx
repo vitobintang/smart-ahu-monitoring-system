@@ -12,7 +12,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Activity, ArrowDownRight, ArrowUpRight, Check, Clock, Cpu, MapPin, Server, TriangleAlert } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowLeft, ArrowUpRight, Check, Clock, Cpu, MapPin, Server, TriangleAlert } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import type { AhuStatus } from "@/db/schema";
 import { api, fmtDateTime, LOCAL_POLL_MS, timeAgo, usePoll } from "@/lib/client";
 import {
@@ -98,6 +99,13 @@ export default function AhuDetailView({
   canControl: boolean;
   physicalUnlocked: boolean;
 }) {
+  // Context-aware back navigation: links to this page carry ?from=<internal path>
+  // (dashboard cards pass /dashboard, the 3D facility map passes /ahu). Anything
+  // absent or unsafe falls back to the dashboard, the previous hardcoded target.
+  const fromParam = useSearchParams().get("from");
+  const backHref = fromParam && /^\/(?!\/)/.test(fromParam) ? fromParam : "/dashboard";
+  const backLabel =
+    backHref === "/dashboard" ? "Dashboard" : backHref === "/ahu" ? "3D Facility Map" : "Back";
   const [win, setWin] = useState(15);
   const { data, error, loading, reload, paused, setPaused, lastSync } = usePoll<Detail>(
     `/api/ahu/${ahuId}?window=${win}`,
@@ -164,8 +172,12 @@ export default function AhuDetailView({
         <div className="flex flex-col gap-3.5 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-              <Link href="/dashboard" className="font-mono text-[11px] uppercase tracking-wider text-slate-500 hover:text-cyan-300">
-                ← Dashboard
+              <Link
+                href={backHref}
+                className="inline-flex items-center gap-1 font-mono text-[11px] uppercase tracking-wider text-slate-500 transition hover:text-cyan-300"
+                title={`Back to ${backLabel}`}
+              >
+                <ArrowLeft size={12} /> {backLabel}
               </Link>
               <h1 className="font-mono text-lg font-bold tracking-wide text-cyan-300 text-glow-cyan">{ahu.id}</h1>
               <StatusBadge status={computed.status} />
