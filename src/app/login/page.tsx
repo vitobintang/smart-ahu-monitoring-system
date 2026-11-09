@@ -22,30 +22,7 @@ import { api } from "@/lib/client";
 import { BUILD_NOTES, BUILD_STAMP } from "@/lib/build";
 import { Btn, Field, cx, inputClass } from "@/components/ui";
 
-type AuthPhase = "idle" | "verifying" | "redirecting" | "google";
-
-function GoogleMark() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className="h-[17px] w-[17px] flex-none">
-      <path
-        fill="#4285F4"
-        d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58v2.98h3.86c2.26-2.09 3.56-5.17 3.56-8.8Z"
-      />
-      <path
-        fill="#34A853"
-        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-2.98c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.07A12 12 0 0 0 12 24Z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M5.27 14.31A7.2 7.2 0 0 1 4.9 12c0-.8.14-1.58.37-2.31V6.62H1.29A12 12 0 0 0 0 12c0 1.93.46 3.77 1.29 5.38l3.98-3.07Z"
-      />
-      <path
-        fill="#EA4335"
-        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0A12 12 0 0 0 1.29 6.62l3.98 3.07c.95-2.85 3.6-4.94 6.73-4.94Z"
-      />
-    </svg>
-  );
-}
+type AuthPhase = "idle" | "verifying" | "redirecting";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -53,7 +30,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [googleSetupHint, setGoogleSetupHint] = useState(false);
   const [phase, setPhase] = useState<AuthPhase>("idle");
 
   const busy = phase !== "idle";
@@ -62,36 +38,11 @@ export default function LoginPage() {
     router.prefetch("/dashboard");
   }, [router]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const errCode = params.get("error");
-    const detail = params.get("detail");
-    const emailParam = params.get("email");
-    if (!errCode) return;
-
-    if (errCode === "google_not_configured") {
-      setGoogleSetupHint(true);
-      setError("Google Sign-In is ready in the app — enable the Google provider in Firebase Authentication to activate it.");
-    } else if (errCode === "unregistered_google") {
-      setError(
-        emailParam
-          ? `No operator account is registered for ${emailParam}. Ask an Administrator to add this email in Admin → Users first — once registered, both Password and Google Sign-In open the same account.`
-          : "This Google account is not registered yet. Ask an Administrator to add your Gmail address in Admin → Users first.",
-      );
-    } else if (errCode === "google_cancelled") {
-      setError("Google sign-in was cancelled.");
-    } else {
-      setError(detail ? `Google sign-in failed: ${detail}` : "Google sign-in could not be completed. Please try again.");
-    }
-  }, []);
-
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (busy) return;
     setPhase("verifying");
     setError(null);
-    setGoogleSetupHint(false);
     try {
       await api("/api/auth/login", {
         method: "POST",
@@ -106,72 +57,6 @@ export default function LoginPage() {
       window.location.replace("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
-      setPhase("idle");
-    }
-  }
-
-  async function signInWithGoogle() {
-    if (busy) return;
-    setError(null);
-    setGoogleSetupHint(false);
-    setPhase("google");
-    try {
-      // 1) Popup sign-in with the Firebase client SDK (loaded lazily).
-      const { signInWithGooglePopup } = await import("@/lib/firebase/client");
-      const { idToken } = await signInWithGooglePopup();
-
-      // 2) Server verifies the token, resolves the RTDB account, mints the session.
-      const res = await fetch("/api/auth/google", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ idToken }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        error?: string;
-        code?: string;
-        relinkToken?: string;
-      };
-
-      // 3) Google opened a NEW Firebase uid for an already-registered email:
-      //    exchange the one-time relink token and publish the original account's session.
-      if (res.ok && data.relinkToken) {
-        const { relinkWithCustomToken } = await import("@/lib/firebase/client");
-        const relinkIdToken = await relinkWithCustomToken(data.relinkToken);
-        const done = await fetch("/api/auth/google", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ relinkTokenIdToken: relinkIdToken }),
-        });
-        if (!done.ok) {
-          const errData = (await done.json().catch(() => ({}))) as { error?: string };
-          throw new Error(errData.error ?? "Google Sign-In failed");
-        }
-      } else if (!res.ok) {
-        if (data.code === "email_not_registered") {
-          setError(data.error ?? "This Google account is not registered yet.");
-          setPhase("idle");
-          return;
-        }
-        throw new Error(data.error ?? "Google Sign-In failed");
-      }
-
-      setPhase("redirecting");
-      window.location.replace("/dashboard");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Google Sign-In failed";
-      if (/cancelled|canceled|popup.closed|ERR_POPUP/i.test(message)) {
-        setError("Google Sign-In was cancelled.");
-        setPhase("idle");
-        return;
-      }
-      if (/unauthorized-domain/i.test(message)) {
-        setGoogleSetupHint(true);
-        setError("This domain is not yet authorized in Firebase Authentication settings.");
-        setPhase("idle");
-        return;
-      }
-      setError(message);
       setPhase("idle");
     }
   }
@@ -295,7 +180,7 @@ export default function LoginPage() {
                 <Wifi size={15} className="mt-0.5 flex-none text-[#c4b5fd]" />
                 <span>
                   <span className="font-semibold text-white">Firebase Auth &amp; Realtime Database</span> — unified
-                  identity across Email/Username + Password and Google Sign-In
+                  identity across Email/Username + Password
                 </span>
               </li>
             </ul>
@@ -319,10 +204,8 @@ export default function LoginPage() {
               Welcome back
             </h2>
             <p className="mt-1 text-[12px] leading-relaxed text-[#475569]">
-              Sign in with <strong className="font-semibold text-[#12294d]">Google (Gmail)</strong> or your{" "}
-              <strong className="font-semibold text-[#12294d]">Email / Username</strong> &amp;{" "}
-              <strong className="font-semibold text-[#12294d]">Password</strong>. Matching Gmail addresses automatically
-              open the same account.
+              Sign in with your <strong className="font-semibold text-[#12294d]">Email / Username</strong> &amp;{" "}
+              <strong className="font-semibold text-[#12294d]">Password</strong>.
             </p>
 
             <div className="mt-3 flex flex-wrap gap-1.5">
@@ -334,41 +217,6 @@ export default function LoginPage() {
                   <UserCheck size={11} /> {r}
                 </span>
               ))}
-            </div>
-
-            {/* Google / Gmail Sign-In Button */}
-            <div className="mt-4">
-              <button
-                type="button"
-                onClick={signInWithGoogle}
-                disabled={busy}
-                className={cx(
-                  "flex w-full items-center justify-center gap-2.5 rounded-xl border border-[#cbd5e1] bg-white px-4 py-2.5 text-[13px] font-bold text-[#0f172a] shadow-[0_2px_8px_-2px_rgba(15,23,42,0.08)] transition",
-                  busy
-                    ? "cursor-not-allowed opacity-65"
-                    : "hover:border-[#94a3b8] hover:bg-[#f8fafc] active:scale-[0.995]",
-                )}
-              >
-                {phase === "google" ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin text-[#2563eb]" />
-                    Connecting to Google…
-                  </>
-                ) : (
-                  <>
-                    <GoogleMark />
-                    Continue with Google
-                  </>
-                )}
-              </button>
-            </div>
-
-            <div className="my-4 flex items-center gap-3">
-              <div className="h-px flex-1 bg-[#e2e8f0]" />
-              <span className="text-[10.5px] font-bold uppercase tracking-wider text-[#64748b]">
-                or email / username
-              </span>
-              <div className="h-px flex-1 bg-[#e2e8f0]" />
             </div>
 
             <form onSubmit={submit} className="space-y-3.5">
@@ -421,28 +269,8 @@ export default function LoginPage() {
               </Field>
 
               {error ? (
-                <div
-                  className={cx(
-                    "rounded-xl border px-3.5 py-2.5 text-[12px] font-medium",
-                    googleSetupHint
-                      ? "border-amber-200 bg-amber-50 text-amber-900"
-                      : "border-red-200 bg-red-50 text-red-700",
-                  )}
-                >
+                <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-[12px] font-medium text-red-700">
                   <p>{error}</p>
-                  {googleSetupHint ? (
-                    <ol className="mt-2 list-decimal space-y-1 pl-4 text-[11px] text-amber-800">
-                      <li>
-                        In Firebase Console → <strong>Build → Authentication → Sign-in method</strong>, enable the{" "}
-                        <strong>Google</strong> provider and set a project support email.
-                      </li>
-                      <li>
-                        Under <strong>Authentication → Settings → Authorized domains</strong>, add the domain this app
-                        runs on (<code className="rounded bg-amber-100 px-1 py-0.5 font-mono text-[10px]">localhost</code>{" "}
-                        is allowed by default).
-                      </li>
-                    </ol>
-                  ) : null}
                 </div>
               ) : null}
 

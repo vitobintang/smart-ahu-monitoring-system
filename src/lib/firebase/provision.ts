@@ -110,29 +110,3 @@ export async function changeRtdbUsername(uid: string, nextUsername: string): Pro
   const { USERNAMES_NODE } = await import("@/lib/rtdb/users");
   await dbRtdb.remove(`${USERNAMES_NODE}/${current.username}`);
 }
-
-/** Verifies a Google popup ID token. Returns null when invalid/expired. */
-export async function verifyGoogleIdToken(idToken: string): Promise<{ uid: string; email: string | null; emailVerified: boolean; name: string | null } | null> {
-  if (typeof idToken !== "string" || idToken.length < 20 || idToken.split(".").length !== 3) return null;
-  try {
-    const decoded = await (await getFirebaseAuth()).verifyIdToken(idToken, true);
-    if (typeof decoded.uid !== "string" || !decoded.uid) return null;
-    return {
-      uid: decoded.uid,
-      email: typeof decoded.email === "string" ? decoded.email : null,
-      emailVerified: decoded.email_verified === true,
-      name: typeof decoded.name === "string" ? decoded.name : null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * One-time relink token for "Google opened a NEW Firebase uid but an account
- * with this email already exists". The client exchanges it via
- * signInWithCustomToken → the follow-up ID token carries the ORIGINAL uid.
- */
-export async function createRelinkCustomToken(uid: string): Promise<string> {
-  return (await getFirebaseAuth()).createCustomToken(uid, { amr: ["relink"] });
-}

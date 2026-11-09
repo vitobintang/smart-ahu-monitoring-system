@@ -39,7 +39,7 @@ test("entries are independent and details objects survive the round trip", async
       entity: "user:uid-2",
       userId: "uid-2",
       userEmail: "admin@example.invalid",
-      details: { provider: "google" },
+      details: { provider: "password" },
       ipAddress: null,
     }),
   );
@@ -47,7 +47,7 @@ test("entries are independent and details objects survive the round trip", async
   equal((await db.get<RtdbAuditRecord>(auditLogNode("aud-1")))?.action, "COMMAND_REQUESTED");
   const second = (await db.get<RtdbAuditRecord>(auditLogNode("aud-2")))!;
   equal(second.action, "LOGIN_SUCCEEDED");
-  deepStrictEqual(second.details, { provider: "google" });
+  deepStrictEqual(second.details, { provider: "password" });
   equal(second.ipAddress, null);
 
   const root = await db.get<Record<string, unknown>>("auditLogs");
