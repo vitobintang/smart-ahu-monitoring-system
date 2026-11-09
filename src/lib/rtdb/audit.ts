@@ -37,3 +37,31 @@ export function auditLogNode(entryId: string): string {
 export function writeRtdbAuditLog(rtdb: RtdbAdapter, record: RtdbAuditRecord): Promise<void> {
   return rtdb.set(auditLogNode(record.id), record);
 }
+
+/** PG-JSON shape for API responses (ISO timestamp like the PostgreSQL rows). */
+export function auditEntryToJson(record: RtdbAuditRecord): Record<string, unknown> {
+  return { ...record, createdAt: new Date(record.createdAt).toISOString() };
+}
+
+export interface AuditEntryFilter {
+  /** Substring match on action (mirrors the SQL `LIKE '%action%'`). */
+  action?: string | null;
+  /** Exact entity match (mirrors the SQL `= entity`). */
+  entity?: string | null;
+  limit?: number;
+}
+
+/** Newest-first filter over audit entries (pure — shared by the API flip). */
+export function filterAuditEntries(entries: RtdbAuditRecord[], filter: AuditEntryFilter): RtdbAuditRecord[] {
+  const limit = Number.isFinite(filter.limit) ? Number(filter.limit) : 150;
+  return entries
+    .filter((e) => (filter.action ? e.action.includes(filter.action) : true))
+    .filter((e) => (filter.entity ? e.entity === filter.entity : true))
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, limit);
+}
+
+/** Distinct actions across the whole audit tree, sorted (dropdown options). */
+export function distinctAuditActions(entries: RtdbAuditRecord[]): string[] {
+  return [...new Set(entries.map((e) => e.action))].sort();
+}

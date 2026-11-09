@@ -11,6 +11,8 @@ import {
   tryGetAhuRtdb,
   type LatestRow,
 } from "@/lib/rtdb/live-read";
+import { readTelemetryRange } from "@/lib/rtdb/history";
+import type { RtdbAdapter } from "@/lib/rtdb/store";
 
 export const COLUMN: Record<ParamKey, string> = {
   roomTemp: "room_temp",
@@ -27,7 +29,6 @@ export const COLUMN: Record<ParamKey, string> = {
   heaterOutput: "heater_output",
 };
 
-const col = (p: ParamKey) => sql.raw(`"${COLUMN[p]}"`);
 
 export interface AhuCard {
   ahu: AhuRow;
@@ -359,6 +360,159 @@ function bucketFor(rangeMs: number): { trunc: "minute" | "hour" | "day"; label: 
   return { trunc: "day", label: "1-day interval", ms: 86_400_000 };
 }
 
+/** Flattened telemetry sample shared by the report pipeline (PG row or RTDB mirror). */
+export type ReportSampleRow = LatestRow & { ahuId: string };
+
+/**
+ * Phase 3 Slice 1: source-agnostic report range fetch — RTDB history tree
+ * first (day shards read in parallel), full PostgreSQL fallback when Firebase
+ * is unconfigured or the read fails. Rows ascend by measurement timestamp.
+ */
+export async function fetchTelemetryRange(
+  ahuId: string,
+  from: Date,
+  to: Date,
+  source: "ALL" | "PHYSICAL" | "SIMULATION",
+  rtdbOverride?: RtdbAdapter | null,
+): Promise<{ rows: ReportSampleRow[]; liveSource: "rtdb" | "postgres" }> {
+  try {
+    const rtdb = rtdbOverride ?? (await tryGetAhuRtdb());
+    if (rtdb) {
+      const records = await readTelemetryRange(rtdb, ahuId, from.getTime(), to.getTime(), source);
+      return { rows: records.map((r) => ({ ahuId, ...toLatestRow(r) })), liveSource: "rtdb" };
+    }
+  } catch (err) {
+    console.error("[report] RTDB history read failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+  }
+  const conds = [eq(telemetry.ahuId, ahuId), gte(telemetry.timestamp, from), lte(telemetry.timestamp, to)];
+  if (source !== "ALL") conds.push(eq(telemetry.source, source));
+  const pgRows = await db
+    .select()
+    .from(telemetry)
+    .where(and(...conds))
+    .orderBy(telemetry.timestamp);
+  return { rows: pgRows.map((r) => ({ ...r, ahuId })), liveSource: "postgres" };
+}
+
+/** Aggregation value: fallback-marked current/voltage readings are excluded (SQL parity). */
+function validParamValue(row: ReportSampleRow, key: ParamKey): number | null {
+  if (key === "current") return row.isCurrentFallback ? null : row.current;
+  if (key === "voltage") return row.isVoltageFallback ? null : row.voltage;
+  return row[key];
+}
+
+function isRunSample(row: ReportSampleRow): boolean {
+  return row.runState === "RUN" || (row.fanSpeed ?? 0) > 0;
+}
+
+/**
+ * Pure report builder over flattened rows — ONE implementation serves both
+ * the RTDB and PostgreSQL paths (replacing the previous three SQL
+ * aggregates: summary, bucketed averages, samples page). Excluded
+ * fallback-marked values and NULL-ignoring averages match the SQL semantics.
+ */
+export function buildReportFromRows(
+  input: { ahuId: string; from: Date; to: Date; source: "ALL" | "PHYSICAL" | "SIMULATION"; sampleLimit?: number },
+  ahuMeta: {
+    name: string;
+    location: string;
+    controlMode: string;
+    setpoint: number;
+    commTimeoutSec: number;
+    installedSensors: string[];
+  },
+  rows: ReportSampleRow[],
+): ReportResult {
+  const installed = new Set(ahuMeta.installedSensors);
+  const runSamples = rows.filter(isRunSample).length;
+  const physicalRows = rows.filter((r) => r.source === "PHYSICAL").length;
+
+  const stats: ReportStats[] = PARAMETERS.map((p) => {
+    let count = 0;
+    let sum = 0;
+    let min: number | null = null;
+    let max: number | null = null;
+    for (const row of rows) {
+      const v = validParamValue(row, p.key);
+      if (v === null || v === undefined) continue;
+      count += 1;
+      sum += v;
+      if (min === null || v < min) min = v;
+      if (max === null || v > max) max = v;
+    }
+    return {
+      parameter: p.key,
+      label: p.label,
+      unit: p.unit,
+      count,
+      avg: count === 0 ? null : sum / count,
+      min,
+      max,
+      fallbackCount:
+        p.key === "current"
+          ? rows.filter((r) => r.isCurrentFallback).length
+          : p.key === "voltage"
+            ? rows.filter((r) => r.isVoltageFallback).length
+            : 0,
+      installed: installed.has(p.key),
+    };
+  });
+
+  const b = bucketFor(input.to.getTime() - input.from.getTime());
+  const bucketMap = new Map<number, { count: number; runCount: number; sums: Record<string, number>; ns: Record<string, number> }>();
+  for (const row of rows) {
+    const key = Math.floor(row.timestamp.getTime() / b.ms) * b.ms;
+    const cell = bucketMap.get(key) ?? { count: 0, runCount: 0, sums: {}, ns: {} };
+    cell.count += 1;
+    if (isRunSample(row)) cell.runCount += 1;
+    for (const p of PARAMETERS) {
+      const v = validParamValue(row, p.key);
+      if (v === null || v === undefined) continue;
+      cell.sums[p.key] = (cell.sums[p.key] ?? 0) + v;
+      cell.ns[p.key] = (cell.ns[p.key] ?? 0) + 1;
+    }
+    bucketMap.set(key, cell);
+  }
+  const buckets: ReportBucket[] = [...bucketMap.entries()]
+    .sort((a, b2) => a[0] - b2[0])
+    .slice(0, 500)
+    .map(([bucket, cell]) => {
+      const values: Record<string, number | null> = {};
+      for (const p of PARAMETERS) {
+        const n = cell.ns[p.key] ?? 0;
+        values[p.key] = n === 0 ? null : cell.sums[p.key] / n;
+      }
+      return { bucket, count: cell.count, runCount: cell.runCount, values };
+    });
+
+  const limit = input.sampleLimit ?? 400;
+  const ascending = rows.slice(-limit);
+  const samples = ascending.reverse();
+
+  return {
+    ahuId: input.ahuId,
+    ahuName: ahuMeta.name,
+    ahuLocation: ahuMeta.location,
+    controlMode: ahuMeta.controlMode,
+    setpoint: ahuMeta.setpoint,
+    commTimeoutSec: ahuMeta.commTimeoutSec,
+    installedSensorCount: installed.size,
+    from: input.from,
+    to: input.to,
+    source: input.source,
+    totalRows: rows.length,
+    physicalRows,
+    simulationRows: rows.length - physicalRows,
+    runSamples,
+    runProportion: rows.length === 0 ? 0 : runSamples / rows.length,
+    stats,
+    buckets,
+    bucketLabel: b.label,
+    samples: samples as unknown as Array<Record<string, unknown>>,
+    sampleLimit: limit,
+  };
+}
+
 export async function buildReport(input: {
   ahuId: string;
   from: Date;
@@ -366,114 +520,21 @@ export async function buildReport(input: {
   source: "ALL" | "PHYSICAL" | "SIMULATION";
   sampleLimit?: number;
 }): Promise<ReportResult> {
-  const conds = [eq(telemetry.ahuId, input.ahuId), gte(telemetry.timestamp, input.from), lte(telemetry.timestamp, input.to)];
-  if (input.source !== "ALL") conds.push(eq(telemetry.source, input.source));
-  const where = and(...conds);
-
   const ahuRows = await db.select().from(ahus).where(eq(ahus.id, input.ahuId)).limit(1);
   const ahu = ahuRows[0];
-  const installed = new Set(ahu?.installedSensors ?? []);
-
-  const aggFields: Record<string, unknown> = {
-    total: sql<number>`count(*)::int`.as("total"),
-    physical: sql<number>`count(*) filter (where ${telemetry.source} = 'PHYSICAL')::int`.as("physical"),
-    simulation: sql<number>`count(*) filter (where ${telemetry.source} = 'SIMULATION')::int`.as("simulation"),
-    runSamples: sql<number>`count(*) filter (where ${telemetry.runState} = 'RUN' or coalesce(${telemetry.fanSpeed},0) > 0)::int`.as(
-      "run_samples",
-    ),
-  };
-  for (const p of PARAMETERS) {
-    const raw = col(p.key);
-    const c = p.key === "current" ? sql`case when ${telemetry.isCurrentFallback} then null else ${raw} end`
-      : p.key === "voltage" ? sql`case when ${telemetry.isVoltageFallback} then null else ${raw} end` : raw;
-    aggFields[`n_${p.key}`] = sql<number>`count(${c})::int`.as(`n_${p.key}`);
-    aggFields[`avg_${p.key}`] = sql<number | null>`avg(${c})`.as(`avg_${p.key}`);
-    aggFields[`min_${p.key}`] = sql<number | null>`min(${c})`.as(`min_${p.key}`);
-    aggFields[`max_${p.key}`] = sql<number | null>`max(${c})`.as(`max_${p.key}`);
-  }
-  aggFields.fallback_current = sql<number>`count(*) filter (where ${telemetry.isCurrentFallback})::int`.as("fb_current");
-  aggFields.fallback_voltage = sql<number>`count(*) filter (where ${telemetry.isVoltageFallback})::int`.as("fb_voltage");
-
-  const [summary] = await db.select(aggFields as never).from(telemetry).where(where) as unknown as [
-    Record<string, number | null>,
-  ];
-
-  const stats: ReportStats[] = PARAMETERS.map((p) => ({
-    parameter: p.key,
-    label: p.label,
-    unit: p.unit,
-    count: Number(summary?.[`n_${p.key}`] ?? 0),
-    avg: summary?.[`avg_${p.key}`] === null || summary?.[`avg_${p.key}`] === undefined ? null : Number(summary[`avg_${p.key}`]),
-    min: summary?.[`min_${p.key}`] === null || summary?.[`min_${p.key}`] === undefined ? null : Number(summary[`min_${p.key}`]),
-    max: summary?.[`max_${p.key}`] === null || summary?.[`max_${p.key}`] === undefined ? null : Number(summary[`max_${p.key}`]),
-    fallbackCount:
-      p.key === "current"
-        ? Number(summary?.fallback_current ?? 0)
-        : p.key === "voltage"
-          ? Number(summary?.fallback_voltage ?? 0)
-          : 0,
-    installed: installed.has(p.key),
-  }));
-
-  const b = bucketFor(input.to.getTime() - input.from.getTime());
-  const bucketFields: Record<string, unknown> = {
-    bucket: sql<number>`(floor(extract(epoch from ${telemetry.timestamp}) * 1000 / ${b.ms}) * ${b.ms})::bigint`.as("bucket"),
-    count: sql<number>`count(*)::int`.as("samples"),
-    runCount: sql<number>`count(*) filter (where ${telemetry.runState} = 'RUN' or coalesce(${telemetry.fanSpeed},0) > 0)::int`.as(
-      "run_samples",
-    ),
-  };
-  for (const p of PARAMETERS) {
-    const raw = col(p.key);
-    const valid = p.key === "current" ? sql`case when ${telemetry.isCurrentFallback} then null else ${raw} end`
-      : p.key === "voltage" ? sql`case when ${telemetry.isVoltageFallback} then null else ${raw} end` : raw;
-    bucketFields[`v_${p.key}`] = sql<number | null>`avg(${valid})`.as(`v_${p.key}`);
-  }
-
-  const bucketRows = (await db
-    .select(bucketFields as never)
-    .from(telemetry)
-    .where(where)
-    .groupBy(sql.raw("bucket"))
-    .orderBy(sql.raw("bucket"))
-    .limit(500)) as unknown as Record<string, number | null>[];
-
-  const buckets: ReportBucket[] = bucketRows.map((r) => {
-    const values: Record<string, number | null> = {};
-    for (const p of PARAMETERS) values[p.key] = r[`v_${p.key}`] === null || r[`v_${p.key}`] === undefined ? null : Number(r[`v_${p.key}`]);
-    return { bucket: Number(r.bucket), count: Number(r.count ?? 0), runCount: Number(r.runCount ?? 0), values };
-  });
-
-  const limit = input.sampleLimit ?? 400;
-  const sampleRows = await db
-    .select()
-    .from(telemetry)
-    .where(where)
-    .orderBy(desc(telemetry.timestamp))
-    .limit(limit);
-
-  return {
-    ahuId: input.ahuId,
-    ahuName: ahu?.name ?? input.ahuId,
-    ahuLocation: ahu?.location ?? "Facility Mechanical Zone",
-    controlMode: ahu?.controlMode ?? "AUTO",
-    setpoint: ahu?.setpoint ?? 22,
-    commTimeoutSec: ahu?.commTimeoutSec ?? 30,
-    installedSensorCount: installed.size,
-    from: input.from,
-    to: input.to,
-    source: input.source,
-    totalRows: Number(summary?.total ?? 0),
-    physicalRows: Number(summary?.physical ?? 0),
-    simulationRows: Number(summary?.simulation ?? 0),
-    runSamples: Number(summary?.runSamples ?? 0),
-    runProportion: Number(summary?.total ?? 0) === 0 ? 0 : Number(summary?.runSamples ?? 0) / Number(summary.total),
-    stats,
-    buckets,
-    bucketLabel: b.label,
-    samples: sampleRows.map((r) => ({ ...r })),
-    sampleLimit: limit,
-  };
+  const { rows } = await fetchTelemetryRange(input.ahuId, input.from, input.to, input.source);
+  return buildReportFromRows(
+    input,
+    {
+      name: ahu?.name ?? input.ahuId,
+      location: ahu?.location ?? "Facility Mechanical Zone",
+      controlMode: ahu?.controlMode ?? "AUTO",
+      setpoint: ahu?.setpoint ?? 22,
+      commTimeoutSec: ahu?.commTimeoutSec ?? 30,
+      installedSensors: ahu?.installedSensors ?? [],
+    },
+    rows,
+  );
 }
 
 /** Prevent spreadsheet programs executing untrusted text as formulas. */
