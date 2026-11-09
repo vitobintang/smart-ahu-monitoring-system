@@ -76,7 +76,7 @@ function threshold(ahuId: string, parameter: string, overrides: Partial<RtdbThre
 function seedBase(db: InMemoryRtdb, ahuId = "AHU-01", latestTs = T0 - 2_000) {
   db.seed({
     ahus: { [ahuId]: ahu(ahuId) },
-    devices: { [ahuId]: { [`${ahuId.toLowerCase()}-sim`]: device(ahuId) } },
+    gateways: { [ahuId]: { [`${ahuId.toLowerCase()}-sim`]: device(ahuId) } },
     thresholds: { [ahuId]: { supplyTemp: threshold(ahuId, "supplyTemp") } },
     telemetryLatest: {
       [ahuId]: {
@@ -164,7 +164,7 @@ test("createCommandRtdb: OFFLINE rejects everything; SETPOINT bounds enforced", 
 test("createCommandRtdb: an enabled PHYSICAL device locks control (403)", async () => {
   const db = new InMemoryRtdb();
   seedBase(db);
-  db.set("devices/AHU-01/gw-1", device("AHU-01", { id: "gw-1", token: "tok-gw", sourceType: "PHYSICAL" }));
+  db.set("gateways/AHU-01/gw-1", device("AHU-01", { id: "gw-1", token: "tok-gw", sourceType: "PHYSICAL" }));
   const outcome = await createCommandRtdb(db, CMD_REQ, T0);
   equal(outcome.ok, false);
   if (!outcome.ok) equal(outcome.code, "PHYSICAL_LOCKED");
@@ -183,7 +183,7 @@ test("acceptPendingRtdb flips REQUESTED → ACCEPTED; physical gate returns []",
   const record = await db.get<{ status: string }>(`commands/${(created as { commandId: string }).commandId}`);
   equal(record?.status, "ACCEPTED");
 
-  db.set("devices/AHU-01/gw-1", device("AHU-01", { id: "gw-1", token: "tok-gw", sourceType: "PHYSICAL" }));
+  db.set("gateways/AHU-01/gw-1", device("AHU-01", { id: "gw-1", token: "tok-gw", sourceType: "PHYSICAL" }));
   const blocked = await acceptPendingRtdb(db, "AHU-01", T0 + 600);
   deepStrictEqual(blocked, []);
 });
@@ -341,7 +341,7 @@ test("ingestTelemetryRtdb: validation errors return 400 with details; historical
 test("ingestTelemetryRtdb: SIM ingest is blocked while a PHYSICAL gateway is enabled", async () => {
   const db = new InMemoryRtdb();
   seedBase(db);
-  db.set("devices/AHU-01/gw-1", device("AHU-01", { id: "gw-1", token: "tok-gw", sourceType: "PHYSICAL" }));
+  db.set("gateways/AHU-01/gw-1", device("AHU-01", { id: "gw-1", token: "tok-gw", sourceType: "PHYSICAL" }));
   const result = await ingestTelemetryRtdb(db, "tok-AHU-01", { messageId: "m-7", timestamp: new Date(T0).toISOString(), parameters: {} }, T0);
   equal(result.ok, false);
   if (!result.ok) equal(result.status, 409);

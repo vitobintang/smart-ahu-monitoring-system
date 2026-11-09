@@ -20,7 +20,13 @@ import type { RtdbAdapter } from "./store";
  */
 
 export const AHUS_NODE = "ahus";
-export const DEVICES_NODE = "devices";
+/**
+ * Bearer-token gateway registry (who may POST telemetry / which sources are
+ * enabled). Deliberately named `gateways` — the ADOPTED daikinsmart project
+ * already has a root `devices/` node (the owner's Daikin S21 live-state tree,
+ * integrated via rtdb/daikin.ts), and gateway records must never collide with it.
+ */
+export const DEVICES_NODE = "gateways";
 export const THRESHOLDS_NODE = "thresholds";
 
 /** Epoch-ms flattened `ahus` row. */

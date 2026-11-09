@@ -53,10 +53,13 @@ const ALL: ParamKey[] = PARAMETERS.map((p) => p.key);
 
 /**
  * The single real unit on the adopted project. All 12 parameters are installed
- * so the full app (thresholds, trends, simulator, reports) works out of the
- * box; trim the per-sensor toggles in Admin → Config when a sensor is not
- * physically present. Floor placement reuses the mapped spot of the former
- * AHU-01 seed so the 3D facility view has a sensible position.
+ * so the full app (thresholds, trends, reports) works out of the box; trim the
+ * per-sensor toggles in Admin → Config when a sensor is not physically present.
+ *
+ * physicalControlEnabled is TRUE: the app IS the commissioned controller for
+ * this unit — accepted START/STOP/SETPOINT commands write power/setpoint
+ * directly into the owner's root `devices/GTM-DAIKIN-001` node (rtdb/daikin.ts),
+ * and workers sync its live state back through the ingest pipeline.
  */
 const AHU_SEEDS: AhuSeed[] = [
   {
@@ -137,7 +140,7 @@ for (const seed of AHU_SEEDS) {
       desiredRunState: seed.desiredRunState,
       setpoint: seed.setpoint,
       faultCode: null,
-      physicalControlEnabled: false,
+      physicalControlEnabled: true,
       mapX: mapPos?.x ?? null,
       mapZ: mapPos?.z ?? null,
       mapRotation: mapPos?.rotation ?? 0,
@@ -174,6 +177,21 @@ for (const seed of AHU_SEEDS) {
     }
   }
 
+  const existingBridge = existingDevices.find((d) => d.ahuId === seed.id && d.sourceType === "PHYSICAL");
+  if (!existingBridge) {
+    const token = `s21_${seed.id.toLowerCase().replace(/-/g, "")}_${randomHex(8)}`;
+    await setRtdbDevice(rtdb, {
+      id: randomId(),
+      ahuId: seed.id,
+      label: `${seed.id} Daikin S21 Bridge (system)`,
+      token,
+      sourceType: "PHYSICAL",
+      enabled: true,
+      createdAt: now,
+    });
+    createdDevices += 1;
+    simTokens.push(`${seed.id} (physical bridge): ${token}`);
+  }
   if (!existingSimAhuIds.has(seed.id)) {
     const token = `sim_${seed.id.toLowerCase().replace(/-/g, "")}_${randomHex(8)}`;
     await setRtdbDevice(rtdb, {
@@ -186,7 +204,7 @@ for (const seed of AHU_SEEDS) {
       createdAt: now,
     });
     createdDevices += 1;
-    simTokens.push(`${seed.id}: ${token}`);
+    simTokens.push(`${seed.id} (simulation): ${token}`);
   }
 }
 

@@ -72,6 +72,7 @@ const g = globalThis as typeof globalThis & {
   __monitorRunning?: boolean;
   __workerChain?: Promise<void>;
   __lastSimTickAt?: number;
+  __daikinInterval?: NodeJS.Timeout;
   __dbBackoffUntil?: number;
   __dbBackoffStreak?: number;
   __dbDegradedLogged?: boolean;
@@ -302,6 +303,45 @@ export async function simulationTick() {
 const TREND_EVERY_N_TICKS = 3;
 let monitorTickCount = 0;
 
+/**
+ * Daikin S21 integration sampler: reads the OWNER's `devices/{ahuId}` bridge
+ * node (root tree) for every registered unit and feeds mapped samples through
+ * the normal ingest pipeline — telemetry history, latest pointer, threshold
+ * alarms and trends all flow from the owner's live data. Timestamp-keyed
+ * message ids make unchanged bridge states a natural dedup.
+ */
+export async function syncDaikinDevices(now = new Date()): Promise<number> {
+  const rtdb = await requireRtdb();
+  const { readRtdbAhus, readRtdbDevices } = await import("@/lib/rtdb/registry");
+  const { readDaikinDevice, mapDaikinToSample } = await import("@/lib/rtdb/daikin");
+  const { ingestTelemetryRtdb } = await import("@/lib/rtdb/lifecycle");
+
+  const registry = await readRtdbAhus(rtdb);
+  let ingested = 0;
+  for (const ahuId of registry.keys()) {
+    try {
+      const record = await readDaikinDevice(rtdb, ahuId);
+      if (!record) continue; // not a Daikin-bridge unit
+      const bridge = (await readRtdbDevices(rtdb, ahuId)).find((d) => d.sourceType === "PHYSICAL" && d.enabled);
+      if (!bridge) continue; // no commissioned bridge gateway for this unit
+      const sample = mapDaikinToSample(record, ahuId, now.getTime());
+      if (!sample) continue;
+      const result = await ingestTelemetryRtdb(rtdb, bridge.token, {
+        ahuId,
+        messageId: sample.messageId,
+        timestamp: sample.timestampIso,
+        parameters: sample.parameters,
+        runState: sample.runState,
+        setpoint: sample.setpoint ?? null,
+      });
+      if (result.ok && result.status === 200) ingested += 1;
+    } catch (err) {
+      console.error(`[daikin] sync failed for ${ahuId}:`, summarizeErr(err));
+    }
+  }
+  return ingested;
+}
+
 export async function monitorTick() {
   if (g.__monitorRunning) return;
   g.__monitorRunning = true;
@@ -357,6 +397,17 @@ export function startWorkers() {
   g.__workersStarted = true;
   const simInterval = Number(process.env.SIMULATION_INTERVAL_MS ?? 5000);
   const monitorInterval = Number(process.env.MONITOR_INTERVAL_MS ?? 10000);
+
+  // Daikin S21 bridge sampler (owner's live devices tree → ingest pipeline).
+  if (g.__daikinInterval === undefined) {
+    const daikinInterval = Number(process.env.DAIKIN_SYNC_INTERVAL_MS ?? 5000);
+    g.__daikinInterval = setInterval(() => {
+      void runSerializedWorker(async () => {
+        await syncDaikinDevices();
+      }).catch((e) => console.error("[daikin]", summarizeErr(e)));
+    }, daikinInterval);
+    g.__daikinInterval.unref?.();
+  }
 
   if (process.env.SIMULATION_ENABLED !== "false") {
     const t1 = setInterval(() => {
