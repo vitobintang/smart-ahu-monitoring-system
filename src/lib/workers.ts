@@ -398,6 +398,24 @@ export function startWorkers() {
     );
   }, monitorInterval);
   t2.unref?.();
+
+  // Phase 3: RTDB telemetry retention — prune day shards older than
+  // TELEMETRY_RETENTION_DAYS (default 30) every RETENTION_CHECK_MS (default 6 h).
+  // No-op unless Firebase env vars are configured.
+  const retentionDays = Number(process.env.TELEMETRY_RETENTION_DAYS ?? 30);
+  const retentionCheckMs = Number(process.env.RETENTION_CHECK_MS ?? 6 * 3600_000);
+  const t3 = setInterval(() => {
+    void (async () => {
+      const { firebaseEnvConfigured } = await import("@/lib/rtdb/live-read");
+      if (!firebaseEnvConfigured()) return;
+      const { getAhuRtdb } = await import("@/lib/firebase/admin");
+      const { pruneTelemetryShards } = await import("@/lib/rtdb/telemetry");
+      const { AHU_IDS } = await import("@/lib/domain");
+      const removed = await pruneTelemetryShards(await getAhuRtdb(), AHU_IDS, retentionDays);
+      if (removed > 0) console.log(`[retention] pruned ${removed} RTDB telemetry day shard(s)`);
+    })().catch((e) => console.error("[retention]", e instanceof Error ? e.message : e));
+  }, retentionCheckMs);
+  t3.unref?.();
   void runSerializedWorker(() => monitorTick()).catch((e) =>
     console.error("[monitor:prime]", summarizeDbError(e)),
   );

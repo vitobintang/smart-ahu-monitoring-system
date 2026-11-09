@@ -81,3 +81,44 @@ export async function writeTelemetryMirror(rtdb: RtdbAdapter, record: RtdbTeleme
 export function getLatestTelemetry(rtdb: RtdbAdapter, ahuId: string): Promise<RtdbTelemetryRecord | null> {
   return rtdb.get<RtdbTelemetryRecord>(telemetryLatestNode(ahuId));
 }
+
+/** First day RTDB telemetry shards exist for (when this codebase went live). */
+export const TELEMETRY_START_DATE = "2026-11-09";
+
+/**
+ * Retention: removes whole UTC day shards older than `daysToKeep` from now,
+ * for every AHU. Candidate days are derived arithmetically (RTDB has no
+ * keys-only listing through the Admin SDK); removing a nonexistent path is a
+ * no-op, so the sweep is safe to run repeatedly. `telemetryLatest` is never
+ * pruned — it always holds the newest observation per unit.
+ *
+ * Spark plan sizing: ~35 MB/day for the 7-AHU fleet → 30-day retention sits
+ * around 1 GB only if growth doubles; the default 30 keeps comfortable
+ * headroom and is tunable via TELEMETRY_RETENTION_DAYS.
+ */
+export async function pruneTelemetryShards(
+  rtdb: RtdbAdapter,
+  ahuIds: readonly string[],
+  daysToKeep: number,
+  now: number = Date.now(),
+  startDate: string = process.env.RTDB_TELEMETRY_START_DATE ?? TELEMETRY_START_DATE,
+): Promise<number> {
+  const cutoffDay = telemetryDateKey(now - daysToKeep * 86_400_000);
+  const candidates: string[] = [];
+  const cursor = new Date(`${startDate}T00:00:00.000Z`);
+  while (telemetryDateKey(cursor.getTime()) < cutoffDay && candidates.length < 366) {
+    candidates.push(telemetryDateKey(cursor.getTime()));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  let removed = 0;
+  for (const ahuId of ahuIds) {
+    for (const day of candidates) {
+      const shard = await rtdb.get<Record<string, unknown>>(`${TELEMETRY_NODE}/${ahuId}/${day}`);
+      if (shard) {
+        await rtdb.remove(`${TELEMETRY_NODE}/${ahuId}/${day}`);
+        removed += 1;
+      }
+    }
+  }
+  return removed;
+}
