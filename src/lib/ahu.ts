@@ -1,11 +1,5 @@
 export const AHU_IDS = [
-  "AHU-01",
-  "AHU-02",
-  "AHU-03",
-  "AHU-04",
-  "AHU-05",
-  "AHU-06",
-  "AHU-07",
+  "GTM-DAIKIN-001",
 ] as const;
 
 export type AhuId = (typeof AHU_IDS)[number];

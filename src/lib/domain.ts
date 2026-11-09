@@ -54,7 +54,7 @@ export const PARAM_MAP: Record<ParamKey, ParamMeta> = PARAMETERS.reduce(
 
 export const PARAM_KEYS = PARAMETERS.map((p) => p.key);
 
-export const AHU_IDS = ["AHU-01", "AHU-02", "AHU-03", "AHU-04", "AHU-05", "AHU-06", "AHU-07"] as const;
+export const AHU_IDS = ["GTM-DAIKIN-001"] as const;
 
 export const SETPOINT_MIN = 16.0;
 export const SETPOINT_MAX = 30.0;
