@@ -81,8 +81,6 @@ export default function LoginPage() {
       );
     } else if (errCode === "google_cancelled") {
       setError("Google sign-in was cancelled.");
-    } else if (errCode === "supabase_not_configured") {
-      setError("Firebase environment variables are missing.");
     } else {
       setError(detail ? `Google sign-in failed: ${detail}` : "Google sign-in could not be completed. Please try again.");
     }

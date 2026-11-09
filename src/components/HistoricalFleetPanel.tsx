@@ -200,7 +200,7 @@ export default function HistoricalFleetPanel() {
         This dashboard is not protected by login. The existing
         endpoint is designed to require a verified session and
         authorized browser; real access is not yet verified. If a
-        session exists, Load may contact Supabase. An omitted unit has
+        session exists, Load may query the primary database. An omitted unit has
         unknown status, not zero readings or an inferred configuration.
       </p>
 
