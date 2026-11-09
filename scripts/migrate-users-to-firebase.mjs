@@ -44,8 +44,8 @@ if (!serviceAccountPath && !serviceAccountJson) {
   process.exit(1);
 }
 
-const databaseUrl = (process.env.FIREBASE_DATABASE_URL ?? process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL ?? "").trim();
-if (!databaseUrl) {
+const firebaseDatabaseUrl = (process.env.FIREBASE_DATABASE_URL ?? process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL ?? "").trim();
+if (!firebaseDatabaseUrl) {
   console.error(
     "NEXT_PUBLIC_FIREBASE_DATABASE_URL is required (the https://...firebasedatabase.app URL from .env.local).",
   );
@@ -56,7 +56,7 @@ const app = initializeApp({
   credential: serviceAccountPath
     ? cert(JSON.parse(readFileSync(serviceAccountPath, "utf8")))
     : cert(JSON.parse(serviceAccountJson)),
-  databaseURL: databaseUrl,
+  databaseURL: firebaseDatabaseUrl,
 });
 const auth = getAuth(app);
 const rtdb = getDatabase(app);
