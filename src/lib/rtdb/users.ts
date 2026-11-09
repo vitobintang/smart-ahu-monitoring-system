@@ -56,6 +56,12 @@ export class EmailTakenError extends Error {
   }
 }
 
+/** All user profiles, oldest first (the admin user-management list). */
+export async function listAllRtdbUsers(db: RtdbAdapter): Promise<RtdbUser[]> {
+  const tree = (await db.get<Record<string, RtdbUser>>(USERS_NODE)) ?? {};
+  return Object.values(tree).sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+}
+
 export async function getRtdbUserById(db: RtdbAdapter, uid: string): Promise<RtdbUser | null> {
   if (typeof uid !== "string" || !uid.trim() || uid.length > 128) return null;
   return db.get<RtdbUser>(userNode(uid));

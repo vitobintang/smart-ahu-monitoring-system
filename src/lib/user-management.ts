@@ -5,6 +5,10 @@ import type { Role, UserRow } from "@/db/schema";
 import { invalidateSessionCache, safePublicUser, writeAudit } from "@/lib/auth";
 import { ROLES } from "@/lib/domain";
 import { isAdminRole, normalizeUsername } from "@/lib/role-auth";
+import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
+import { auditRtdb } from "@/lib/rtdb/lifecycle";
+import { deleteRtdbUser, getRtdbUserById, type RtdbUser } from "@/lib/rtdb/users";
+import { changeRtdbUsername } from "@/lib/firebase/provision";
 
 type DbClient = typeof db;
 
@@ -60,6 +64,66 @@ export async function updateManagedUser(
 
   if (nextRole === undefined && nextUsername === undefined && nextFullName === undefined) {
     return { ok: false, status: 400, error: "No user changes specified" };
+  }
+
+  // Phase 5b slice 3: user updates are RTDB-native when Firebase is
+  // configured — guards read the users tree, username changes go through the
+  // transactional claim swap, and the audit trail is RTDB-only.
+  try {
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      const target = await getRtdbUserById(rtdb, targetId);
+      if (!target) return { ok: false, status: 404, error: "User account not found" };
+
+      const effectiveRole = nextRole ?? target.role;
+      const effectiveUsername = nextUsername !== undefined ? nextUsername : target.username;
+      const effectiveFullName = nextFullName !== undefined ? nextFullName : target.fullName;
+
+      if (isAdminRole(target.role) && !isAdminRole(effectiveRole)) {
+        if (target.id === input.actor.id) {
+          return { ok: false, status: 409, error: "You cannot demote your own active Administrator account." };
+        }
+        const admins = await countAdminsRtdb(rtdb);
+        if (admins <= 1) {
+          return { ok: false, status: 409, error: "Cannot demote the last remaining Administrator account." };
+        }
+      }
+
+      if (nextUsername !== undefined && nextUsername !== target.username) {
+        await changeRtdbUsername(target.id, nextUsername);
+      }
+
+      const updated = await applyRtdbUserFields(rtdb, target, {
+        role: effectiveRole,
+        username: effectiveUsername,
+        fullName: effectiveFullName,
+      });
+
+      const action = target.role !== updated.role ? "USER_ROLE_CHANGED" : "USER_UPDATED";
+      await auditRtdb(rtdb, {
+        userId: input.actor.id,
+        userEmail: input.actor.email,
+        action,
+        entity: `user:${target.id}`,
+        ipAddress: input.ipAddress ?? null,
+        details: {
+          previousRole: target.role,
+          role: updated.role,
+          previousUsername: target.username ?? null,
+          username: updated.username ?? null,
+          previousFullName: target.fullName,
+          fullName: updated.fullName,
+        },
+      });
+
+      invalidateSessionCache();
+      return { ok: true, status: 200, data: { user: safePublicUser(rtdbToPublic(updated)) } };
+    }
+  } catch (err) {
+    if (err instanceof Error && /already (taken|registered|in use)/i.test(err.message)) {
+      return { ok: false, status: 409, error: err.message };
+    }
+    console.error("[users] RTDB update failed, using PostgreSQL:", err instanceof Error ? err.message : err);
   }
 
   const outcome = await client.transaction(async (tx): Promise<UserLifecycleResult<{ user: UserRow }>> => {
@@ -234,6 +298,40 @@ export async function removeManagedUser(
     };
   }
 
+  // Phase 5b slice 3: RTDB-native removal path (guards + profile deletion
+  // from the users tree; Firebase Auth cleanup stays the caller's job).
+  try {
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      const target = await getRtdbUserById(rtdb, targetId);
+      if (!target) return { ok: false, status: 404, error: "User account not found" };
+      if (isAdminRole(target.role)) {
+        const admins = await countAdminsRtdb(rtdb);
+        if (admins <= 1) {
+          return { ok: false, status: 409, error: "Cannot remove the last remaining Administrator account." };
+        }
+      }
+      await deleteRtdbUser(rtdb, target.id);
+      await auditRtdb(rtdb, {
+        userId: input.actor.id,
+        userEmail: input.actor.email,
+        action: "USER_REMOVED",
+        entity: `user:${target.id}`,
+        ipAddress: input.ipAddress ?? null,
+        details: {
+          email: target.email,
+          username: target.username ?? null,
+          fullName: target.fullName,
+          role: target.role,
+        },
+      });
+      invalidateSessionCache();
+      return { ok: true, status: 200, data: { removedUserId: target.id, role: target.role } };
+    }
+  } catch (err) {
+    console.error("[users] RTDB remove failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+  }
+
   let deletedTarget: UserRow | null = null;
   const outcome = await client.transaction(
     async (tx): Promise<UserLifecycleResult<{ removedUserId: string; role: Role }>> => {
@@ -296,4 +394,36 @@ export async function removeManagedUser(
   }
 
   return outcome;
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 5b: RTDB-native user helpers                                  */
+/* ------------------------------------------------------------------ */
+
+function rtdbToPublic(user: RtdbUser): ReturnType<typeof safePublicUser> {
+  return {
+    id: user.id,
+    email: user.email,
+    username: user.username,
+    fullName: user.fullName,
+    role: user.role,
+    createdAt: user.createdAt,
+  };
+}
+
+async function countAdminsRtdb(rtdb: NonNullable<Awaited<ReturnType<typeof tryGetAhuRtdb>>>): Promise<number> {
+  const { listAllRtdbUsers } = await import("@/lib/rtdb/users");
+  const all = await listAllRtdbUsers(rtdb);
+  return all.filter((u) => isAdminRole(u.role)).length;
+}
+
+async function applyRtdbUserFields(
+  rtdb: NonNullable<Awaited<ReturnType<typeof tryGetAhuRtdb>>>,
+  target: RtdbUser,
+  fields: { role: Role; username: string; fullName: string | null },
+): Promise<RtdbUser> {
+  const next: RtdbUser = { ...target, ...fields, updatedAt: Date.now() };
+  const { userNode } = await import("@/lib/rtdb/users");
+  await rtdb.set(userNode(target.id), next);
+  return next;
 }

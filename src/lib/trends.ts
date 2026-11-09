@@ -407,7 +407,15 @@ export async function runTrendDetection(ahuId: string, now = new Date(), exec: C
       acknowledgedAt: null,
       createdAt: now.getTime(),
     };
-    mirrorToRtdb((rtdb) => writeRtdbTrendAlert(rtdb, record));
+    // Phase 5b slice 3: the alert write is RTDB-native when Firebase is
+    // configured (the PG insert above remains for legacy/test runs).
+    try {
+      const rtdbPrimary = await tryGetAhuRtdb();
+      if (rtdbPrimary) await writeRtdbTrendAlert(rtdbPrimary, record);
+      else mirrorToRtdb((rtdb) => writeRtdbTrendAlert(rtdb, record));
+    } catch (err) {
+      console.error("[trends] RTDB alert write failed:", err instanceof Error ? err.message : err);
+    }
     await writeAudit({
       action: "TREND_ALERT_TRIGGERED",
       entity: `trend:${id}`,

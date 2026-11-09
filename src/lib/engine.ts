@@ -27,7 +27,17 @@ import { mirrorToRtdb } from "@/lib/rtdb/live-read";
 import type { RtdbAdapter } from "@/lib/rtdb/store";
 import { applyCommandStatusPatch, activeSlotFor, claimActiveCommand, writeRtdbCommand, type RtdbCommandRecord } from "@/lib/rtdb/commands";
 import { applyAlarmResolve, writeRtdbAlarm, removeRtdbBreachTimer, removeRtdbBreachTimersForAhu, writeRtdbBreachTimer, type RtdbAlarmRecord } from "@/lib/rtdb/alarms";
-import { patchRtdbAhu } from "@/lib/rtdb/registry";
+import { patchRtdbAhu, readRtdbAhu } from "@/lib/rtdb/registry";
+import {
+  acceptPendingRtdb,
+  auditRtdb,
+  computeRtdbAhuStatus,
+  createCommandRtdb,
+  evaluateCommunicationAlarmRtdb,
+  expireStaleRtdb,
+  failActiveCommandsRtdb,
+} from "@/lib/rtdb/lifecycle";
+import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
 
 /**
  * Phase 2 Slice C: fire-and-forget mirror of command lifecycle transitions
@@ -274,6 +284,34 @@ export async function hasActiveCriticalAlarm(ahuId: string, exec: Client = db): 
 
 /** Recompute and persist FR-04 status for one AHU from its latest telemetry. */
 export async function refreshAhuStatus(ahuId: string, now = new Date(), exec: Client = db) {
+  // Phase 5b slice 3: the sweep computes from RTDB when Firebase is
+  // configured; PostgreSQL remains the legacy fallback below.
+  try {
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      const ahuRecord = await readRtdbAhu(rtdb, ahuId);
+      if (!ahuRecord) return null;
+      const { latest, computed } = await computeRtdbAhuStatus(rtdb, ahuRecord, now.getTime());
+      if (computed.status !== ahuRecord.currentStatus) {
+        await patchRtdbAhu(rtdb, ahuId, { currentStatus: computed.status });
+        await publishRealtime("status", ahuId, { ahuId, status: computed.status, at: now.toISOString() });
+      }
+      if (computed.status === "FAULT") {
+        await failActiveCommandsRtdb(rtdb, ahuId, {
+          nonStopOnly: true,
+          reason: latest?.faultCode
+            ? `Aborted: controller entered FAULT (${latest.faultCode}) during command execution (FR-27)`
+            : "Aborted: critical alarm put unit into FAULT during command execution (FR-27)",
+          now: now.getTime(),
+        });
+      }
+      await evaluateCommunicationAlarmRtdb(rtdb, ahuRecord, computed.ageSec, now.getTime());
+      return { status: computed.status, ageSec: computed.ageSec, lastSeenAt: latest ? new Date(latest.timestamp) : null };
+    }
+  } catch (err) {
+    console.error("[status] RTDB refresh failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+  }
+
   const ahuRows = await exec.select().from(ahus).where(eq(ahus.id, ahuId)).limit(1);
   const ahu = ahuRows[0];
   if (!ahu) return null;
@@ -566,6 +604,12 @@ export async function reconcileAhuSourceTransition(
 /* ------------------------------------------------------------------ */
 
 export async function expireStaleCommands(now = new Date(), exec: Client = db) {
+  try {
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) return expireStaleRtdb(rtdb, now.getTime());
+  } catch (err) {
+    console.error("[commands] RTDB expiry failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+  }
   const stale = await exec.transaction(async (tx) => {
     const stale = await tx
       .update(ahuCommands)
@@ -678,6 +722,19 @@ export async function createCommand(req: CommandRequest): Promise<CommandOutcome
         error: `Setpoint must be a number between ${SETPOINT_MIN.toFixed(1)} and ${SETPOINT_MAX.toFixed(1)} °C`,
       };
     }
+  }
+
+  // Phase 5b slice 3: the full request path (expiry sweep, guards, the
+  // one-active-command transaction claim, desired-state patch, audit) runs
+  // against RTDB when Firebase is configured.
+  try {
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      await expireStaleRtdb(rtdb);
+      return await createCommandRtdb(rtdb, req);
+    }
+  } catch (err) {
+    console.error("[commands] RTDB create failed, using PostgreSQL:", err instanceof Error ? err.message : err);
   }
 
   await expireStaleCommands();
@@ -824,6 +881,15 @@ export async function createCommand(req: CommandRequest): Promise<CommandOutcome
 
 /** Used by the simulator/controller: REQUESTED -> ACCEPTED. */
 export async function acceptPendingCommands(ahuId: string, exec: Client = db) {
+  try {
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      const ids = await acceptPendingRtdb(rtdb, ahuId, Date.now());
+      return ids.map((id) => ({ id }));
+    }
+  } catch (err) {
+    console.error("[commands] RTDB accept failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+  }
   const pending = await exec.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${ahuId}, 0))`);
     const [physical] = await tx

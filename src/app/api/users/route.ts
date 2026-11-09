@@ -11,6 +11,7 @@ import {
   writeAudit,
 } from "@/lib/auth";
 import { ROLES } from "@/lib/domain";
+import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
 import { normalizeUsername, suggestUsernameFromEmail } from "@/lib/role-auth";
 import {
   createFirebaseAuthUser,
@@ -31,17 +32,33 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const actor = await requireAuth("manageUsers");
-    const rows = await db
-      .select({
-        id: users.id,
-        email: users.email,
-        username: users.username,
-        fullName: users.fullName,
-        role: users.role,
-        createdAt: users.createdAt,
-      })
-      .from(users)
-      .orderBy(users.createdAt);
+    // Phase 5b slice 3: the user list reads the RTDB users tree when Firebase
+    // is configured; PostgreSQL remains the fallback.
+    let rows: Array<{ id: string; email: string; username: string | null; fullName: string | null; role: Role; createdAt: Date | number }> = [];
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      const { listAllRtdbUsers } = await import("@/lib/rtdb/users");
+      rows = (await listAllRtdbUsers(rtdb)).map((u) => ({
+        id: u.id,
+        email: u.email,
+        username: u.username,
+        fullName: u.fullName,
+        role: u.role,
+        createdAt: u.createdAt,
+      }));
+    } else {
+      rows = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          username: users.username,
+          fullName: users.fullName,
+          role: users.role,
+          createdAt: users.createdAt,
+        })
+        .from(users)
+        .orderBy(users.createdAt);
+    }
     return Response.json({
       users: rows,
       roles: ROLES,
@@ -137,8 +154,21 @@ export async function POST(req: Request) {
       details: { email, username, role, fullName, authMethod: "password" },
     });
 
-    const [created] = await db.select().from(users).where(eq(users.id, id)).limit(1);
-    return Response.json({ ok: true, user: safePublicUser(created) }, { status: 201 });
+    // Phase 5b slice 3: creation is RTDB-native (provisionRtdbUser) — read
+    // the created profile back from RTDB first, PG mirror as fallback.
+    let created: Record<string, unknown> | undefined;
+    const rtdbCreated = await tryGetAhuRtdb();
+    if (rtdbCreated) {
+      const { getRtdbUserById } = await import("@/lib/rtdb/users");
+      const profile = await getRtdbUserById(rtdbCreated, id);
+      if (profile)
+        created = { id: profile.id, email: profile.email, username: profile.username, fullName: profile.fullName, role: profile.role, createdAt: profile.createdAt };
+    }
+    if (!created) {
+      const [row] = await db.select().from(users).where(eq(users.id, id)).limit(1);
+      created = row;
+    }
+    return Response.json({ ok: true, user: safePublicUser(created as never) }, { status: 201 });
   } catch (err) {
     return jsonError(err);
   }
@@ -189,7 +219,17 @@ export async function PATCH(req: Request) {
       return Response.json({ error: "Password must be at least 8 characters" }, { status: 400 });
     }
 
-    const [target] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+    // Phase 5b slice 3: the password-change target resolves from RTDB first.
+    let target: { id: string; email: string; username: string | null; role: Role } | undefined;
+    const rtdbPassword = await tryGetAhuRtdb();
+    if (rtdbPassword) {
+      const { getRtdbUserById } = await import("@/lib/rtdb/users");
+      const profile = await getRtdbUserById(rtdbPassword, userId);
+      if (profile) target = { id: profile.id, email: profile.email, username: profile.username, role: profile.role };
+    } else {
+      const [row] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+      if (row) target = row;
+    }
     if (!target) {
       return Response.json({ error: "User account not found" }, { status: 404 });
     }

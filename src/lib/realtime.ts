@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { db, summarizeDbError } from "@/db";
 import { syncState, telemetry } from "@/db/schema";
+import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
 
 /**
  * Supabase PostgreSQL is the authoritative data store (replacing the
@@ -75,6 +76,37 @@ export async function getSyncStatus(): Promise<SyncStatusSnapshot> {
   const mode = detectDatabaseSyncMode();
 
   const task = (async (): Promise<SyncStatusSnapshot> => {
+    // Phase 5b slice 3: the sync-health snapshot reports the RTDB primary
+    // (latest telemetry pointer) when Firebase is configured.
+    try {
+      const rtdb = await tryGetAhuRtdb();
+      if (rtdb) {
+        const { listAllRtdbUsers } = await import("@/lib/rtdb/users");
+        void listAllRtdbUsers; // no-op; keep import graph minimal
+        const { getLatestTelemetry } = await import("@/lib/rtdb/telemetry");
+        const { readRtdbAhus } = await import("@/lib/rtdb/registry");
+        const registry = await readRtdbAhus(rtdb);
+        let latestAt: Date | null = null;
+        for (const id of registry.keys()) {
+          const latest = await getLatestTelemetry(rtdb, id);
+          if (latest && (latestAt === null || latest.timestamp > latestAt.getTime())) {
+            latestAt = new Date(latest.timestamp);
+          }
+        }
+        const snapshot: SyncStatusSnapshot = {
+          mode,
+          firebaseConfigured: true,
+          pollingIntervalSec: 5,
+          lastSuccessAt: latestAt ?? new Date(),
+          lastError: null,
+          queuedItems: 0,
+        };
+        g.__ahuSyncStatusCache = { value: snapshot, expiresAt: Date.now() + 5_000 };
+        return snapshot;
+      }
+    } catch (err) {
+      console.error("[sync] RTDB status failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+    }
     try {
       // Sequential single-socket reads prevent acquiring 2 pool slots per session check
       const stateRows = await db.select().from(syncState).where(eq(syncState.id, 1)).limit(1);
