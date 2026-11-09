@@ -461,7 +461,7 @@ export default function AhuIndexPage() {
                 <button
                   type="button"
                   onClick={openAddModal}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#2563eb] to-[#1d6ef2] px-3.5 py-2 text-[12px] font-bold text-white shadow-[0_10px_22px_-8px_rgba(37,99,235,0.85)] transition hover:brightness-105"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-linear-to-r from-[#2563eb] to-[#1d6ef2] px-3.5 py-2 text-[12px] font-bold text-white shadow-[0_10px_22px_-8px_rgba(37,99,235,0.85)] transition hover:brightness-105"
                 >
                   <Plus size={15} /> Add New AHU
                 </button>

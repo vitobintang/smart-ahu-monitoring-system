@@ -78,7 +78,7 @@ export function Tile({
       <div className="flex items-center gap-3 sm:items-start sm:gap-3.5">
         <span
           className={cx(
-            "grid h-10 w-10 flex-none place-items-center rounded-xl bg-gradient-to-br text-white sm:h-14 sm:w-14 sm:rounded-2xl",
+            "grid h-10 w-10 flex-none place-items-center rounded-xl bg-linear-to-brext-white sm:h-14 sm:w-14 sm:rounded-2xl",
             grad,
           )}
           style={{ boxShadow: `0 10px 22px -10px ${glow}` }}
@@ -110,7 +110,7 @@ export function Tile({
       {/* Compact Square Mobile Layout (< sm) */}
       <div className="flex items-start justify-between gap-2 sm:hidden">
         <span
-          className={cx("grid h-10 w-10 flex-none place-items-center rounded-xl bg-gradient-to-br text-white", grad)}
+          className={cx("grid h-10 w-10 flex-none place-items-center rounded-xl bg-linear-to-br text-white", grad)}
           style={{ boxShadow: `0 10px 20px -10px ${glow}` }}
         >
           {tile}
@@ -136,7 +136,7 @@ export function Tile({
       {/* Rich Tablet/Desktop Layout (>= sm) */}
       <div className="hidden items-start gap-3.5 sm:flex">
         <span
-          className={cx("grid h-14 w-14 flex-none place-items-center rounded-2xl bg-gradient-to-br text-white", grad)}
+          className={cx("grid h-14 w-14 flex-none place-items-center rounded-2xl bg-linear-to-br text-white", grad)}
           style={{ boxShadow: `0 12px 26px -10px ${glow}` }}
         >
           {tile}
@@ -170,7 +170,7 @@ export function Bars({ bars, color }: { bars: number[]; color: string }) {
       {(bars.length ? bars : Array.from({ length: 12 }, () => 0.3)).map((h, i) => (
         <span
           key={i}
-          className="w-[6px] rounded-sm"
+          className="w-1.5 rounded-sm"
           style={{ height: `${Math.max(14, h * 100)}%`, background: color, opacity: 0.4 + (i / 12) * 0.6 }}
         />
       ))}
@@ -183,7 +183,7 @@ export function Progress({ value }: { value: number }) {
     <span className="flex w-full items-center">
       <span className="h-2 w-full overflow-hidden rounded-full bg-slate-200/80">
         <span
-          className="block h-full rounded-full bg-gradient-to-r from-[#22c55e] to-[#4ade80]"
+          className="block h-full rounded-full bg-linear-to-r from-[#22c55e] to-[#4ade80]"
           style={{ width: `${Math.round(Math.min(1, Math.max(0, value)) * 100)}%` }}
         />
       </span>
@@ -280,7 +280,7 @@ export function UnitCard({ card }: { card: Card }) {
         </p>
 
         <div className="mt-3 flex items-center gap-3">
-          <div className="relative h-[84px] w-[128px] flex-none">
+          <div className="relative h-[84px] w-32 flex-none">
             <Image
               src="/ahu/unit-iso2.png"
               alt={`${card.ahu.id} unit`}
