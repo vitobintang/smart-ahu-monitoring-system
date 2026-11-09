@@ -57,12 +57,18 @@ export function getFirebaseClientConfig(env: NodeJS.ProcessEnv = process.env): F
     appId: requireValue("NEXT_PUBLIC_FIREBASE_APP_ID", env.NEXT_PUBLIC_FIREBASE_APP_ID ?? STATIC_PUBLIC_CONFIG.appId),
   };
 
-  // Web API keys are `AIza` + 33 chars of base64url. This is a shape check so a
-  // mis-pasted value fails loudly at startup instead of at first sign-in.
-  if (!/^AIza[0-9A-Za-z_-]{33}$/.test(config.apiKey)) {
-    throw new Error("Invalid Firebase configuration: NEXT_PUBLIC_FIREBASE_API_KEY has an unexpected format");
+  // Shape sanity checks so a mis-pasted value fails loudly at startup instead
+  // of at first sign-in. Firebase Web API keys are "AIza" + 35 URL-safe chars
+  // (39 total) today; the range is deliberately lenient to tolerate format
+  // drift — these are public project identifiers, not secrets (see
+  // firebase.google.com/support/guides/security-checklist).
+  if (!/^AIza[0-9A-Za-z_-]{30,50}$/.test(config.apiKey)) {
+    throw new Error(
+      `Invalid Firebase configuration: NEXT_PUBLIC_FIREBASE_API_KEY has an unexpected format ` +
+        `(length ${config.apiKey.length}, expected "AIza…" of 34–54 chars)`,
+    );
   }
-  if (!/^https:\/\/[a-z0-9-]+(-[a-z0-9]+)*(\.[-a-z0-9]+)*\.firebasedatabase\.app\/?$/.test(config.databaseURL)) {
+  if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.firebasedatabase\.app\/?$/.test(config.databaseURL)) {
     throw new Error("Invalid Firebase configuration: NEXT_PUBLIC_FIREBASE_DATABASE_URL must be a *.firebasedatabase.app URL");
   }
   if (!/^[a-z0-9-]{4,40}$/.test(config.projectId)) {

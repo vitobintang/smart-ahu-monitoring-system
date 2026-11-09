@@ -54,7 +54,7 @@ const RATE_LIMIT_CODES = new Set([
 ]);
 
 export function getIdentityToolkitUrl(apiKey: string): string {
-  if (!/^AIza[0-9A-Za-z_-]{33}$/.test(apiKey)) throw new Error("Invalid Firebase web API key");
+  if (!/^AIza[0-9A-Za-z_-]{30,50}$/.test(apiKey)) throw new Error("Invalid Firebase web API key format");
   return `${SIGN_IN_URL}?key=${encodeURIComponent(apiKey)}`;
 }
 
