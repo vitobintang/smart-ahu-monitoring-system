@@ -29,6 +29,17 @@ export async function signInWithGooglePopup(): Promise<{ idToken: string }> {
   return { idToken };
 }
 
+/** Exchanges a one-time server relink token for an ID token of the ORIGINAL account. */
+export async function relinkWithCustomToken(customToken: string): Promise<string> {
+  const [{ initializeApp, getApps, getApp }, { getAuth, signInWithCustomToken }] = await Promise.all([
+    import("firebase/app"),
+    import("firebase/auth"),
+  ]);
+  const app = getApps().length ? getApp() : initializeApp(readClientConfig());
+  const credential = await signInWithCustomToken(getAuth(app), customToken);
+  return credential.user.getIdToken();
+}
+
 /** Signs the browser out of Firebase (the app session cookie is cleared server-side). */
 export async function signOutFirebaseClient(): Promise<void> {
   const [{ getApps, getApp }, { getAuth }] = await Promise.all([import("firebase/app"), import("firebase/auth")]);

@@ -12,7 +12,14 @@ import {
 } from "@/lib/auth";
 import { ROLES } from "@/lib/domain";
 import { normalizeUsername, suggestUsernameFromEmail } from "@/lib/role-auth";
-import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import {
+  createFirebaseAuthUser,
+  deleteFirebaseAuthUser,
+  ensurePgUserMirror,
+  provisionRtdbUser,
+  removeRtdbUser,
+  updateFirebaseUserPassword,
+} from "@/lib/firebase/provision";
 import {
   removeManagedUser,
   revokeAllUserSessions,
@@ -102,33 +109,21 @@ export async function POST(req: Request) {
       );
     }
 
-    const supabase = createSupabaseAdminClient();
-    const { data, error } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-    });
-    if (error || !data.user) {
-      return Response.json(
-        { error: error?.message ? `Could not create Auth user: ${error.message}` : "Could not create Auth user" },
-        { status: 400 },
-      );
-    }
-
-    const id = data.user.id;
+    const id = await createFirebaseAuthUser({ email, password, fullName });
     try {
-      await db.insert(users).values({
-        id,
-        email,
-        username,
-        fullName,
-        role,
-      });
+      await provisionRtdbUser({ uid: id, email, username, fullName, role });
     } catch (err) {
-      const rollback = await supabase.auth.admin.deleteUser(id);
-      if (rollback.error) {
-        console.error("[AHU] Could not roll back Auth user", id, rollback.error.message);
+      await deleteFirebaseAuthUser(id).catch(() => undefined);
+      if (err instanceof Error && /already (taken|registered)/i.test(err.message)) {
+        return Response.json({ error: err.message }, { status: 409 });
       }
+      throw err;
+    }
+    try {
+      await ensurePgUserMirror({ id, email, username, fullName, role });
+    } catch (err) {
+      await removeRtdbUser(id).catch(() => undefined);
+      await deleteFirebaseAuthUser(id).catch(() => undefined);
       throw err;
     }
 
@@ -199,13 +194,11 @@ export async function PATCH(req: Request) {
       return Response.json({ error: "User account not found" }, { status: 404 });
     }
 
-    const supabase = createSupabaseAdminClient();
-    const { error } = await supabase.auth.admin.updateUserById(target.id, {
-      password,
-      email_confirm: true,
-    });
-    if (error) {
-      return Response.json({ error: `Could not update password: ${error.message}` }, { status: 400 });
+    try {
+      await updateFirebaseUserPassword(target.id, password);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not update password";
+      return Response.json({ error: message }, { status: 400 });
     }
 
     invalidateSessionCache();
@@ -250,9 +243,8 @@ export async function DELETE(req: Request) {
       targetUserId: userId,
       ipAddress: ip,
       deleteSupabaseAuthUser: async (authUserId) => {
-        const supabase = createSupabaseAdminClient();
-        const { error } = await supabase.auth.admin.deleteUser(authUserId);
-        if (error) throw new Error(error.message);
+        await deleteFirebaseAuthUser(authUserId);
+        await removeRtdbUser(authUserId).catch(() => undefined);
       },
     });
     if (!res.ok) return Response.json({ error: res.error }, { status: res.status });

@@ -1,29 +1,28 @@
-import { getDatabasePool } from "../db/connection";
 import { USER_ROLES, type UserRole } from "./ahu";
 import type { Permission } from "./permissions";
 import { authorizeRolePermission } from "./role-auth";
-import { createSupabaseServerClient } from "./supabase/server";
+import { getRtdbUserById } from "./rtdb/users";
+import type { RtdbAdapter } from "./rtdb/store";
+
+async function ahuRtdb(): Promise<RtdbAdapter> {
+  const { getAhuRtdb } = await import("./firebase/admin");
+  return getAhuRtdb();
+}
+
+async function verifiedUid(): Promise<string | null> {
+  const { readVerifiedSession } = await import("./firebase/session");
+  const verified = await readVerifiedSession();
+  return verified?.uid ?? null;
+}
 
 export async function authorizeServerRequest(permission: Permission) {
   return authorizeRolePermission<{ id: string; role: UserRole }>(
     {
-      getSupabaseUserId: async () => {
-        const supabase = await createSupabaseServerClient();
-        const { data, error } = await supabase.auth.getUser();
-        return error || !data.user ? null : data.user.id;
-      },
+      getSupabaseUserId: verifiedUid,
       getUserById: async (userId) => {
-        const result = await getDatabasePool().query<{
-          id: string;
-          role: string;
-        }>("SELECT id, role FROM ahu_private.users WHERE id = $1 LIMIT 1", [
-          userId,
-        ]);
-        const row = result.rows[0];
-        if (!row || !USER_ROLES.some((r) => r === row.role)) {
-          return null;
-        }
-        return { id: row.id, role: row.role as UserRole };
+        const profile = await getRtdbUserById(await ahuRtdb(), userId);
+        if (!profile || !USER_ROLES.some((r) => r === profile.role)) return null;
+        return { id: profile.id, role: profile.role as UserRole };
       },
     },
     permission,

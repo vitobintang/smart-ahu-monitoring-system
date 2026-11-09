@@ -16,6 +16,11 @@ next-env.d.ts
 .env*
 !.env.example
 
+# Firebase Admin service account (SERVER-ONLY secret)
+firebase-service-account.json
+*service-account*.json
+!*.service-account.example.json
+
 # Private certificates
 *.pem
 
