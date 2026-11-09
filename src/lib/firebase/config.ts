@@ -23,23 +23,38 @@ export interface FirebaseClientConfig {
   appId: string;
 }
 
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (typeof value !== "string" || !value.trim()) {
+// NEXT_PUBLIC_* values reach the BROWSER bundle only through static member
+// access (`process.env.NEXT_PUBLIC_X`) — bundlers inline those literals at
+// build time. A dynamic lookup like `process.env[name]` cannot be inlined,
+// so in the browser it is always undefined even when .env.local is correct.
+// This snapshot is inlined for client code; server code reads the live env.
+const STATIC_PUBLIC_CONFIG = {
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY ?? "",
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "",
+  databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL ?? "",
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "",
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ?? "",
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? "",
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID ?? "",
+} as const;
+
+function requireValue(name: string, value: string | undefined): string {
+  const trimmed = value?.trim();
+  if (!trimmed) {
     throw new Error(`Missing Firebase configuration: ${name} is not set`);
   }
-  return value.trim();
+  return trimmed;
 }
 
 export function getFirebaseClientConfig(env: NodeJS.ProcessEnv = process.env): FirebaseClientConfig {
   const config: FirebaseClientConfig = {
-    apiKey: requireEnv("NEXT_PUBLIC_FIREBASE_API_KEY"),
-    authDomain: requireEnv("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"),
-    databaseURL: requireEnv("NEXT_PUBLIC_FIREBASE_DATABASE_URL"),
-    projectId: requireEnv("NEXT_PUBLIC_FIREBASE_PROJECT_ID"),
-    storageBucket: requireEnv("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET"),
-    messagingSenderId: requireEnv("NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID"),
-    appId: requireEnv("NEXT_PUBLIC_FIREBASE_APP_ID"),
+    apiKey: requireValue("NEXT_PUBLIC_FIREBASE_API_KEY", env.NEXT_PUBLIC_FIREBASE_API_KEY ?? STATIC_PUBLIC_CONFIG.apiKey),
+    authDomain: requireValue("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN", env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? STATIC_PUBLIC_CONFIG.authDomain),
+    databaseURL: requireValue("NEXT_PUBLIC_FIREBASE_DATABASE_URL", env.NEXT_PUBLIC_FIREBASE_DATABASE_URL ?? STATIC_PUBLIC_CONFIG.databaseURL),
+    projectId: requireValue("NEXT_PUBLIC_FIREBASE_PROJECT_ID", env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? STATIC_PUBLIC_CONFIG.projectId),
+    storageBucket: requireValue("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET", env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ?? STATIC_PUBLIC_CONFIG.storageBucket),
+    messagingSenderId: requireValue("NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID", env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? STATIC_PUBLIC_CONFIG.messagingSenderId),
+    appId: requireValue("NEXT_PUBLIC_FIREBASE_APP_ID", env.NEXT_PUBLIC_FIREBASE_APP_ID ?? STATIC_PUBLIC_CONFIG.appId),
   };
 
   // Web API keys are `AIza` + 33 chars of base64url. This is a shape check so a
