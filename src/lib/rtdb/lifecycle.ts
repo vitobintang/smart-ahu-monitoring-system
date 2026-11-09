@@ -276,7 +276,9 @@ export async function expireStaleRtdb(rtdb: RtdbAdapter, now = Date.now()): Prom
 
 export async function acceptPendingRtdb(rtdb: RtdbAdapter, ahuId: string, now = Date.now()): Promise<string[]> {
   const sources = await readRtdbEnabledSourceTypes(rtdb, ahuId);
-  if (sources.includes("PHYSICAL")) return [];
+  // PHYSICAL stays request-only UNLESS the unit's controller integration is
+  // commissioned (physicalControlEnabled) — e.g. the Daikin S21 bridge write-through.
+  if (sources.includes("PHYSICAL") && !((await readRtdbAhu(rtdb, ahuId))?.physicalControlEnabled)) return [];
   const slotValue = await rtdb.get<{ commandId: string }>(commandActiveNode(ahuId));
   if (!slotValue) return [];
   const record = (await rtdb.get<RtdbCommandRecord>(`commands/${slotValue.commandId}`)) ?? null;
@@ -289,6 +291,22 @@ export async function acceptPendingRtdb(rtdb: RtdbAdapter, ahuId: string, now = 
     entity: `command:${record.id}`,
     details: { ahuId, commandType: record.commandType, transition: "REQUESTED -> ACCEPTED" },
   });
+
+  // Daikin S21 integration: an accepted command is applied to the OWNER's
+  // devices/{ahuId} node immediately (power/setpoint). Failures never break
+  // the command lifecycle — the owner's bridge simply stays on its last state.
+  try {
+    const { readDaikinDevice, writeDaikinControl, commandsToControlPatch } = await import("./daikin");
+    if (await readDaikinDevice(rtdb, ahuId)) {
+      const patch = commandsToControlPatch([record]);
+      if (await writeDaikinControl(rtdb, ahuId, patch)) {
+        console.log(`[daikin] control written to devices/${ahuId}:`, JSON.stringify(patch));
+      }
+    }
+  } catch (err) {
+    console.error(`[daikin] control write-through failed for ${ahuId}:`, err instanceof Error ? err.message : err);
+  }
+
   return [record.id];
 }
 
@@ -446,7 +464,7 @@ export async function createCommandRtdb(rtdb: RtdbAdapter, req: RtdbCommandReque
   }
 
   const sources = await readRtdbEnabledSourceTypes(rtdb, req.ahuId);
-  if (sources.includes("PHYSICAL")) {
+  if (sources.includes("PHYSICAL") && ahu.physicalControlEnabled !== true) {
     return {
       ok: false,
       status: 403,
