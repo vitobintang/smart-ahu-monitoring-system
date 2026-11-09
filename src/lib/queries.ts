@@ -5,6 +5,12 @@ import type { AhuRow } from "@/db/schema";
 import { computeAhuStatus, PARAMETERS, PARAM_KEYS, type ParamKey } from "@/lib/domain";
 import { computeTrendAnalyses } from "@/lib/trends";
 import { authoritativeTelemetry } from "@/lib/source";
+import {
+  readLatestTelemetry,
+  toLatestRow,
+  tryGetAhuRtdb,
+  type LatestRow,
+} from "@/lib/rtdb/live-read";
 
 export const COLUMN: Record<ParamKey, string> = {
   roomTemp: "room_temp",
@@ -45,28 +51,60 @@ export interface AhuCard {
  * Uses a Postgres `DISTINCT ON` + LIMIT so the dashboard never materialises the
  * whole (continuously growing) telemetry table on every poll.
  */
-async function latestRows(ahuIds: string[]) {
+async function pgLatestRows(ahuIds: string[]): Promise<Map<string, LatestRow>> {
+  if (ahuIds.length === 0) return new Map();
   const rows = await db
     .selectDistinctOn([telemetry.ahuId])
     .from(telemetry)
     .where(and(inArray(telemetry.ahuId, ahuIds), authoritativeTelemetry()))
     .orderBy(telemetry.ahuId, desc(telemetry.timestamp))
     .limit(ahuIds.length);
-  const map = new Map<string, typeof telemetry.$inferSelect>();
+  const map = new Map<string, LatestRow>();
   for (const r of rows) if (!map.has(r.ahuId)) map.set(r.ahuId, r);
   return map;
+}
+
+/**
+ * Newest observation per AHU — Phase 2 Slice B: RTDB telemetryLatest first
+ * (live mirror), PostgreSQL backfill for every unit the mirror cannot serve.
+ * Any RTDB failure silently degrades to the pure-PostgreSQL read.
+ */
+async function latestRows(ahuIds: string[]): Promise<{ rows: Map<string, LatestRow>; liveSource: "rtdb" | "postgres" }> {
+  try {
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      const hits = await readLatestTelemetry(rtdb, ahuIds);
+      if (hits.size > 0) {
+        const rows = new Map<string, LatestRow>();
+        for (const [ahuId, record] of hits) rows.set(ahuId, toLatestRow(record));
+        for (const [ahuId, row] of await pgLatestRows(ahuIds.filter((id) => !hits.has(id)))) {
+          rows.set(ahuId, row);
+        }
+        return { rows, liveSource: "rtdb" };
+      }
+    }
+  } catch (err) {
+    console.error("[live-read] RTDB latest read failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+  }
+  return { rows: await pgLatestRows(ahuIds), liveSource: "postgres" };
 }
 
 export async function getDashboard(): Promise<{
   cards: AhuCard[];
   totals: { ahus: number; online: number; run: number; fault: number; offline: number; activeAlarms: number; unackedAlarms: number; trendAlerts: number };
+  liveSource: "rtdb" | "postgres";
 }> {
   const ahuRows = await db.select().from(ahus).orderBy(ahus.id);
   const ids = ahuRows.map((a) => a.id);
-  if (ids.length === 0) return { cards: [], totals: { ahus: 0, online: 0, run: 0, fault: 0, offline: 0, activeAlarms: 0, unackedAlarms: 0, trendAlerts: 0 } };
+  if (ids.length === 0)
+    return {
+      cards: [],
+      liveSource: "postgres",
+      totals: { ahus: 0, online: 0, run: 0, fault: 0, offline: 0, activeAlarms: 0, unackedAlarms: 0, trendAlerts: 0 },
+    };
 
   // Group into two compact waves so getDashboard never grabs 5 pool connections at once
-  const [latest, alarmRows] = await Promise.all([
+  const [{ rows: latest, liveSource }, alarmRows] = await Promise.all([
     latestRows(ids),
     db
       .select({
@@ -162,6 +200,8 @@ export async function getDashboard(): Promise<{
 
   return {
     cards,
+    /** Which store served the newest-observation reads ("rtdb" = Firebase mirror). */
+    liveSource,
     totals: {
       ahus: cards.length,
       online: cards.filter((c) => c.status === "RUN" || c.status === "STOP" || c.status === "FAULT").length,
