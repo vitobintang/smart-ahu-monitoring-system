@@ -8,6 +8,8 @@ import { normalizeRotation } from "@/lib/facility-layout";
 import { resolveAhuPlacement, validatePlatformPlacement } from "@/lib/facility-placement";
 import { getActiveFloorplan } from "@/lib/floorplan-store";
 import { maybePulseWorkers } from "@/lib/workers";
+import { mirrorToRtdb } from "@/lib/rtdb/live-read";
+import { patchRtdbAhu, setRtdbThreshold, type RtdbThresholdRecord } from "@/lib/rtdb/registry";
 
 export const dynamic = "force-dynamic";
 
@@ -163,6 +165,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
     if (Object.keys(patch).length > 0) {
       await db.update(ahus).set(patch).where(eq(ahus.id, id));
+      // Phase 5b dual-write: registry patch mirrors into RTDB.
+      mirrorToRtdb((rtdb) => patchRtdbAhu(rtdb, id, patch));
       const g = globalThis as typeof globalThis & { __ahuOverviewCache?: Map<string, unknown> };
       g.__ahuOverviewCache?.clear();
     }
@@ -203,6 +207,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
         if (!diff) continue;
         thresholdChanges.push({ parameter: th.parameter, from: existing, to: next });
         await db.update(sensorThresholds).set(next).where(eq(sensorThresholds.id, existing.id));
+        // Phase 5b dual-write: threshold update mirrors into RTDB.
+        mirrorToRtdb((rtdb) =>
+          setRtdbThreshold(rtdb, { ...existing, ...next } as unknown as RtdbThresholdRecord),
+        );
       } else {
         await db.insert(sensorThresholds).values({
           id: `${id}:${th.parameter}`,
@@ -215,6 +223,20 @@ export async function PATCH(req: Request, ctx: Ctx) {
           ...next,
         });
         thresholdChanges.push({ parameter: th.parameter, from: null, to: next });
+        // Phase 5b dual-write: threshold creation mirrors into RTDB.
+        mirrorToRtdb((rtdb) =>
+          setRtdbThreshold(rtdb, {
+            id: `${id}:${th.parameter}`,
+            ahuId: id,
+            parameter: th.parameter,
+            unit: meta.unit,
+            label: meta.label,
+            validMin: meta.validMin,
+            validMax: meta.validMax,
+            ...next,
+            updatedAt: Date.now(),
+          }),
+        );
       }
     }
 

@@ -13,7 +13,9 @@ import {
 } from "@/lib/rtdb/live-read";
 import { readTelemetryRange, streamTelemetryRangeDescending } from "@/lib/rtdb/history";
 import { readAlarmCounts, readAlarmHistory, alarmToRow } from "@/lib/rtdb/alarms";
-import { readCommandHistory, commandToRow } from "@/lib/rtdb/commands";
+import { readCommandHistory, commandToRow, readActiveCommandSlots } from "@/lib/rtdb/commands";
+import { readRtdbAhu, readRtdbAhus, readRtdbDevices, readRtdbThresholds, ahuToRow, deviceToRow, thresholdToRow } from "@/lib/rtdb/registry";
+import { readRtdbTrendCounts, readRtdbTrendHistory, readRtdbUnackedTrends, trendToRow } from "@/lib/rtdb/trends";
 import { getLatestTelemetry } from "@/lib/rtdb/telemetry";
 import type { RtdbTelemetryRecord } from "@/lib/rtdb/telemetry";
 import type { RtdbAdapter } from "@/lib/rtdb/store";
@@ -99,7 +101,24 @@ export async function getDashboard(): Promise<{
   totals: { ahus: number; online: number; run: number; fault: number; offline: number; activeAlarms: number; unackedAlarms: number; trendAlerts: number };
   liveSource: "rtdb" | "postgres";
 }> {
-  const ahuRows = await db.select().from(ahus).orderBy(ahus.id);
+  // Phase 5b primary flip: the AHU registry reads from RTDB when Firebase is
+  // configured (backfilled + kept in sync by dual-writes); PostgreSQL fallback.
+  const ahuRows: Array<typeof ahus.$inferSelect> = await (async () => {
+    try {
+      const rtdb = await tryGetAhuRtdb();
+      if (rtdb) {
+        const registry = await readRtdbAhus(rtdb);
+        if (registry.size > 0) {
+          return [...registry.values()]
+            .sort((a, b) => (a.id < b.id ? -1 : 1))
+            .map((r) => ahuToRow(r) as unknown as typeof ahus.$inferSelect);
+        }
+      }
+    } catch (err) {
+      console.error("[dashboard] RTDB registry failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+    }
+    return db.select().from(ahus).orderBy(ahus.id);
+  })();
   const ids = ahuRows.map((a) => a.id);
   if (ids.length === 0)
     return {
@@ -137,24 +156,73 @@ export async function getDashboard(): Promise<{
   ]);
 
   const [trendRows, cmdRows, filterThresholdRows] = await Promise.all([
-    db
-      .select({ ahuId: trendAlerts.ahuId, n: sql<number>`count(*) filter (where not ${trendAlerts.acknowledged})::int` })
-      .from(trendAlerts)
-      .where(inArray(trendAlerts.ahuId, ids))
-      .groupBy(trendAlerts.ahuId),
-    db
-      .select()
-      .from(ahuCommands)
-      .where(and(inArray(ahuCommands.ahuId, ids), inArray(ahuCommands.status, ["REQUESTED", "ACCEPTED"])))
-      .orderBy(desc(ahuCommands.createdAt)),
-    db
-      .select({
-        ahuId: sensorThresholds.ahuId,
-        lowLimit: sensorThresholds.lowLimit,
-        highLimit: sensorThresholds.highLimit,
-      })
-      .from(sensorThresholds)
-      .where(and(inArray(sensorThresholds.ahuId, ids), eq(sensorThresholds.parameter, "filterDiffPressure"))),
+    (async () => {
+      // Phase 5b flip: unacknowledged trend counts from the RTDB tree.
+      try {
+        const rtdb = await tryGetAhuRtdb();
+        if (rtdb) {
+          const counts = await readRtdbTrendCounts(rtdb, ids);
+          return [...counts.entries()].map(([ahuId, n]) => ({ ahuId, n }));
+        }
+      } catch (err) {
+        console.error("[dashboard] RTDB trend counts failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+      }
+      return db
+        .select({ ahuId: trendAlerts.ahuId, n: sql<number>`count(*) filter (where not ${trendAlerts.acknowledged})::int` })
+        .from(trendAlerts)
+        .where(inArray(trendAlerts.ahuId, ids))
+        .groupBy(trendAlerts.ahuId);
+    })() as Promise<Array<{ ahuId: string; n: number }>>,
+    (async () => {
+      // Phase 5b flip: active commands from the RTDB commandActive slots.
+      try {
+        const rtdb = await tryGetAhuRtdb();
+        if (rtdb) {
+          const slots = await readActiveCommandSlots(rtdb);
+          return [...slots.entries()]
+            .filter(([ahuId, slot]) => ids.includes(ahuId) && (slot.status === "REQUESTED" || slot.status === "ACCEPTED"))
+            .map(([ahuId, slot]) => ({
+              id: slot.commandId,
+              ahuId,
+              commandType: slot.commandType,
+              status: slot.status,
+              expiresAt: new Date(slot.expiresAt),
+              createdAt: new Date(slot.createdAt),
+            }))
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        }
+      } catch (err) {
+        console.error("[dashboard] RTDB active commands failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+      }
+      const rows = await db
+        .select()
+        .from(ahuCommands)
+        .where(and(inArray(ahuCommands.ahuId, ids), inArray(ahuCommands.status, ["REQUESTED", "ACCEPTED"])))
+        .orderBy(desc(ahuCommands.createdAt));
+      return rows.map((r) => ({ id: r.id, ahuId: r.ahuId, commandType: r.commandType, status: r.status, expiresAt: r.expiresAt }));
+    })() as Promise<Array<{ id: string; ahuId: string; commandType: string; status: string; expiresAt: Date }>>,
+    (async () => {
+      // Phase 5b flip: filter thresholds from the RTDB tree.
+      try {
+        const rtdb = await tryGetAhuRtdb();
+        if (rtdb) {
+          const all = await readRtdbThresholds(rtdb);
+          return all
+            .filter((t) => t.parameter === "filterDiffPressure" && ids.includes(t.ahuId))
+            .map((t) => ({ ahuId: t.ahuId, lowLimit: t.lowLimit, highLimit: t.highLimit }));
+        }
+      } catch (err) {
+        console.error("[dashboard] RTDB thresholds failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+      }
+      return db
+        .select({
+          ahuId: sensorThresholds.ahuId,
+          lowLimit: sensorThresholds.lowLimit,
+          highLimit: sensorThresholds.highLimit,
+        })
+        .from(sensorThresholds)
+        .where(and(inArray(sensorThresholds.ahuId, ids), eq(sensorThresholds.parameter, "filterDiffPressure")));
+    })() as Promise<Array<{ ahuId: string; lowLimit: number | null; highLimit: number | null }>>,
   ]);
 
   const alarmMap = new Map(alarmRows.map((r) => [r.ahuId, r]));
@@ -336,31 +404,67 @@ export async function getAhuDetail(ahuId: string) {
           : telemetry[key];
   }
 
-  // Phase 5a primary flip: the newest observation, alarm history and command
-  // history read from the RTDB mirror when Firebase is configured, with the
-  // PostgreSQL queries as fallback. Thresholds/devices/trends remain on
-  // PostgreSQL (no RTDB tree yet — Phase 5b).
-  const mirrored = await (async () => {
-    try {
-      const rtdb = await tryGetAhuRtdb();
-      if (!rtdb) return null;
-      const [latestRecord, alarmRecords, commandRecords] = await Promise.all([
-        getLatestTelemetry(rtdb, ahuId),
-        readAlarmHistory(rtdb, ahuId, 60),
-        readCommandHistory(rtdb, ahuId, 25),
-      ]);
-      return {
-        latest: latestRecord ? ([{ ...toLatestRow(latestRecord), ahuId }] as (LatestRow & { ahuId: string })[]) : [],
-        alarms: alarmRecords.map(alarmToRow),
-        commands: commandRecords.map(commandToRow),
-      };
-    } catch (err) {
-      console.error("[detail] RTDB reads failed, using PostgreSQL:", err instanceof Error ? err.message : err);
-      return null;
+  // Phase 5b primary flip: the ENTIRE detail payload — registry row,
+  // thresholds, devices, newest observation, alarm/command/trend history and
+  // the 45-minute trend sample window — reads from RTDB when Firebase is
+  // configured. PostgreSQL is the untouched fallback path below.
+  try {
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      const [ahuRecord, thresholdRecords, deviceRecords, latestRecord, alarmRecords, commandRecords, trendRecords, samples] =
+        await Promise.all([
+          readRtdbAhu(rtdb, ahuId),
+          readRtdbThresholds(rtdb, ahuId),
+          readRtdbDevices(rtdb, ahuId),
+          getLatestTelemetry(rtdb, ahuId),
+          readAlarmHistory(rtdb, ahuId, 60),
+          readCommandHistory(rtdb, ahuId, 25),
+          readRtdbTrendHistory(rtdb, ahuId, 25),
+          readTelemetryRange(rtdb, ahuId, since.getTime(), now.getTime()),
+        ]);
+      if (ahuRecord) {
+        const ahu = ahuToRow(ahuRecord) as unknown as typeof ahus.$inferSelect;
+        const thresholdRows = thresholdRecords.map((r) => thresholdToRow(r) as unknown as typeof sensorThresholds.$inferSelect);
+        const deviceRows = deviceRecords
+          .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+          .map((r) => deviceToRow(r) as unknown as typeof devices.$inferSelect);
+        const latest = latestRecord ? ([{ ...toLatestRow(latestRecord), ahuId }] as (LatestRow & { ahuId: string })[]) : [];
+        const alarmRows = alarmRecords.map(alarmToRow) as unknown as Array<typeof alarms.$inferSelect>;
+        const cmdRows = commandRecords.map(commandToRow) as unknown as Array<typeof ahuCommands.$inferSelect>;
+        const trendRows = trendRecords.map(trendToRow) as unknown as Array<typeof trendAlerts.$inferSelect>;
+        const trendSampleRows: Array<Record<string, unknown>> = samples.map((s) => ({
+          timestamp: new Date(s.timestamp),
+          roomTemp: s.roomTemp,
+          supplyTemp: s.supplyTemp,
+          returnTemp: s.returnTemp,
+          humidity: s.humidity,
+          filterDiffPressure: s.filterDiffPressure,
+          fanSpeed: s.fanSpeed,
+          coilTemp: s.coilTemp,
+          damperPosition: s.damperPosition,
+          current: s.isCurrentFallback ? null : s.current,
+          voltage: s.isVoltageFallback ? null : s.voltage,
+          runHours: s.runHours,
+          heaterOutput: s.heaterOutput,
+        }));
+        const row = latest[0];
+        const computed = computeAhuStatus({
+          lastSeenAt: row?.timestamp ?? null,
+          commTimeoutSec: ahu.commTimeoutSec,
+          faultCode: row?.faultCode ?? null,
+          hasCriticalAlarm: alarmRows.some((a) => a.isActive && a.priority === "CRITICAL"),
+          fanSpeed: row?.fanSpeed ?? null,
+          runState: row?.runState ?? null,
+        });
+        const analyses = computeTrendAnalyses(thresholdRows, trendSampleRows, now);
+        return { ahu, latest: row ?? null, thresholds: thresholdRows, devices: deviceRows, alarms: alarmRows, commands: cmdRows, trends: trendRows, analyses, computed };
+      }
     }
-  })();
+  } catch (err) {
+    console.error("[detail] RTDB reads failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+  }
 
-  const [ahuRows, pgLatest, thresholdRows, deviceRows, pgAlarms, pgCmds, trendRows, trendSampleRows] =
+  const [ahuRows, latest, thresholdRows, deviceRows, alarmRows, cmdRows, trendRows, trendSampleRows] =
     await Promise.all([
       db.select().from(ahus).where(eq(ahus.id, ahuId)).limit(1),
       db.select().from(telemetry).where(and(eq(telemetry.ahuId, ahuId), authoritativeTelemetry())).orderBy(desc(telemetry.timestamp)).limit(1),
@@ -375,9 +479,6 @@ export async function getAhuDetail(ahuId: string) {
         .where(and(eq(telemetry.ahuId, ahuId), gt(telemetry.timestamp, since), authoritativeTelemetry()))
         .orderBy(telemetry.timestamp) as unknown as Promise<Array<Record<string, unknown>>>,
     ]);
-  const latest = mirrored ? mirrored.latest : pgLatest;
-  const alarmRows = mirrored ? mirrored.alarms : pgAlarms;
-  const cmdRows = mirrored ? mirrored.commands : pgCmds;
   const ahu = ahuRows[0];
   if (!ahu) return null;
   const row = latest[0];

@@ -1,5 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
+import { mirrorToRtdb } from "@/lib/rtdb/live-read";
+import { ackRtdbTrendAlert } from "@/lib/rtdb/trends";
 import { trendAlerts } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { publishRealtime } from "@/lib/realtime";
@@ -49,6 +51,8 @@ export async function POST(req: Request) {
       .update(trendAlerts)
       .set({ acknowledged: true, acknowledgedBy: actor.user.id, acknowledgedAt: new Date() })
       .where(eq(trendAlerts.id, trend.id));
+    // Phase 5b dual-write: the acknowledgement mirrors into RTDB.
+    mirrorToRtdb((rtdb) => ackRtdbTrendAlert(rtdb, trend.id, actor.user.id, Date.now()));
 
     const ip = await getClientIp();
     await writeAudit({

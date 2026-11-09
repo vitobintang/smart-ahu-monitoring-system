@@ -125,6 +125,12 @@ export function clearActiveCommand(
  * PostgreSQL query. (All command records live under commands/{id}; the set is
  * operator-scale, so a full-tree read with an in-memory filter is appropriate.)
  */
+/** The fleet's active-command slots keyed by AHU (dashboard chips). */
+export async function readActiveCommandSlots(rtdb: RtdbAdapter): Promise<Map<string, RtdbActiveCommandSlot>> {
+  const tree = (await rtdb.get<Record<string, RtdbActiveCommandSlot>>(COMMAND_ACTIVE_NODE)) ?? {};
+  return new Map(Object.entries(tree));
+}
+
 export async function readCommandHistory(rtdb: RtdbAdapter, ahuId: string, limit = 25): Promise<RtdbCommandRecord[]> {
   const tree = (await rtdb.get<Record<string, RtdbCommandRecord>>(COMMANDS_NODE)) ?? {};
   return Object.values(tree)

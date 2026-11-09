@@ -6,6 +6,8 @@ import type { DataSource } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { readAuthoritativeSource, reconcileAhuSourceTransition, refreshAhuStatus } from "@/lib/engine";
 import { resetSimulatorUnit, simulationTick } from "@/lib/workers";
+import { mirrorToRtdb } from "@/lib/rtdb/live-read";
+import { removeRtdbDevice, setRtdbDevice, type RtdbDeviceRecord } from "@/lib/rtdb/registry";
 
 export const dynamic = "force-dynamic";
 
@@ -86,6 +88,11 @@ export async function POST(req: Request) {
           tx,
         );
       });
+
+      // Phase 5b dual-write: the toggled device mirrors into RTDB.
+      mirrorToRtdb((rtdb) =>
+        setRtdbDevice(rtdb, { ...existing, enabled: nextEnabled, createdAt: existing.createdAt.getTime() } as RtdbDeviceRecord),
+      );
 
       if (prevSource === "SIMULATION" && nextSource !== "SIMULATION") {
         resetSimulatorUnit(existing.ahuId);
@@ -182,6 +189,11 @@ export async function POST(req: Request) {
       );
     });
 
+    // Phase 5b dual-write: the provisioned device mirrors into RTDB.
+    mirrorToRtdb((rtdb) =>
+      setRtdbDevice(rtdb, { id, ahuId, label: cleanLabel, token, sourceType, enabled: true, createdAt: Date.now() }),
+    );
+
     if (prevSource === "SIMULATION" && nextSource !== "SIMULATION") {
       resetSimulatorUnit(ahuId);
     }
@@ -249,6 +261,9 @@ export async function DELETE(req: Request) {
         tx,
       );
     });
+
+    // Phase 5b dual-write: the removed device is deleted from RTDB.
+    mirrorToRtdb((rtdb) => removeRtdbDevice(rtdb, existing.ahuId, existing.id));
 
     if (prevSource === "SIMULATION" && nextSource !== "SIMULATION") {
       resetSimulatorUnit(existing.ahuId);

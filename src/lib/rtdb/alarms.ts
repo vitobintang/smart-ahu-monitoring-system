@@ -62,6 +62,33 @@ export async function writeRtdbAlarm(rtdb: RtdbAdapter, record: RtdbAlarmRecord)
   ]);
 }
 
+/**
+ * Breach-timer tree (Phase 5b) — the engine's alarm debounce state, previously
+ * the PostgreSQL `alarm_breach_timers` table. Nested so an AHU-wide reset
+ * (used when a unit goes OFFLINE or its alarms are force-resolved) is a single
+ * node remove:
+ *   alarmBreachTimers/{ahuId}/{parameter}:{DIR} → { firstAt (epoch-ms) }
+ */
+export const BREACH_TIMERS_NODE = "alarmBreachTimers";
+
+export async function readRtdbBreachTimer(rtdb: RtdbAdapter, ahuId: string, parameter: string, direction: string): Promise<number | null> {
+  const rec = await rtdb.get<{ firstAt: number }>(`${BREACH_TIMERS_NODE}/${ahuId}/${parameter}:${direction}`);
+  return rec ? rec.firstAt : null;
+}
+
+export async function writeRtdbBreachTimer(rtdb: RtdbAdapter, ahuId: string, parameter: string, direction: string, firstAt: number): Promise<void> {
+  await rtdb.set(`${BREACH_TIMERS_NODE}/${ahuId}/${parameter}:${direction}`, { firstAt });
+}
+
+export async function removeRtdbBreachTimer(rtdb: RtdbAdapter, ahuId: string, parameter: string, direction: string): Promise<void> {
+  await rtdb.remove(`${BREACH_TIMERS_NODE}/${ahuId}/${parameter}:${direction}`);
+}
+
+/** Clears every timer for one AHU (the `delete … where id like 'AHU:%'` equivalent). */
+export async function removeRtdbBreachTimersForAhu(rtdb: RtdbAdapter, ahuId: string): Promise<void> {
+  await rtdb.remove(`${BREACH_TIMERS_NODE}/${ahuId}`);
+}
+
 /** Reads the full records of every alarm currently marked active. */
 export async function readActiveAlarmRecords(rtdb: RtdbAdapter): Promise<RtdbAlarmRecord[]> {
   const index = (await rtdb.get<Record<string, boolean>>(ALARMS_ACTIVE_NODE)) ?? {};

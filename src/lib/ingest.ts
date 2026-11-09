@@ -1,5 +1,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { mirrorToRtdb } from "@/lib/rtdb/live-read";
+import { patchRtdbAhu } from "@/lib/rtdb/registry";
 import { alarmBreachTimers, ahus, alarms, devices, sensorThresholds, telemetry } from "@/db/schema";
 import type { AhuRow } from "@/db/schema";
 import { PARAM_KEYS, PARAM_MAP, computeAhuStatus, type ParamKey } from "@/lib/domain";
@@ -336,6 +338,17 @@ export async function ingestTelemetry(token: string, payload: TelemetryPayload, 
       runState,
       faultCode,
     });
+    // Phase 5b dual-write: the registry fields ingest maintains (last-seen,
+    // fault code, control mode, setpoint, computed status) mirror into RTDB.
+    mirrorToRtdb((rtdb) =>
+      patchRtdbAhu(rtdb, ahuId, {
+        lastSeenAt: (ts as Date).getTime(),
+        faultCode,
+        controlMode: controlMode ?? ahu.controlMode,
+        setpoint: typeof payload.setpoint === "number" ? payload.setpoint : ahu.setpoint,
+        currentStatus: newStatus,
+      }),
+    );
   }
 
   if (sourceConflict)

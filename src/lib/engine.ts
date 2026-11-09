@@ -26,7 +26,8 @@ import { authoritativeTelemetry } from "@/lib/source";
 import { mirrorToRtdb } from "@/lib/rtdb/live-read";
 import type { RtdbAdapter } from "@/lib/rtdb/store";
 import { applyCommandStatusPatch, activeSlotFor, claimActiveCommand, writeRtdbCommand, type RtdbCommandRecord } from "@/lib/rtdb/commands";
-import { applyAlarmResolve, writeRtdbAlarm, type RtdbAlarmRecord } from "@/lib/rtdb/alarms";
+import { applyAlarmResolve, writeRtdbAlarm, removeRtdbBreachTimer, removeRtdbBreachTimersForAhu, writeRtdbBreachTimer, type RtdbAlarmRecord } from "@/lib/rtdb/alarms";
+import { patchRtdbAhu } from "@/lib/rtdb/registry";
 
 /**
  * Phase 2 Slice C: fire-and-forget mirror of command lifecycle transitions
@@ -177,6 +178,8 @@ export async function evaluateThresholdAlarms(
       await client
         .delete(alarmBreachTimers)
         .where(inArray(alarmBreachTimers.id, [`${ahu.id}:${th.parameter}:HIGH`, `${ahu.id}:${th.parameter}:LOW`]));
+      mirrorCommand((rtdb) => removeRtdbBreachTimer(rtdb, ahu.id, th.parameter, "HIGH"));
+      mirrorCommand((rtdb) => removeRtdbBreachTimer(rtdb, ahu.id, th.parameter, "LOW"));
       continue;
     }
     let dir: "HIGH" | "LOW" | null = null;
@@ -195,6 +198,8 @@ export async function evaluateThresholdAlarms(
       await client
         .delete(alarmBreachTimers)
         .where(inArray(alarmBreachTimers.id, [`${ahu.id}:${th.parameter}:HIGH`, `${ahu.id}:${th.parameter}:LOW`]));
+      mirrorCommand((rtdb) => removeRtdbBreachTimer(rtdb, ahu.id, th.parameter, "HIGH"));
+      mirrorCommand((rtdb) => removeRtdbBreachTimer(rtdb, ahu.id, th.parameter, "LOW"));
       await resolveAlarm(client, ahu.id, th.parameter, "HIGH");
       await resolveAlarm(client, ahu.id, th.parameter, "LOW");
       continue;
@@ -203,8 +208,10 @@ export async function evaluateThresholdAlarms(
     const key = `${ahu.id}:${th.parameter}:${dir}`;
     const opposite = `${ahu.id}:${th.parameter}:${dir === "HIGH" ? "LOW" : "HIGH"}`;
     await client.delete(alarmBreachTimers).where(eq(alarmBreachTimers.id, opposite));
+    mirrorCommand((rtdb) => removeRtdbBreachTimer(rtdb, ahu.id, th.parameter, dir === "HIGH" ? "LOW" : "HIGH"));
     await resolveAlarm(client, ahu.id, th.parameter, dir === "HIGH" ? "LOW" : "HIGH");
     await client.insert(alarmBreachTimers).values({ id: key, firstAt: ts }).onConflictDoNothing();
+    mirrorCommand((rtdb) => writeRtdbBreachTimer(rtdb, ahu.id, th.parameter, dir, ts.getTime()));
     const [timer] = await client.select().from(alarmBreachTimers).where(eq(alarmBreachTimers.id, key)).limit(1);
     if (!timer || (ts.getTime() - timer.firstAt.getTime()) / 1000 < th.delaySec) continue;
 
@@ -289,6 +296,7 @@ export async function refreshAhuStatus(ahuId: string, now = new Date(), exec: Cl
   });
   if (status !== ahu.currentStatus) {
     await exec.update(ahus).set({ currentStatus: status }).where(eq(ahus.id, ahuId));
+    mirrorCommand((rtdb) => patchRtdbAhu(rtdb, ahuId, { currentStatus: status }));
     await publishRealtime("status", ahuId, { ahuId, status, at: now.toISOString() });
   }
   if (status === "FAULT") {
@@ -401,6 +409,7 @@ export async function failActiveCommands(
           ? "RUN"
           : "STOP";
       await client.update(ahus).set({ desiredRunState: fallbackRun }).where(eq(ahus.id, ahuId));
+      mirrorCommand((rtdb) => patchRtdbAhu(rtdb, ahuId, { desiredRunState: fallbackRun }));
     } else if (opts.revertDesiredState) {
       const raw = (latestReading?.rawPayload ?? {}) as {
         controlMode?: string | null;
@@ -412,13 +421,16 @@ export async function failActiveCommands(
           .update(ahus)
           .set({ desiredRunState: wasRunning ? "RUN" : "STOP" })
           .where(eq(ahus.id, ahuId));
+        mirrorCommand((rtdb) => patchRtdbAhu(rtdb, ahuId, { desiredRunState: wasRunning ? "RUN" : "STOP" }));
       } else if (
         (cmd.commandType === "MODE_AUTO" || cmd.commandType === "MODE_MANUAL") &&
         (raw.controlMode === "AUTO" || raw.controlMode === "MANUAL")
       ) {
         await client.update(ahus).set({ controlMode: raw.controlMode }).where(eq(ahus.id, ahuId));
+        mirrorCommand((rtdb) => patchRtdbAhu(rtdb, ahuId, { controlMode: raw.controlMode as string }));
       } else if (cmd.commandType === "SETPOINT" && typeof raw.setpoint === "number") {
         await client.update(ahus).set({ setpoint: raw.setpoint }).where(eq(ahus.id, ahuId));
+        mirrorCommand((rtdb) => patchRtdbAhu(rtdb, ahuId, { setpoint: raw.setpoint as number }));
       }
     }
 
@@ -477,8 +489,12 @@ export async function reconcileAhuSourceTransition(
     .delete(alarmBreachTimers)
     .where(sql`${alarmBreachTimers.id} like ${`${input.ahuId}:%`}`)
     .returning({ id: alarmBreachTimers.id });
+  if (deletedTimers.length > 0) {
+    mirrorCommand((rtdb) => removeRtdbBreachTimersForAhu(rtdb, input.ahuId));
+  }
 
   await client.update(ahus).set({ faultCode: null }).where(eq(ahus.id, input.ahuId));
+  mirrorCommand((rtdb) => patchRtdbAhu(rtdb, input.ahuId, { faultCode: null }));
 
   const staleAlarms = await client
     .select({

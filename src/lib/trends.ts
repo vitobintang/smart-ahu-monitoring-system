@@ -4,6 +4,11 @@ import { db } from "@/db";
 import { ahus, sensorThresholds, telemetry, trendAlerts } from "@/db/schema";
 import { PARAM_KEYS, PARAM_MAP, type ParamKey } from "@/lib/domain";
 import { publishRealtime } from "@/lib/realtime";
+import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
+import { readTelemetryRange } from "@/lib/rtdb/history";
+import { readRtdbAhu, readRtdbAhus, readRtdbThresholds, thresholdToRow } from "@/lib/rtdb/registry";
+import { writeRtdbTrendAlert, type RtdbTrendRecord } from "@/lib/rtdb/trends";
+import { mirrorToRtdb } from "@/lib/rtdb/live-read";
 import { writeAudit } from "@/lib/auth";
 import { authoritativeTelemetry } from "@/lib/source";
 
@@ -172,11 +177,49 @@ export function computeTrendAnalyses(
   return out;
 }
 
+
+/** Maps an RTDB telemetry record onto the PG trend-projection row shape. */
+function rtdbSampleRow(s: import("@/lib/rtdb/telemetry").RtdbTelemetryRecord, wanted: Set<string>): Record<string, unknown> {
+  const row: Record<string, unknown> = { timestamp: new Date(s.timestamp) };
+  for (const key of PARAM_KEYS) {
+    if (!wanted.has(key)) continue;
+    if (key === "current") row[key] = s.isCurrentFallback ? null : s.current;
+    else if (key === "voltage") row[key] = s.isVoltageFallback ? null : s.voltage;
+    else row[key] = s[key as keyof typeof s] ?? null;
+  }
+  return row;
+}
+
 export async function analyseTrends(
   ahuId: string,
   now = new Date(),
   exec: Client = db,
 ): Promise<TrendAnalysis[]> {
+  // Phase 5b primary flip: registry + thresholds + the 45-minute sample
+  // window all read from RTDB when Firebase is configured; PostgreSQL below.
+  try {
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      const [ahuRecord, rtdbThresholds] = await Promise.all([
+        readRtdbAhu(rtdb, ahuId),
+        readRtdbThresholds(rtdb, ahuId),
+      ]);
+      const wantedRtdb = new Set(rtdbThresholds.filter((t) => t.trendEnabled).map((t) => t.parameter));
+      if (ahuRecord && wantedRtdb.size > 0) {
+        const sinceRtdb = now.getTime() - 45 * 60 * 1000;
+        const samples = await readTelemetryRange(rtdb, ahuId, sinceRtdb, now.getTime());
+        const rows = samples.map((s) => rtdbSampleRow(s, wantedRtdb));
+        const mapped = rtdbThresholds
+          .filter((t) => t.trendEnabled)
+          .map((t) => thresholdToRow(t) as unknown as typeof sensorThresholds.$inferSelect);
+        return computeTrendAnalyses(mapped, rows, now);
+      }
+      if (ahuRecord && wantedRtdb.size === 0) return [];
+    }
+  } catch (err) {
+    console.error("[trends] RTDB reads failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+  }
+
   const [ahuRows, thresholds] = await Promise.all([
     exec.select().from(ahus).where(eq(ahus.id, ahuId)).limit(1),
     exec
@@ -213,6 +256,36 @@ export async function analyseTrendsBatch(
   ahuIds?: string[],
   now = new Date(),
 ): Promise<Record<string, TrendAnalysis[]>> {
+  // Phase 5b primary flip: the fleet batch reads registry, thresholds and
+  // sample windows from RTDB when Firebase is configured.
+  try {
+    const rtdb = await tryGetAhuRtdb();
+    if (rtdb) {
+      const registry = await readRtdbAhus(rtdb);
+      const filtered = ahuIds && ahuIds.length > 0 ? ahuIds.filter((id) => registry.has(id)) : [...registry.keys()];
+      const idsRtdb = filtered.sort();
+      const allRtdbThresholds = (await readRtdbThresholds(rtdb)).filter((t) => t.trendEnabled && idsRtdb.includes(t.ahuId));
+      const outRtdb: Record<string, TrendAnalysis[]> = {};
+      for (const id of idsRtdb) outRtdb[id] = [];
+      if (idsRtdb.length > 0 && allRtdbThresholds.length > 0) {
+        const sinceRtdb = now.getTime() - 45 * 60 * 1000;
+        const wantedRtdb = new Set(allRtdbThresholds.map((t) => t.parameter));
+        const samplesByAhu = await Promise.all(idsRtdb.map((id) => readTelemetryRange(rtdb, id, sinceRtdb, now.getTime())));
+        for (let i = 0; i < idsRtdb.length; i++) {
+          const id = idsRtdb[i];
+          const ths = allRtdbThresholds.filter((t) => t.ahuId === id);
+          const wantedThis = new Set(ths.map((t) => t.parameter));
+          const rows = samplesByAhu[i].map((s) => rtdbSampleRow(s, wantedThis));
+          const mapped = ths.map((t) => thresholdToRow(t) as unknown as typeof sensorThresholds.$inferSelect);
+          outRtdb[id] = computeTrendAnalyses(mapped, rows, now);
+        }
+      }
+      return outRtdb;
+    }
+  } catch (err) {
+    console.error("[trends] RTDB batch failed, using PostgreSQL:", err instanceof Error ? err.message : err);
+  }
+
   const [ahuRows, allThresholds] = await Promise.all([
     ahuIds && ahuIds.length > 0
       ? db.select({ id: ahus.id }).from(ahus).where(inArray(ahus.id, ahuIds)).orderBy(ahus.id)
@@ -313,6 +386,28 @@ export async function runTrendDetection(ahuId: string, now = new Date(), exec: C
       acknowledged: false,
       createdAt: now,
     });
+    // Phase 5b dual-write: the trend alert mirrors into RTDB.
+    const record: RtdbTrendRecord = {
+      id,
+      ahuId,
+      parameter: a.parameter,
+      estimatedMin: a.horizon,
+      direction: a.direction,
+      isReliable: a.isReliable,
+      unreliabilityReason: a.unreliabilityReason,
+      sampleCount: a.sampleCount,
+      variance: a.residualStd,
+      slopePerMin: a.slopePerMin,
+      currentValue: a.currentValue,
+      projectedValue: a.projectedValue,
+      thresholdValue: a.limit,
+      minutesToBreach: a.minutesToBreach,
+      acknowledged: false,
+      acknowledgedBy: null,
+      acknowledgedAt: null,
+      createdAt: now.getTime(),
+    };
+    mirrorToRtdb((rtdb) => writeRtdbTrendAlert(rtdb, record));
     await writeAudit({
       action: "TREND_ALERT_TRIGGERED",
       entity: `trend:${id}`,
