@@ -6,6 +6,8 @@ import type { UserRole } from "@/lib/ahu";
 import { type Activity, can } from "@/lib/domain";
 import { revokeCurrentDeviceCookie, secretHash } from "@/lib/device-access";
 import { getRtdbUserById, type RtdbUser } from "@/lib/rtdb/users";
+import { mirrorToRtdb } from "@/lib/rtdb/live-read";
+import { writeRtdbAuditLog } from "@/lib/rtdb/audit";
 import type { RtdbAdapter } from "@/lib/rtdb/store";
 
 // Firebase Admin uses Node built-ins (fs/crypto) — imported lazily so Edge
@@ -162,15 +164,35 @@ export async function writeAudit(
   },
   client: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0] = db,
 ) {
+  const id = randomId();
+  const createdAt = new Date();
   await client.insert(auditLogs).values({
-    id: randomId(),
+    id,
     userId: input.userId ?? null,
     userEmail: input.userEmail ?? null,
     action: input.action,
     entity: input.entity,
     details: input.details ?? {},
     ipAddress: input.ipAddress ?? null,
+    createdAt,
   });
+
+  // Phase 2 Slice E dual-write: the audit trail mirrors into RTDB
+  // (auditLogs/{id}, see src/lib/rtdb/audit.ts). Fire-and-forget — silent
+  // no-op without Firebase env vars; failures only log. PostgreSQL stays
+  // the source of truth until the cutover.
+  mirrorToRtdb((rtdb) =>
+    writeRtdbAuditLog(rtdb, {
+      id,
+      userId: input.userId ?? null,
+      userEmail: input.userEmail ?? null,
+      action: input.action,
+      entity: input.entity,
+      details: input.details ?? {},
+      ipAddress: input.ipAddress ?? null,
+      createdAt: createdAt.getTime(),
+    }),
+  );
 }
 
 /* ------------------------------------------------------------------ */
