@@ -23,6 +23,25 @@ import {
 import { publishRealtime } from "@/lib/realtime";
 import { writeAudit } from "@/lib/auth";
 import { authoritativeTelemetry } from "@/lib/source";
+import { firebaseEnvConfigured } from "@/lib/rtdb/live-read";
+import type { RtdbAdapter } from "@/lib/rtdb/store";
+import { applyCommandStatusPatch, activeSlotFor, claimActiveCommand, writeRtdbCommand, type RtdbCommandRecord } from "@/lib/rtdb/commands";
+
+/**
+ * Phase 2 Slice C: fire-and-forget mirror of command lifecycle transitions
+ * into the RTDB command tree (src/lib/rtdb/commands.ts). Silent no-op when
+ * Firebase env vars are absent (PGlite test runs stay pure PostgreSQL);
+ * failures are logged and never affect the authoritative PostgreSQL path.
+ */
+function mirrorCommand(fn: (rtdb: RtdbAdapter) => Promise<void>): void {
+  if (!firebaseEnvConfigured()) return;
+  void (async () => {
+    const { getAhuRtdb } = await import("@/lib/firebase/admin");
+    await fn(await getAhuRtdb());
+  })().catch((err) => {
+    console.error("[command-mirror] RTDB write failed:", err instanceof Error ? err.message : err);
+  });
+}
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Client = Tx | typeof db;
@@ -351,6 +370,15 @@ export async function failActiveCommands(
       .returning({ id: ahuCommands.id });
     if (!updated) continue;
     failedIds.push(updated.id);
+    mirrorCommand((rtdb) =>
+      applyCommandStatusPatch(rtdb, {
+        id: updated.id,
+        ahuId,
+        status: "FAILED",
+        updatedAt: now.getTime(),
+        rejectionReason: opts.reason,
+      }),
+    );
 
     if (cmd.commandType === "START") {
       const fallbackRun: "RUN" | "STOP" =
@@ -508,7 +536,7 @@ export async function reconcileAhuSourceTransition(
 /* ------------------------------------------------------------------ */
 
 export async function expireStaleCommands(now = new Date(), exec: Client = db) {
-  return exec.transaction(async (tx) => {
+  const stale = await exec.transaction(async (tx) => {
     const stale = await tx
       .update(ahuCommands)
       .set({
@@ -528,8 +556,20 @@ export async function expireStaleCommands(now = new Date(), exec: Client = db) {
         tx,
       );
     }
-    return stale.length;
+    return stale;
   });
+  for (const c of stale) {
+    mirrorCommand((rtdb) =>
+      applyCommandStatusPatch(rtdb, {
+        id: c.id,
+        ahuId: c.ahuId,
+        status: "EXPIRED",
+        updatedAt: now.getTime(),
+        rejectionReason: "TTL 60 s elapsed without controller confirmation",
+      }),
+    );
+  }
+  return stale.length;
 }
 
 export async function confirmCommandsFromReading(
@@ -568,6 +608,15 @@ export async function confirmCommandsFromReading(
           details: { ahuId, commandType: cmd.commandType, transition: `${cmd.status} -> SUCCEEDED` },
         },
         client,
+      );
+      mirrorCommand((rtdb) =>
+        applyCommandStatusPatch(rtdb, {
+          id: cmd.id,
+          ahuId,
+          status: "SUCCEEDED",
+          updatedAt: Date.now(),
+          confirmedAt: ts.getTime(),
+        }),
       );
     }
   }
@@ -710,6 +759,28 @@ export async function createCommand(req: CommandRequest): Promise<CommandOutcome
     return { ok: false, status: 409, code: result, error: "Another command is already active for this AHU." };
   }
 
+  const commandRecord: RtdbCommandRecord = {
+    id,
+    ahuId: req.ahuId,
+    userId: req.userId,
+    userEmail: req.userEmail,
+    commandType: req.commandType,
+    payload:
+      (req.commandType === "SETPOINT"
+        ? { setpoint: Number(req.payload?.setpoint) }
+        : (req.payload ?? {})) as RtdbCommandRecord["payload"],
+    status: "REQUESTED",
+    rejectionReason: null,
+    createdAt: now.getTime(),
+    updatedAt: now.getTime(),
+    expiresAt: now.getTime() + COMMAND_TTL_SEC * 1000,
+    confirmedAt: null,
+  };
+  mirrorCommand(async (rtdb) => {
+    await writeRtdbCommand(rtdb, commandRecord);
+    await claimActiveCommand(rtdb, req.ahuId, activeSlotFor(commandRecord), now.getTime());
+  });
+
   await publishRealtime("command", req.ahuId, {
     type: "COMMAND_REQUESTED",
     commandId: id,
@@ -723,7 +794,7 @@ export async function createCommand(req: CommandRequest): Promise<CommandOutcome
 
 /** Used by the simulator/controller: REQUESTED -> ACCEPTED. */
 export async function acceptPendingCommands(ahuId: string, exec: Client = db) {
-  return exec.transaction(async (tx) => {
+  const pending = await exec.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${ahuId}, 0))`);
     const [physical] = await tx
       .select({ id: devices.id })
@@ -749,4 +820,15 @@ export async function acceptPendingCommands(ahuId: string, exec: Client = db) {
     }
     return pending;
   });
+  for (const cmd of pending) {
+    mirrorCommand((rtdb) =>
+      applyCommandStatusPatch(rtdb, {
+        id: cmd.id,
+        ahuId,
+        status: "ACCEPTED",
+        updatedAt: cmd.updatedAt.getTime(),
+      }),
+    );
+  }
+  return pending;
 }
