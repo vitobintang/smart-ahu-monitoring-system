@@ -26,7 +26,7 @@ export async function GET() {
   }
 }
 
-/** Saves an edited 3D facility room polygon to PostgreSQL and nudges any wall-grazed AHUs. */
+/** Saves an edited 3D facility room polygon to RTDB and nudges any wall-grazed AHUs. */
 export async function PUT(req: Request) {
   try {
     const actor = await requireAuth("control", { mutating: true });

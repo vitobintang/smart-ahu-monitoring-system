@@ -1,5 +1,4 @@
 import { cookies } from "next/headers";
-import { summarizeDbError } from "@/db";
 import { CSRF_COOKIE, getSession, safePublicUser, setCsrfCookie } from "@/lib/auth";
 import { getSyncStatus } from "@/lib/realtime";
 
@@ -10,7 +9,7 @@ export async function GET() {
   try {
     ctx = await getSession();
   } catch (err) {
-    console.warn("[auth/session] transient session check error:", summarizeDbError(err));
+    console.warn("[auth/session] transient session check error:", err instanceof Error ? err.message : err);
   }
 
   const sync = await getSyncStatus();

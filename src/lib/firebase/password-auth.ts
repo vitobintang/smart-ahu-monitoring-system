@@ -15,7 +15,7 @@ export type StagedLogin<Session> = {
  * is then exchanged server-side (Phase 1b) for a Firebase session cookie via
  * the Admin SDK; this module only stages the verified identity.
  *
- * Mirrors stageSupabasePassword's contract so login-orchestrator needs zero
+ * Mirrors the legacy staged-password contract so the login orchestrator needs zero
  * changes: null = bad credentials (→401), throw = auth unavailable (→503).
  */
 
@@ -41,16 +41,6 @@ interface IdentityToolkitError {
 }
 
 const SIGN_IN_URL = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword";
-
-/** Errors that mean "wrong credentials / unusable account" — not an outage. */
-const INVALID_CREDENTIAL_CODES = new Set([
-  "EMAIL_NOT_FOUND",
-  "INVALID_PASSWORD",
-  "INVALID_LOGIN_CREDENTIALS",
-  "INVALID_IDP_RESPONSE",
-  "USER_DISABLED",
-  "OPERATION_NOT_ALLOWED",
-]);
 
 /** Google-side throttling — surfaced as an availability failure (→429/503 upstream). */
 const RATE_LIMIT_CODES = new Set([

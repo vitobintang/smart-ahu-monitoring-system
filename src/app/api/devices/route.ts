@@ -1,32 +1,37 @@
 import { randomHex, randomId } from "@/lib/ids";
-import { and, asc, eq, sql } from "drizzle-orm";
-import { db } from "@/db";
-import { ahus, devices } from "@/db/schema";
-import type { DataSource } from "@/db/schema";
+import type { DataSource } from "@/lib/types";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { readAuthoritativeSource, reconcileAhuSourceTransition, refreshAhuStatus } from "@/lib/engine";
 import { resetSimulatorUnit, simulationTick } from "@/lib/workers";
-import { mirrorToRtdb } from "@/lib/rtdb/live-read";
-import { removeRtdbDevice, setRtdbDevice, type RtdbDeviceRecord } from "@/lib/rtdb/registry";
+import { readRtdbAhu, readRtdbDevices, readRtdbAhus, removeRtdbDevice, setRtdbDevice, deviceToRow } from "@/lib/rtdb/registry";
+import { requireRtdb } from "@/lib/rtdb/live-read";
 
 export const dynamic = "force-dynamic";
+
+
 
 /** FR-21 device provisioning — Admin only (issues device authentication tokens). */
 export async function GET() {
   try {
     await requireAuth("manageUsers");
-    const rows = await db
-      .select({
-        id: devices.id,
-        ahuId: devices.ahuId,
-        label: devices.label,
-        sourceType: devices.sourceType,
-        enabled: devices.enabled,
-        createdAt: devices.createdAt,
-      })
-      .from(devices)
-      .orderBy(asc(devices.ahuId), asc(devices.createdAt));
-    const ahuRows = await db.select({ id: ahus.id, name: ahus.name }).from(ahus).orderBy(asc(ahus.id));
+    const rtdb = await requireRtdb();
+    const [devices, ahuRegistry] = await Promise.all([readRtdbDevices(rtdb), readRtdbAhus(rtdb)]);
+    const rows = devices
+      .sort((a, b) => a.ahuId.localeCompare(b.ahuId) || a.createdAt - b.createdAt)
+      .map((d) => {
+        const row = deviceToRow(d);
+        return {
+          id: d.id,
+          ahuId: d.ahuId,
+          label: d.label,
+          sourceType: d.sourceType,
+          enabled: d.enabled,
+          createdAt: row.createdAt,
+        };
+      });
+    const ahuRows = [...ahuRegistry.values()]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((a) => ({ id: a.id, name: a.name }));
     return Response.json({
       devices: rows,
       ahus: ahuRows,
@@ -48,56 +53,44 @@ export async function POST(req: Request) {
       deviceId?: string;
       enabled?: boolean;
     };
+    const rtdb = await requireRtdb();
 
     // revoke / re-enable an existing provisioned device
     if (body.deviceId) {
-      const existing = (await db.select().from(devices).where(eq(devices.id, body.deviceId)).limit(1))[0];
+      const all = await readRtdbDevices(rtdb);
+      const existing = all.find((d) => d.id === body.deviceId);
       if (!existing) return Response.json({ error: "Device not found" }, { status: 404 });
       const nextEnabled = Boolean(body.enabled);
-      let prevSource: "PHYSICAL" | "SIMULATION" | null = null;
-      let nextSource: "PHYSICAL" | "SIMULATION" | null = null;
-      await db.transaction(async (tx) => {
-        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${existing.ahuId}, 0))`);
-        prevSource = await readAuthoritativeSource(tx, existing.ahuId);
-        await tx.update(devices).set({ enabled: nextEnabled }).where(eq(devices.id, existing.id));
-        nextSource = await readAuthoritativeSource(tx, existing.ahuId);
-        const reconciled = await reconcileAhuSourceTransition(tx, {
+      const prevSource = await readAuthoritativeSource(rtdb, existing.ahuId);
+      await setRtdbDevice(rtdb, { ...existing, enabled: nextEnabled });
+      const nextSource = await readAuthoritativeSource(rtdb, existing.ahuId);
+      const reconciled = await reconcileAhuSourceTransition(rtdb, {
+        ahuId: existing.ahuId,
+        prevSource,
+        nextSource,
+        userId: actor.user.id,
+        userEmail: actor.user.email,
+        ipAddress: ip,
+      });
+      await writeAudit({
+        userId: actor.user.id,
+        userEmail: actor.user.email,
+        action: "DEVICE_UPDATED",
+        entity: `device:${existing.id}`,
+        ipAddress: ip,
+        details: {
+          from: existing.enabled,
+          to: nextEnabled,
           ahuId: existing.ahuId,
           prevSource,
           nextSource,
-          userId: actor.user.id,
-          userEmail: actor.user.email,
-          ipAddress: ip,
-        });
-        await writeAudit(
-          {
-            userId: actor.user.id,
-            userEmail: actor.user.email,
-            action: "DEVICE_UPDATED",
-            entity: `device:${existing.id}`,
-            ipAddress: ip,
-            details: {
-              from: existing.enabled,
-              to: nextEnabled,
-              ahuId: existing.ahuId,
-              prevSource,
-              nextSource,
-              ...reconciled,
-            },
-          },
-          tx,
-        );
+          ...reconciled,
+        },
       });
-
-      // Phase 5b dual-write: the toggled device mirrors into RTDB.
-      mirrorToRtdb((rtdb) =>
-        setRtdbDevice(rtdb, { ...existing, enabled: nextEnabled, createdAt: existing.createdAt.getTime() } as RtdbDeviceRecord),
-      );
 
       if (prevSource === "SIMULATION" && nextSource !== "SIMULATION") {
         resetSimulatorUnit(existing.ahuId);
       }
-
       if (nextSource === "SIMULATION" && process.env.SIMULATION_ENABLED !== "false") {
         await simulationTick();
       }
@@ -111,28 +104,24 @@ export async function POST(req: Request) {
           label: existing.label,
           sourceType: existing.sourceType,
           enabled: nextEnabled,
-          createdAt: existing.createdAt,
+          createdAt: new Date(existing.createdAt).toISOString(),
         },
       });
     }
 
     const ahuId = body.ahuId;
     if (!ahuId) return Response.json({ error: "ahuId is required" }, { status: 400 });
-    const ahu = (await db.select({ id: ahus.id }).from(ahus).where(eq(ahus.id, ahuId)).limit(1))[0];
+    const ahu = await readRtdbAhu(rtdb, ahuId);
     if (!ahu) return Response.json({ error: `AHU ${ahuId} is not registered` }, { status: 404 });
     const sourceType: DataSource = body.sourceType === "PHYSICAL" ? "PHYSICAL" : "SIMULATION";
 
     // Prevent duplicate SIMULATION controllers on the same AHU unit
     if (sourceType === "SIMULATION") {
-      const existingSim = await db
-        .select({ id: devices.id, label: devices.label })
-        .from(devices)
-        .where(and(eq(devices.ahuId, ahuId), eq(devices.sourceType, "SIMULATION")))
-        .limit(1);
-      if (existingSim.length > 0) {
+      const existingSim = (await readRtdbDevices(rtdb, ahuId)).find((d) => d.sourceType === "SIMULATION");
+      if (existingSim) {
         return Response.json(
           {
-            error: `${ahuId} already has a Simulation Controller ("${existingSim[0].label}"). Toggle the existing controller or choose PHYSICAL to connect a hardware gateway.`,
+            error: `${ahuId} already has a Simulation Controller ("${existingSim.label}"). Toggle the existing controller or choose PHYSICAL to connect a hardware gateway.`,
           },
           { status: 409 },
         );
@@ -146,53 +135,33 @@ export async function POST(req: Request) {
 
     const id = randomId();
     const token = `${sourceType === "PHYSICAL" ? "phy" : "sim"}_${ahuId.toLowerCase()}_${randomHex(24)}`;
-    let prevSource: "PHYSICAL" | "SIMULATION" | null = null;
-    let nextSource: "PHYSICAL" | "SIMULATION" | null = null;
-    await db.transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${ahuId}, 0))`);
-      prevSource = await readAuthoritativeSource(tx, ahuId);
-      await tx.insert(devices).values({
-        id,
-        ahuId,
-        label: cleanLabel,
-        token,
-        sourceType,
-        enabled: true,
-      });
-      nextSource = await readAuthoritativeSource(tx, ahuId);
-      const reconciled = await reconcileAhuSourceTransition(tx, {
-        ahuId,
-        prevSource,
-        nextSource,
-        userId: actor.user.id,
-        userEmail: actor.user.email,
-        ipAddress: ip,
-      });
-
-      await writeAudit(
-        {
-          userId: actor.user.id,
-          userEmail: actor.user.email,
-          action: "DEVICE_PROVISIONED",
-          entity: `device:${id}`,
-          ipAddress: ip,
-          details: {
-            ahuId,
-            sourceType,
-            label: cleanLabel,
-            prevSource,
-            nextSource,
-            ...reconciled,
-          },
-        },
-        tx,
-      );
+    const prevSource = await readAuthoritativeSource(rtdb, ahuId);
+    await setRtdbDevice(rtdb, { id, ahuId, label: cleanLabel, token, sourceType, enabled: true, createdAt: Date.now() });
+    const nextSource = await readAuthoritativeSource(rtdb, ahuId);
+    const reconciled = await reconcileAhuSourceTransition(rtdb, {
+      ahuId,
+      prevSource,
+      nextSource,
+      userId: actor.user.id,
+      userEmail: actor.user.email,
+      ipAddress: ip,
     });
 
-    // Phase 5b dual-write: the provisioned device mirrors into RTDB.
-    mirrorToRtdb((rtdb) =>
-      setRtdbDevice(rtdb, { id, ahuId, label: cleanLabel, token, sourceType, enabled: true, createdAt: Date.now() }),
-    );
+    await writeAudit({
+      userId: actor.user.id,
+      userEmail: actor.user.email,
+      action: "DEVICE_PROVISIONED",
+      entity: `device:${id}`,
+      ipAddress: ip,
+      details: {
+        ahuId,
+        sourceType,
+        label: cleanLabel,
+        prevSource,
+        nextSource,
+        ...reconciled,
+      },
+    });
 
     if (prevSource === "SIMULATION" && nextSource !== "SIMULATION") {
       resetSimulatorUnit(ahuId);
@@ -221,49 +190,40 @@ export async function DELETE(req: Request) {
     if (!deviceId) {
       return Response.json({ error: "deviceId is required" }, { status: 400 });
     }
+    const rtdb = await requireRtdb();
 
-    const [existing] = await db.select().from(devices).where(eq(devices.id, deviceId)).limit(1);
+    const all = await readRtdbDevices(rtdb);
+    const existing = all.find((d) => d.id === deviceId);
     if (!existing) {
       return Response.json({ error: "Module not found" }, { status: 404 });
     }
 
-    let prevSource: "PHYSICAL" | "SIMULATION" | null = null;
-    let nextSource: "PHYSICAL" | "SIMULATION" | null = null;
-    await db.transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${existing.ahuId}, 0))`);
-      prevSource = await readAuthoritativeSource(tx, existing.ahuId);
-      await tx.delete(devices).where(eq(devices.id, existing.id));
-      nextSource = await readAuthoritativeSource(tx, existing.ahuId);
-      const reconciled = await reconcileAhuSourceTransition(tx, {
+    const prevSource = await readAuthoritativeSource(rtdb, existing.ahuId);
+    await removeRtdbDevice(rtdb, existing.ahuId, existing.id);
+    const nextSource = await readAuthoritativeSource(rtdb, existing.ahuId);
+    const reconciled = await reconcileAhuSourceTransition(rtdb, {
+      ahuId: existing.ahuId,
+      prevSource,
+      nextSource,
+      userId: actor.user.id,
+      userEmail: actor.user.email,
+      ipAddress: ip,
+    });
+    await writeAudit({
+      userId: actor.user.id,
+      userEmail: actor.user.email,
+      action: "DEVICE_REMOVED",
+      entity: `device:${existing.id}`,
+      ipAddress: ip,
+      details: {
         ahuId: existing.ahuId,
+        label: existing.label,
+        sourceType: existing.sourceType,
         prevSource,
         nextSource,
-        userId: actor.user.id,
-        userEmail: actor.user.email,
-        ipAddress: ip,
-      });
-      await writeAudit(
-        {
-          userId: actor.user.id,
-          userEmail: actor.user.email,
-          action: "DEVICE_REMOVED",
-          entity: `device:${existing.id}`,
-          ipAddress: ip,
-          details: {
-            ahuId: existing.ahuId,
-            label: existing.label,
-            sourceType: existing.sourceType,
-            prevSource,
-            nextSource,
-            ...reconciled,
-          },
-        },
-        tx,
-      );
+        ...reconciled,
+      },
     });
-
-    // Phase 5b dual-write: the removed device is deleted from RTDB.
-    mirrorToRtdb((rtdb) => removeRtdbDevice(rtdb, existing.ahuId, existing.id));
 
     if (prevSource === "SIMULATION" && nextSource !== "SIMULATION") {
       resetSimulatorUnit(existing.ahuId);

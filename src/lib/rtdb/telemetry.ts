@@ -6,11 +6,11 @@ import type { RtdbAdapter } from "./store";
  * Tree layout (agreed migration design):
  *   telemetry/{ahuId}/{YYYY-MM-DD}/{messageId} → full observation (history,
  *     sharded per UTC day; messageId key gives the same idempotency the
- *     PostgreSQL unique index telemetry_ahu_message_uidx provided)
+ *     a unique index on (ahuId, messageId))
  *   telemetryLatest/{ahuId}                    → newest observation per AHU
  *     (never regresses: late/historical samples do not overwrite newer ones)
  *
- * Phase 2 Slice A runs this as a dual-write mirror — PostgreSQL stays
+ * RTDB is authoritative —
  * authoritative until the Phase 5 cutover; a failed RTDB write is logged and
  * dropped, never surfaced to ingestion.
  *
@@ -20,7 +20,7 @@ import type { RtdbAdapter } from "./store";
 export const TELEMETRY_NODE = "telemetry";
 export const TELEMETRY_LATEST_NODE = "telemetryLatest";
 
-/** Flattened telemetry row — mirrors the PostgreSQL `telemetry` columns. */
+/** Flattened telemetry row (one per message). */
 export interface RtdbTelemetryRecord {
   ahuId: string;
   messageId: string;

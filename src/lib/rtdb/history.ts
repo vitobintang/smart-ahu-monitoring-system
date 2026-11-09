@@ -7,7 +7,7 @@ import { TELEMETRY_NODE, type RtdbTelemetryRecord } from "./telemetry";
  *
  * A report range spans at most MAX_REPORT_RANGE_DAYS (31) UTC days, so a
  * range read is at most ~32 shard gets issued in parallel. Any failed shard
- * REJECTS the whole read — the caller falls back to PostgreSQL rather than
+ * REJECTS the whole read rather than
  * presenting a silently incomplete report.
  */
 
@@ -56,7 +56,7 @@ export async function readTelemetryRange(
  * newest first. Unlike readTelemetryRange (all-or-nothing BEFORE the stream
  * starts), a shard failure mid-stream throws — the caller's stream errors and
  * the client sees a truncated download, which the CSV contract already
- * accepts for PostgreSQL failures.
+ * accepts for transient storage failures.
  */
 export async function* streamTelemetryRangeDescending(
   rtdb: RtdbAdapter,

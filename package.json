@@ -12,12 +12,7 @@
     "build": "next build",
     "start": "next start",
     "emulator": "npx -y firebase-tools@^14 emulators:start --only database --project smart-monitoring-ahu",
-    "typecheck": "tsc --noEmit",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "db:bootstrap-admin": "node scripts/bootstrap-admin.mjs",
-    "db:reset-admin": "node scripts/reset-admin.mjs",
-    "db:bootstrap-device": "node scripts/bootstrap-device.mjs"
+    "typecheck": "tsc --noEmit"
   },
   "repository": {
     "type": "git",
@@ -34,27 +29,22 @@
   "dependencies": {
     "@types/three": "^0.187.0",
     "dotenv": "^17.3.1",
-    "drizzle-orm": "^0.45.2",
     "firebase": "^13.2.0",
     "firebase-admin": "^14.5.0",
     "lucide-react": "^0.544.0",
     "next": "^16.4.3",
-    "pg": "^8.20.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "recharts": "^3.10.1",
     "three": "^0.187.0"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.14",
     "@eslint/js": "^9.39.5",
     "@tailwindcss/postcss": "^4.1.17",
     "@types/jsdom": "21.1.7",
     "@types/node": "^22.19.15",
-    "@types/pg": "^8.18.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "drizzle-kit": "^0.31.10",
     "eslint": "^9.39.5",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.1.1",

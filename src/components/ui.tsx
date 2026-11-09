@@ -10,7 +10,7 @@ import {
   STATUS_STYLE,
   type DataQuality,
 } from "@/lib/domain";
-import type { AhuStatus, DataSource } from "@/db/schema";
+import type { AhuStatus, DataSource } from "@/lib/types";
 
 export function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");

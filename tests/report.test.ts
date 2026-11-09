@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 // No connection is opened by these pure CSV tests.
-process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1/test";
 
 test("CSV protects untrusted text and quotes multiline fields", async () => {
   const { reportToCsv, spreadsheetSafe } = await import("../src/lib/queries");

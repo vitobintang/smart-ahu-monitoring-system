@@ -1,10 +1,10 @@
 import type { RtdbAdapter } from "./store";
 
 /**
- * Trend-alert tree (Phase 5b) — previously the PostgreSQL `trend_alerts`
+ * Trend-alert tree — the RTDB replacement for the legacy `trend_alerts`
  * table (computed by the trend worker from recent telemetry projections).
  *
- * Tree layout (mirrors the PostgreSQL table; epoch-ms timestamps):
+ * Tree layout (epoch-ms timestamps):
  *   trendAlerts/{id} → full trend-alert record
  *
  * Alerts are append-mostly: the trend worker inserts, users acknowledge.
@@ -79,7 +79,7 @@ export async function readRtdbTrendHistory(rtdb: RtdbAdapter, ahuId: string, lim
     .slice(0, limit);
 }
 
-/** Maps a mirror record onto the PostgreSQL trend_alerts row shape (Dates). */
+/** Maps a record onto the trend_alerts row shape the UI expects (Dates). */
 export function trendToRow(record: RtdbTrendRecord): Record<string, unknown> {
   // `n()` restores nulls RTDB stripped (see live-read.ts).
   const n = <T,>(value: T | undefined): T | null => (value === undefined ? null : (value as T));

@@ -30,7 +30,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import type { AhuStatus } from "@/db/schema";
+import type { AhuStatus } from "@/lib/types";
 import { StatusBadge, cx } from "@/components/ui";
 import {
   computePolygonAreaSqM,

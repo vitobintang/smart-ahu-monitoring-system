@@ -7,7 +7,7 @@ async function auth(): Promise<Auth> {
 }
 
 /**
- * Firebase session-cookie session management (replaces Supabase Auth's sb-* cookies).
+ * Firebase session-cookie session management.
  *
  * Flow: the browser authenticates once (password REST sign-in or Google popup →
  * ID token), the server exchanges the ID token for a short-lived session cookie

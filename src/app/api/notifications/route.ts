@@ -1,8 +1,5 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
-import { db } from "@/db";
-import { ahuCommands, alarms, trendAlerts } from "@/db/schema";
 import { jsonError, requireAuth } from "@/lib/auth";
-import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
+import { requireRtdb } from "@/lib/rtdb/live-read";
 import { readActiveAlarmRecords, alarmToRow } from "@/lib/rtdb/alarms";
 import { readRtdbUnackedTrends, trendToRow } from "@/lib/rtdb/trends";
 import { readActiveCommandSlots } from "@/lib/rtdb/commands";
@@ -10,9 +7,15 @@ import { readActiveCommandSlots } from "@/lib/rtdb/commands";
 export const dynamic = "force-dynamic";
 
 interface NotificationsPayload {
-  alarms: (typeof alarms.$inferSelect)[];
-  trends: (typeof trendAlerts.$inferSelect)[];
-  commands: (typeof ahuCommands.$inferSelect)[];
+  alarms: ReturnType<typeof alarmToRow>[];
+  trends: ReturnType<typeof trendToRow>[];
+  commands: Array<{
+    id: string;
+    ahuId: string;
+    commandType: string;
+    status: string;
+    expiresAt: Date;
+  }>;
   serverTime: string;
 }
 
@@ -31,66 +34,29 @@ async function loadNotifications(): Promise<NotificationsPayload> {
   }
 
   const work = (async () => {
-    // Phase 5b primary flip: active alarms, unacknowledged trend alerts and
-    // active commands read from RTDB when Firebase is configured.
-    try {
-      const rtdb = await tryGetAhuRtdb();
-      if (rtdb) {
-        const [alarmRecords, trendRecords, slots] = await Promise.all([
-          readActiveAlarmRecords(rtdb),
-          readRtdbUnackedTrends(rtdb, 20),
-          readActiveCommandSlots(rtdb),
-        ]);
-        const payload: NotificationsPayload = {
-          alarms: alarmRecords
-            .sort((a, b) => b.triggeredAt - a.triggeredAt)
-            .slice(0, 20)
-            .map(alarmToRow) as NotificationsPayload["alarms"],
-          trends: trendRecords.map(trendToRow) as NotificationsPayload["trends"],
-          commands: [...slots.entries()]
-            .filter(([, slot]) => slot.status === "REQUESTED" || slot.status === "ACCEPTED")
-            .sort((a, b) => b[1].createdAt - a[1].createdAt)
-            .slice(0, 10)
-            .map(([ahuId, slot]) => ({
-              id: slot.commandId,
-              ahuId,
-              commandType: slot.commandType,
-              status: slot.status,
-              expiresAt: new Date(slot.expiresAt),
-            })) as NotificationsPayload["commands"],
-          serverTime: new Date().toISOString(),
-        };
-        g.__ahuNotifCache = { data: payload, expiresAt: Date.now() + 350 };
-        return payload;
-      }
-    } catch (err) {
-      console.error("[notifications] RTDB reads failed, using PostgreSQL:", err instanceof Error ? err.message : err);
-    }
-
-    // Run sequentially on a single warm pool connection instead of grabbing 3 slots at once
-    const activeAlarms = await db
-      .select()
-      .from(alarms)
-      .where(eq(alarms.isActive, true))
-      .orderBy(desc(alarms.triggeredAt))
-      .limit(20);
-    const unackedTrends = await db
-      .select()
-      .from(trendAlerts)
-      .where(eq(trendAlerts.acknowledged, false))
-      .orderBy(desc(trendAlerts.createdAt))
-      .limit(20);
-    const activeCommands = await db
-      .select()
-      .from(ahuCommands)
-      .where(and(inArray(ahuCommands.status, ["REQUESTED", "ACCEPTED"])))
-      .orderBy(desc(ahuCommands.createdAt))
-      .limit(10);
-
+    const rtdb = await requireRtdb();
+    const [alarmRecords, trendRecords, slots] = await Promise.all([
+      readActiveAlarmRecords(rtdb),
+      readRtdbUnackedTrends(rtdb, 20),
+      readActiveCommandSlots(rtdb),
+    ]);
     const payload: NotificationsPayload = {
-      alarms: activeAlarms,
-      trends: unackedTrends,
-      commands: activeCommands,
+      alarms: alarmRecords
+        .sort((a, b) => b.triggeredAt - a.triggeredAt)
+        .slice(0, 20)
+        .map(alarmToRow),
+      trends: trendRecords.map(trendToRow),
+      commands: [...slots.entries()]
+        .filter(([, slot]) => slot.status === "REQUESTED" || slot.status === "ACCEPTED")
+        .sort((a, b) => b[1].createdAt - a[1].createdAt)
+        .slice(0, 10)
+        .map(([ahuId, slot]) => ({
+          id: slot.commandId,
+          ahuId,
+          commandType: slot.commandType,
+          status: slot.status,
+          expiresAt: new Date(slot.expiresAt),
+        })),
       serverTime: new Date().toISOString(),
     };
     g.__ahuNotifCache = { data: payload, expiresAt: Date.now() + 350 };

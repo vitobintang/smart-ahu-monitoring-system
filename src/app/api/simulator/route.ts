@@ -1,11 +1,10 @@
 import { randomId } from "@/lib/ids";
-import { and, eq } from "drizzle-orm";
-import { db } from "@/db";
-import { ahus, devices } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { ingestTelemetry } from "@/lib/ingest";
 import { getOverride, setOverride, simulationTick, simOverrides } from "@/lib/workers";
 import { AHU_IDS } from "@/lib/domain";
+import { requireRtdb } from "@/lib/rtdb/live-read";
+import { ahuToRow, readRtdbAhu, readRtdbAhus, readRtdbDevices } from "@/lib/rtdb/registry";
 
 export const dynamic = "force-dynamic";
 
@@ -13,17 +12,21 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     await requireAuth("control");
-    const rows = await db
-      .select({
-        id: ahus.id,
-        name: ahus.name,
-        desiredRunState: ahus.desiredRunState,
-        controlMode: ahus.controlMode,
-        setpoint: ahus.setpoint,
-        currentStatus: ahus.currentStatus,
-      })
-      .from(ahus)
-      .orderBy(ahus.id);
+    const rtdb = await requireRtdb();
+    const registry = await readRtdbAhus(rtdb);
+    const rows = [...registry.values()]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((record) => {
+        const row = ahuToRow(record) as Record<string, unknown>;
+        return {
+          id: record.id,
+          name: row.name,
+          desiredRunState: row.desiredRunState,
+          controlMode: row.controlMode,
+          setpoint: row.setpoint,
+          currentStatus: row.currentStatus,
+        };
+      });
     const ids = rows.length > 0 ? rows.map((r) => r.id) : [...AHU_IDS];
     const overrides = ids.map((id) => ({ ahuId: id, ...getOverride(id) }));
     return Response.json({
@@ -56,8 +59,8 @@ export async function POST(req: Request) {
     };
 
     if (body.action === "RESET_ALL") {
-      const allRows = await db.select({ id: ahus.id }).from(ahus).orderBy(ahus.id);
-      const ids = allRows.length > 0 ? allRows.map((r) => r.id) : [...AHU_IDS];
+      const allRows = [...(await readRtdbAhus(await requireRtdb())).keys()].sort();
+      const ids = allRows.length > 0 ? allRows : [...AHU_IDS];
       for (const id of ids) {
         setOverride(id, {
           forcedFault: null,
@@ -88,13 +91,9 @@ export async function POST(req: Request) {
     // POST /api/telemetry, authenticated with the unit's simulation device token.
     if (body.action === "INGEST") {
       const targetAhu = String(body.ahuId ?? "");
-      const device = (
-        await db
-          .select()
-          .from(devices)
-          .where(and(eq(devices.ahuId, targetAhu), eq(devices.sourceType, "SIMULATION"), eq(devices.enabled, true)))
-          .limit(1)
-      )[0];
+      const device = (await readRtdbDevices(await requireRtdb(), targetAhu)).find(
+        (d) => d.sourceType === "SIMULATION" && d.enabled,
+      );
       if (!device) return Response.json({ error: `No enabled SIMULATION device provisioned for ${targetAhu}` }, { status: 404 });
       const result = await ingestTelemetry(device.token, {
         ahuId: targetAhu,
@@ -119,8 +118,8 @@ export async function POST(req: Request) {
 
     const ahuId = body.ahuId;
     if (!ahuId) return Response.json({ error: "A valid ahuId is required" }, { status: 400 });
-    const [exists] = await db.select({ id: ahus.id }).from(ahus).where(eq(ahus.id, ahuId)).limit(1);
-    if (!exists) return Response.json({ error: "A valid ahuId is required" }, { status: 400 });
+    if (!(await readRtdbAhu(await requireRtdb(), ahuId)))
+      return Response.json({ error: "A valid ahuId is required" }, { status: 400 });
 
     const patch: Record<string, unknown> = {};
     if (body.forcedFault !== undefined) patch.forcedFault = body.forcedFault ? String(body.forcedFault).slice(0, 60) : null;

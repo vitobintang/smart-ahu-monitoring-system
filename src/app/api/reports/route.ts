@@ -1,7 +1,6 @@
-import { eq } from "drizzle-orm";
-import { db } from "@/db";
-import { ahus } from "@/db/schema";
 import { jsonError, requireAuth, getClientIp, writeAudit } from "@/lib/auth";
+import { requireRtdb } from "@/lib/rtdb/live-read";
+import { readRtdbAhu } from "@/lib/rtdb/registry";
 import { buildReport, streamReportCsv } from "@/lib/queries";
 import { AHU_IDS, MAX_REPORT_RANGE_DAYS } from "@/lib/domain";
 
@@ -33,8 +32,7 @@ export async function GET(req: Request) {
         { error: `Report range is limited to ${MAX_REPORT_RANGE_DAYS} days (requested ${days.toFixed(1)} days)` },
         { status: 400 },
       );
-    const [exists] = await db.select({ id: ahus.id }).from(ahus).where(eq(ahus.id, ahuId)).limit(1);
-    if (!exists)
+    if (!(await readRtdbAhu(await requireRtdb(), ahuId)))
       return Response.json({ error: `Unknown AHU "${ahuId}"` }, { status: 400 });
     if (!["ALL", "PHYSICAL", "SIMULATION"].includes(source))
       return Response.json({ error: "source must be ALL, PHYSICAL or SIMULATION" }, { status: 400 });

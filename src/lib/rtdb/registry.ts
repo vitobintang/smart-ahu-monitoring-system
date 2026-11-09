@@ -2,9 +2,9 @@ import type { RtdbAdapter } from "./store";
 
 /**
  * Registry trees (Phase 5b) — the AHU registry, its data-source devices and
- * the per-sensor alarm thresholds, previously PostgreSQL-only.
+ * the per-sensor alarm thresholds.
  *
- * Tree layout (mirrors the PostgreSQL `ahus` / `devices` / `sensor_thresholds`
+ * Tree layout (`ahus` / `devices` / `sensor_thresholds`
  * tables; epoch-ms timestamps):
  *   ahus/{ahuId}                        → full AHU registry record
  *   devices/{ahuId}/{deviceId}          → data-source device (incl. bearer token)
@@ -12,11 +12,11 @@ import type { RtdbAdapter } from "./store";
  *
  * Devices carry their bearer token: ingestTelemetry authenticates by token,
  * and under the locked database rules only the Admin SDK (server) can ever
- * read this tree — the same trust boundary the PostgreSQL table had.
+ * read this tree — server-only trust boundary.
  *
- * Phase 5b runs these as RTDB-first reads with PostgreSQL fallback, fed by a
+ * These are the authoritative RTDB registry reads, fed by a
  * one-shot backfill (scripts/export-registry-to-rtdb.mjs) and kept in sync by
- * dual-writes on every mutation path.
+ * writes on every mutation path.
  */
 
 export const AHUS_NODE = "ahus";
@@ -155,7 +155,7 @@ export async function readRtdbThresholds(rtdb: RtdbAdapter, ahuId?: string): Pro
 }
 
 /* ------------------------------------------------------------------ */
-/* Row mappers (exact PostgreSQL row shapes → JSON API compatibility)  */
+/* Row mappers (row shapes → JSON API compatibility)  */
 /* ------------------------------------------------------------------ */
 
 export function ahuToRow(record: RtdbAhuRecord): Record<string, unknown> {

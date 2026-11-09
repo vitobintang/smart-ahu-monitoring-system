@@ -3,17 +3,17 @@ import type { RtdbAdapter } from "./store";
 /**
  * Command records in the Realtime Database (Phase 2 Slice C).
  *
- * Tree layout (mirrors the PostgreSQL `ahu_commands` table):
+ * Tree layout (one command record per id):
  *   commands/{commandId}       → full command record (epoch-ms timestamps)
  *   commandActive/{ahuId}      → the single active-command slot per AHU
  *
  * The one-active-command-per-AHU invariant (FR-26) is enforced in RTDB with a
  * transaction on the slot: claiming aborts while an unexpired slot is held,
- * mirroring the PostgreSQL partial unique index + advisory lock. Terminal
+ * enforcing one-active-command-per-AHU. Terminal
  * transitions (SUCCEEDED/FAILED/EXPIRED) clear the slot — but only when it
  * still belongs to that command.
  *
- * Phase 2 runs this as a dual-write mirror: PostgreSQL stays authoritative
+ * RTDB is authoritative
  * until the Phase 5 cutover; mirror failures are logged and dropped.
  */
 
@@ -122,7 +122,7 @@ export function clearActiveCommand(
 /**
  * Full command history for one AHU, newest created first — the RTDB
  * replacement for the unit page's `order by created_at desc limit N`
- * PostgreSQL query. (All command records live under commands/{id}; the set is
+ * query. (All command records live under commands/{id}; the set is
  * operator-scale, so a full-tree read with an in-memory filter is appropriate.)
  */
 /** The fleet's active-command slots keyed by AHU (dashboard chips). */
@@ -140,7 +140,7 @@ export async function readCommandHistory(rtdb: RtdbAdapter, ahuId: string, limit
 }
 
 /**
- * Maps a mirror record onto the PostgreSQL ahu_commands row shape (Date
+ * Maps a record onto the ahu_commands row shape the UI expects (Date
  * instances, same field names) so JSON responses keep their exact API shape.
  */
 export function commandToRow(record: RtdbCommandRecord): Record<string, unknown> {

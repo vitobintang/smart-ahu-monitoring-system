@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { RefreshCw, Wrench } from "lucide-react";
-import type { AhuStatus } from "@/db/schema";
+import type { AhuStatus } from "@/lib/types";
 import { LOCAL_POLL_MS, timeAgo, usePoll } from "@/lib/client";
 import { Empty, ErrorNote, Spinner, StatusBadge, cx } from "@/components/ui";
 

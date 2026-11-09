@@ -62,7 +62,7 @@ function resolveDatabaseUrl(env: NodeJS.ProcessEnv): string {
 
 async function getApp_(env: NodeJS.ProcessEnv): Promise<App> {
   if (globalForFirebaseAdmin.__ahFirebaseAdminApp) return globalForFirebaseAdmin.__ahFirebaseAdminApp;
-  const { cert, getApp, getApps, initializeApp } = await import("firebase-admin/app");
+  const { cert, getApps, initializeApp } = await import("firebase-admin/app");
   const existing = getApps().find((app) => app.name === "ahu-admin");
   // databaseURL MUST be explicit: regional RTDB instances are never inferable
   // from the service account alone (the SDK would throw "Can't determine

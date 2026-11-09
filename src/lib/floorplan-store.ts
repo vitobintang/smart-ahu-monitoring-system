@@ -1,8 +1,6 @@
-import { asc, eq } from "drizzle-orm";
-import { db } from "@/db";
-import { ahus, facilityFloorplan } from "@/db/schema";
-import { mirrorToRtdb, tryGetAhuRtdb } from "@/lib/rtdb/live-read";
-import { patchRtdbAhu } from "@/lib/rtdb/registry";
+import { requireRtdb } from "@/lib/rtdb/live-read";
+import { patchRtdbAhu, readRtdbAhus } from "@/lib/rtdb/registry";
+import type { RtdbAdapter } from "@/lib/rtdb/store";
 import { readRtdbFloorplan, removeRtdbFloorplan, writeRtdbFloorplan } from "@/lib/rtdb/facility";
 import {
   computePolygonAreaSqM,
@@ -39,53 +37,24 @@ export async function getActiveFloorplan(): Promise<StoredFloorplanState> {
   }
 
   try {
-    // Phase 5b primary flip: the floorplan document is read from RTDB when
-    // Firebase is configured; PostgreSQL remains the fallback.
-    const rtdb = await tryGetAhuRtdb();
-    if (rtdb) {
-      const record = await readRtdbFloorplan(rtdb);
-      if (record && Array.isArray(record.vertices) && record.vertices.length >= 3) {
-        const check = validateFloorplanPolygon(record.vertices);
-        if (check.valid) {
-          const state: StoredFloorplanState = {
-            vertices: record.vertices,
-            isCustom: true,
-            areaSqM: check.areaSqM,
-            updatedBy: record.updatedBy,
-            updatedAt: new Date(record.updatedAt).toISOString(),
-          };
-          globalThis.__ahuFloorplanCache = { data: state, expiresAt: now + CACHE_TTL_MS };
-          return state;
-        }
-      }
-    }
-
-    const rows = await db
-      .select()
-      .from(facilityFloorplan)
-      .where(eq(facilityFloorplan.id, 1))
-      .limit(1);
-
-    const row = rows[0];
-    if (row && Array.isArray(row.vertices) && row.vertices.length >= 3) {
-      const check = validateFloorplanPolygon(row.vertices);
+    const rtdb = await requireRtdb();
+    const record = await readRtdbFloorplan(rtdb);
+    if (record && Array.isArray(record.vertices) && record.vertices.length >= 3) {
+      const check = validateFloorplanPolygon(record.vertices);
       if (check.valid) {
         const state: StoredFloorplanState = {
-          vertices: row.vertices.map((v) => ({
-            x: Number(Number(v.x).toFixed(2)),
-            z: Number(Number(v.z).toFixed(2)),
-          })),
+          vertices: record.vertices,
           isCustom: true,
           areaSqM: check.areaSqM,
-          updatedBy: row.updatedBy ?? null,
-          updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
+          updatedBy: record.updatedBy,
+          updatedAt: new Date(record.updatedAt).toISOString(),
         };
         globalThis.__ahuFloorplanCache = { data: state, expiresAt: now + CACHE_TTL_MS };
         return state;
       }
     }
   } catch {
-    // Graceful fallback to default polygon if migration has not run yet in an isolated test env
+    // Fall through to the default polygon when RTDB is unconfigured/unreachable.
   }
 
   const fallback: StoredFloorplanState = {
@@ -100,7 +69,7 @@ export async function getActiveFloorplan(): Promise<StoredFloorplanState> {
 }
 
 /**
- * Persists a custom room polygon to PostgreSQL and automatically nudges any AHU
+ * Persists a custom room polygon to RTDB and automatically nudges any AHU
  * whose plinth would intersect a newly moved wall so zero units clip into walls.
  */
 export async function saveCustomFloorplan(
@@ -118,29 +87,13 @@ export async function saveCustomFloorplan(
   }
 
   const nowDate = new Date();
-  await db
-    .insert(facilityFloorplan)
-    .values({
-      id: 1,
-      vertices: cleanVertices,
-      updatedBy: actorUsername,
-      updatedAt: nowDate,
-    })
-    .onConflictDoUpdate({
-      target: facilityFloorplan.id,
-      set: {
-        vertices: cleanVertices,
-        updatedBy: actorUsername,
-        updatedAt: nowDate,
-      },
-    });
-
-  // Phase 5b dual-write: the floorplan document mirrors into RTDB.
-  mirrorToRtdb((rtdb) => writeRtdbFloorplan(rtdb, cleanVertices, actorUsername, nowDate.getTime()));
+  const rtdb: RtdbAdapter = await requireRtdb();
+  await writeRtdbFloorplan(rtdb, cleanVertices, actorUsername, nowDate.getTime());
 
   // Check existing AHUs and gently nudge any unit touched by a newly moved wall,
   // and refresh indoor/outdoor zone labels if a wing expanded or contracted over an AHU.
-  const allRows = await db.select().from(ahus).orderBy(asc(ahus.id));
+  const registry = await readRtdbAhus(rtdb);
+  const allRows = [...registry.values()].sort((a, b) => a.id.localeCompare(b.id));
   const resolved: Array<{ id: string; x: number; z: number; rotation: number }> = [];
   for (const r of allRows) {
     const p = resolveAhuPlacement(r, resolved, cleanVertices);
@@ -164,32 +117,18 @@ export async function saveCustomFloorplan(
         item.z = nudged.snappedZ;
         item.rotation = nudged.rotation;
         nudgedUnits.push(item.id);
-        await db
-          .update(ahus)
-          .set({
-            mapX: nudged.snappedX,
-            mapZ: nudged.snappedZ,
-            mapRotation: nudged.rotation,
-            mapZone: nudged.zone.label,
-          })
-          .where(eq(ahus.id, item.id));
-        const id = item.id;
-        const patch = {
+        await patchRtdbAhu(rtdb, item.id, {
           mapX: nudged.snappedX,
           mapZ: nudged.snappedZ,
           mapRotation: nudged.rotation,
           mapZone: nudged.zone.label,
-        };
-        mirrorToRtdb((rtdb) => patchRtdbAhu(rtdb, id, patch));
+        });
       }
     } else {
       const row = allRows.find((r) => r.id === item.id);
       const zInfo = findZoneAt(item.x, item.z, cleanVertices);
       if (row && zInfo && row.mapZone !== zInfo.label) {
-        await db.update(ahus).set({ mapZone: zInfo.label }).where(eq(ahus.id, item.id));
-        const id = item.id;
-        const zone = zInfo.label;
-        mirrorToRtdb((rtdb) => patchRtdbAhu(rtdb, id, { mapZone: zone }));
+        await patchRtdbAhu(rtdb, item.id, { mapZone: zInfo.label });
       }
     }
   }
@@ -206,8 +145,7 @@ export async function saveCustomFloorplan(
 }
 
 export async function resetCustomFloorplan(): Promise<StoredFloorplanState> {
-  await db.delete(facilityFloorplan).where(eq(facilityFloorplan.id, 1));
-  mirrorToRtdb((rtdb) => removeRtdbFloorplan(rtdb));
+  await removeRtdbFloorplan(await requireRtdb());
   const state: StoredFloorplanState = {
     vertices: DEFAULT_ROOM_VERTICES,
     isCustom: false,

@@ -1,7 +1,7 @@
 import type { RtdbAdapter } from "./store";
 
 /**
- * Facility floorplan tree (Phase 5b) — previously the single-row PostgreSQL
+ * Facility floorplan tree — previously the single-row
  * `facility_floorplan` table (id = 1).
  *
  * Tree layout (epoch-ms timestamp):

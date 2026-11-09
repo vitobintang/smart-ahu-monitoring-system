@@ -3,7 +3,7 @@ import type { RtdbAdapter } from "./store";
 /**
  * Alarm records in the Realtime Database (Phase 2 Slice D).
  *
- * Tree layout (mirrors the PostgreSQL `alarms` table):
+ * Tree layout (one alarm record per id):
  *   alarms/{alarmId} → full alarm record (epoch-ms timestamps)
  *
  * Lifecycle mirrors:
@@ -13,7 +13,7 @@ import type { RtdbAdapter } from "./store";
  *
  * Alarms are id-keyed with no cross-record invariants, so transitions are
  * simple patches — unlike the command active-slot, no transaction guard is
- * needed. Phase 2 runs this as a dual-write mirror: PostgreSQL stays
+ * needed. Writes go through this module only:
  * authoritative until the Phase 5 cutover; mirror failures are logged and
  * dropped.
  */
@@ -64,7 +64,7 @@ export async function writeRtdbAlarm(rtdb: RtdbAdapter, record: RtdbAlarmRecord)
 
 /**
  * Breach-timer tree (Phase 5b) — the engine's alarm debounce state, previously
- * the PostgreSQL `alarm_breach_timers` table. Nested so an AHU-wide reset
+ * a per-AHU breach-timer tree. Nested so an AHU-wide reset
  * (used when a unit goes OFFLINE or its alarms are force-resolved) is a single
  * node remove:
  *   alarmBreachTimers/{ahuId}/{parameter}:{DIR} → { firstAt (epoch-ms) }
@@ -107,7 +107,7 @@ export interface AlarmCountRow {
 
 /**
  * Aggregates the active index into per-AHU counts — the RTDB replacement for
- * the PostgreSQL `count(*) filter (...) group by ahu_id` dashboard query.
+ * the dashboard's per-AHU active/critical/unacked aggregation.
  */
 export async function readAlarmCounts(rtdb: RtdbAdapter, ahuIds: string[]): Promise<Map<string, AlarmCountRow>> {
   const records = await readActiveAlarmRecords(rtdb);
@@ -125,7 +125,7 @@ export async function readAlarmCounts(rtdb: RtdbAdapter, ahuIds: string[]): Prom
 /**
  * Full alarm history for one AHU (active + resolved), newest triggered first —
  * the RTDB replacement for the unit page's `order by triggered_at desc limit N`
- * PostgreSQL query.
+ * dashboard query.
  */
 export async function readAlarmHistory(rtdb: RtdbAdapter, ahuId: string, limit = 60): Promise<RtdbAlarmRecord[]> {
   const tree = (await rtdb.get<Record<string, RtdbAlarmRecord>>(ALARMS_NODE)) ?? {};
@@ -136,7 +136,7 @@ export async function readAlarmHistory(rtdb: RtdbAdapter, ahuId: string, limit =
 }
 
 /**
- * Maps a mirror record onto the PostgreSQL alarms row shape (Date instances,
+ * Maps a record onto the alarms row shape the UI expects (Date instances,
  * same field names) so JSON responses keep their exact API shape.
  */
 export function alarmToRow(record: RtdbAlarmRecord): Record<string, unknown> {
@@ -161,7 +161,7 @@ export function alarmToRow(record: RtdbAlarmRecord): Record<string, unknown> {
   };
 }
 
-/** PG-JSON shape for API responses (ISO timestamps like the PostgreSQL rows). */
+/** JSON shape for API responses (ISO timestamps). */
 export function alarmToJson(record: RtdbAlarmRecord): Record<string, unknown> {
   return {
     ...record,
