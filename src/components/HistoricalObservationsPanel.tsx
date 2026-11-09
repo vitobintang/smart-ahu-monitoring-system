@@ -154,8 +154,8 @@ export default function HistoricalObservationsPanel({
 
       <p className="mt-2 text-sm leading-6 text-slate-600">
         This page is not protected by login. Loading requires a verified
-        session and authorized browser; an existing session may contact
-        Supabase. Clear removes displayed values from this panel, but does
+        session and authorized browser; an existing session may query the
+        primary database. Clear removes displayed values from this panel, but does
         not log you out or verify revocation.
       </p>
 

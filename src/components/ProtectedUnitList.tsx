@@ -131,8 +131,8 @@ export default function ProtectedUnitList() {
 
       <p className="mt-2 text-sm leading-6 text-slate-600">
         This optional read requires a verified session and an authorized
-        browser. If a session already exists, it may contact Supabase when
-        clicked. The dashboard itself is not protected by login yet.
+        browser. If a session already exists, it may query the primary
+        database when clicked. The dashboard itself is not protected by login yet.
       </p>
 
       <div className="mt-4 flex flex-wrap gap-3">
