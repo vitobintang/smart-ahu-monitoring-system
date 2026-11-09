@@ -3,11 +3,8 @@ import { db } from "@/db";
 import { ahus, devices, sensorThresholds } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { PARAMETERS, PARAM_KEYS, SETPOINT_MAX, SETPOINT_MIN, type ParamKey } from "@/lib/domain";
-import {
-  normalizeRotation,
-  resolveAhuPlacement,
-  validatePlatformPlacement,
-} from "@/lib/facility-layout";
+import { normalizeRotation } from "@/lib/facility-layout";
+import { resolveAhuPlacement, validatePlatformPlacement } from "@/lib/facility-placement";
 import { getActiveFloorplan } from "@/lib/floorplan-store";
 import { randomHex, randomId } from "@/lib/ids";
 import { simulationTick } from "@/lib/workers";

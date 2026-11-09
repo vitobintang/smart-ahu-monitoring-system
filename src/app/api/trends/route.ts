@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { trendAlerts } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { publishRealtime } from "@/lib/realtime";
-import { analyseTrendsBatch } from "@/lib/engine";
+import { analyseTrendsBatch } from "@/lib/trends";
 
 export const dynamic = "force-dynamic";
 

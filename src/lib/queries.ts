@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { ahuCommands, ahus, alarms, devices, sensorThresholds, telemetry, trendAlerts } from "@/db/schema";
 import type { AhuRow } from "@/db/schema";
 import { computeAhuStatus, PARAMETERS, PARAM_KEYS, type ParamKey } from "@/lib/domain";
-import { computeTrendAnalyses } from "@/lib/engine";
+import { computeTrendAnalyses } from "@/lib/trends";
 import { authoritativeTelemetry } from "@/lib/source";
 
 export const COLUMN: Record<ParamKey, string> = {

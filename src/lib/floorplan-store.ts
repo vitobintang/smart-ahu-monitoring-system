@@ -2,15 +2,13 @@ import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { ahus, facilityFloorplan } from "@/db/schema";
 import {
-  collidesWithAnyWall,
   computePolygonAreaSqM,
   DEFAULT_ROOM_VERTICES,
   findZoneAt,
-  resolveAhuPlacement,
-  resolveWallPhysicsAndSnap,
   validateFloorplanPolygon,
   type FloorVertex,
 } from "@/lib/facility-layout";
+import { collidesWithAnyWall, resolveAhuPlacement, resolveWallPhysicsAndSnap } from "@/lib/facility-placement";
 
 export interface StoredFloorplanState {
   vertices: FloorVertex[];

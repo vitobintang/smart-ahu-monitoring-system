@@ -21,11 +21,11 @@ import {
   acceptPendingCommands,
   createCommand,
   expireStaleCommands,
-  ingestTelemetry,
   readAuthoritativeSource,
   reconcileAhuSourceTransition,
   refreshAhuStatus,
 } from "../src/lib/engine";
+import { ingestTelemetry } from "../src/lib/ingest";
 import {
   canonicalizeClientIp,
   deriveLoginIpRateKey,

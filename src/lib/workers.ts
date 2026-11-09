@@ -3,14 +3,9 @@ import { randomId } from "@/lib/ids";
 import { dbWork, isOfflineNetworkError, isTransientDbError, summarizeDbError } from "@/db";
 import { ahus, devices, syncOutbox, telemetry } from "@/db/schema";
 import type { AhuRow, DeviceRow } from "@/db/schema";
-import {
-  acceptPendingCommands,
-  expireStaleCommands,
-  failActiveCommands,
-  ingestTelemetry,
-  refreshAhuStatus,
-  runTrendDetection,
-} from "@/lib/engine";
+import { acceptPendingCommands, expireStaleCommands, failActiveCommands, refreshAhuStatus } from "@/lib/engine";
+import { ingestTelemetry } from "@/lib/ingest";
+import { runTrendDetection } from "@/lib/trends";
 import { drainSyncOutbox } from "@/lib/realtime";
 import { PARAM_MAP, type ParamKey } from "@/lib/domain";
 

@@ -4,7 +4,8 @@ import { ahus, sensorThresholds } from "@/db/schema";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { getAhuDetail, getSeries } from "@/lib/queries";
 import { PARAM_KEYS, PARAM_MAP, type ParamKey } from "@/lib/domain";
-import { normalizeRotation, resolveAhuPlacement, validatePlatformPlacement } from "@/lib/facility-layout";
+import { normalizeRotation } from "@/lib/facility-layout";
+import { resolveAhuPlacement, validatePlatformPlacement } from "@/lib/facility-placement";
 import { getActiveFloorplan } from "@/lib/floorplan-store";
 import { maybePulseWorkers } from "@/lib/workers";
 

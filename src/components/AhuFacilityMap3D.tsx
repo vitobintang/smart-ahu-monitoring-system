@@ -38,23 +38,25 @@ import {
   deleteFloorVertex,
   dragFloorWall,
   extrudeWingOnWall,
-  generateRandomTreePool,
   insertVertexOnWall,
-  isOutdoorTreeSpotClear,
-  MAX_VISIBLE_OUTDOOR_TREES,
   moveFloorVertex,
   normalizeRotation,
   projectPointToSegment,
-  resolveAhuPlacement,
-  resolveWallPhysicsAndSnap,
   ROOM_GRID_SNAP_STEP,
   snapToPlatformGrid,
   type FloorVertex,
-  type PlacementValidation,
   type WallSegment,
 } from "@/lib/facility-layout";
+import {
+  generateRandomTreePool,
+  isOutdoorTreeSpotClear,
+  MAX_VISIBLE_OUTDOOR_TREES,
+  resolveAhuPlacement,
+  resolveWallPhysicsAndSnap,
+  type PlacementValidation,
+} from "@/lib/facility-placement";
 import { RoomMeshPool, type RoomEditTool, type RoomHoverTarget } from "./room-mesh-pool";
-import { buildAhuModel3D, buildOutdoorTree3D, disposeGroupDeep } from "./facility3d/models";
+import { buildAhuModel3D, buildOutdoorTree3D, disposeGroupDeep } from "./ahu-model-builders";
 
 export interface FacilityAhuItem {
   ahu: {
@@ -112,12 +114,14 @@ interface Props {
   onPlacementChange?: (next: PendingPlacement) => void;
 }
 
+
 const STATUS_DOT_CLASS: Record<AhuStatus, string> = {
   RUN: "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.75)]",
   STOP: "bg-slate-400",
   FAULT: "bg-red-500 animate-ping",
   OFFLINE: "bg-rose-500",
 };
+
 
 /** High-contrast architectural button styles for the Light-Mode 3D HUD toolbar. */
 const hudBtnBase =
