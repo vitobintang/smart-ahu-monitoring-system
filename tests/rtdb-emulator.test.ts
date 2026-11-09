@@ -109,6 +109,16 @@ if (emulatorAvailable) {
       if (value === undefined) delete (process.env as Record<string, unknown>)[key];
       else process.env[key] = value;
     }
+    // firebase-admin keeps background channels open after everything is done
+    // (the same reason scripts/migrate-users-to-firebase.mjs exits explicitly),
+    // which would leave the test runner hanging after the last test. Delete
+    // every app, then force a clean exit if the event loop is still held after
+    // a short grace period — all results have already been streamed to the
+    // runner at this point, so nothing is lost. If every handle closed
+    // naturally, the process exits before the timer ever fires.
+    const { getApps, deleteApp } = await import("firebase-admin/app");
+    await Promise.all(getApps().map((a) => deleteApp(a).catch(() => undefined)));
+    setTimeout(() => process.exit(0), 3000);
   });
 
   // Clears the whole namespace through the Admin SDK, which bypasses security
