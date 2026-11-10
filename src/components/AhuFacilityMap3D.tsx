@@ -56,6 +56,15 @@ import {
   type PlacementValidation,
 } from "@/lib/facility-placement";
 import { RoomMeshPool, type RoomEditTool, type RoomHoverTarget } from "./room-mesh-pool";
+import {
+  DEVICE_TYPES,
+  normalizeRoomRect,
+  nextRoomColor,
+  roomCenter,
+  roomAt,
+  snapRoom,
+  type RoomRecord,
+} from "@/lib/facility-rooms";
 import { buildAhuModel3D, buildOutdoorTree3D, disposeGroupDeep } from "./ahu-model-builders";
 
 export interface FacilityAhuItem {
@@ -72,6 +81,7 @@ export interface FacilityAhuItem {
     mapZ?: number | null;
     mapRotation?: number | null;
     mapZone?: string | null;
+    deviceType?: string | null;
   };
   status: AhuStatus;
   lastSeenAt: string | null;
@@ -107,6 +117,9 @@ interface Props {
   canEditRoom?: boolean;
   onSaveRoomVertices?: (vertices: FloorVertex[]) => Promise<void> | void;
   onResetRoomVertices?: () => Promise<void> | void;
+  /** ROOMS layer: named rectangular zones with per-room real temps (unknown = null). */
+  rooms?: RoomRecord[];
+  onSaveRooms?: (rooms: RoomRecord[]) => Promise<void> | void;
   /** Used in placement mode */
   draftAhuId?: string;
   draftAhuName?: string;
@@ -147,6 +160,8 @@ export default function AhuFacilityMap3D({
   canEditRoom = false,
   onSaveRoomVertices,
   onResetRoomVertices,
+  rooms = [],
+  onSaveRooms,
   draftAhuId = "AHU-08",
   draftAhuName = "New Air Handling Unit",
   placement = null,
@@ -207,6 +222,35 @@ export default function AhuFacilityMap3D({
   const [roomNotice, setRoomNotice] = useState<string | null>(null);
   const [roomError, setRoomError] = useState<string | null>(null);
 
+  // ROOMS layer state (independent zones with per-room temps)
+  const [roomsEditing, setRoomsEditing] = useState(false);
+  const [roomsDraft, setRoomsDraft] = useState<RoomRecord[]>(rooms);
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+  const [hoverRoomId, setHoverRoomId] = useState<string | null>(null);
+  const [savingRooms, setSavingRooms] = useState(false);
+  const [roomsNotice, setRoomsNotice] = useState<string | null>(null);
+  const [roomsError, setRoomsError] = useState<string | null>(null);
+  const roomsEditingRef = useRef(roomsEditing);
+  roomsEditingRef.current = roomsEditing;
+  const roomsDraftRef = useRef(roomsDraft);
+  roomsDraftRef.current = roomsDraft;
+  const selectedRoomIdRef = useRef(selectedRoomId);
+  selectedRoomIdRef.current = selectedRoomId;
+  const hoverRoomIdRef = useRef(hoverRoomId);
+  hoverRoomIdRef.current = hoverRoomId;
+  /** live corner drag: { roomId, corner 0..3 } while the pointer is down. */
+  const roomCornerDragRef = useRef<{ roomId: string; corner: number } | null>(null);
+  const roomCornerDragXY = useRef<{ x: number; y: number } | null>(null);
+  /** per-frame hover update throttle for room floors */
+  const roomHoverDirtyRef = useRef(false);
+  const roomLabelElsRef = useRef<Map<string, HTMLDivElement>>(new Map());
+  const roomsDirtyRef = useRef(false);
+
+  useEffect(() => {
+    if (!roomsEditing) setRoomsDraft(rooms);
+  }, [rooms, roomsEditing]);
+
+
   // Keep draft vertices synced when not actively editing
   useEffect(() => {
     if (!editingRoom) {
@@ -245,6 +289,23 @@ export default function AhuFacilityMap3D({
       return { item, placement: p };
     });
   }, [items, activeRoomVertices, savedPlacementOverrides]);
+
+  /** Per-room real temperature: a unit INSIDE the room with a real room_temp reading; else null (blank). */
+  const roomTemps = useMemo(() => {
+    const temps: Record<string, number | null> = {};
+    for (const room of roomsDraft) {
+      let temp: number | null = null;
+      for (const u of resolvedUnits) {
+        if (u.item.values.roomTemp != null && roomAt([room], u.placement.x, u.placement.z)) {
+          temp = u.item.values.roomTemp;
+          break;
+        }
+      }
+      temps[room.id] = temp;
+    }
+    return temps;
+  }, [roomsDraft, resolvedUnits]);
+
 
   // Retire an optimistic override as soon as the polled fleet data confirms the saved position
   useEffect(() => {
@@ -559,6 +620,8 @@ export default function AhuFacilityMap3D({
     facilityGroup: THREE.Group;
     roomVertexGizmoGroup: THREE.Group;
     roomWallGizmoGroup: THREE.Group;
+    roomsFloorGroup: THREE.Group;
+    roomsHandleGroup: THREE.Group;
     splitPreviewOrb: THREE.Mesh;
     ahuRootGroup: THREE.Group;
     ghostGroup: THREE.Group;
@@ -858,6 +921,13 @@ export default function AhuFacilityMap3D({
     scene.add(placedDraftGroup);
     scene.add(wallSnapLineGroup);
 
+    // ROOMS layer: colored floor zones + corner handles (independent of walls)
+    const roomsFloorGroup = new THREE.Group();
+    roomsFloorGroup.renderOrder = 1;
+    scene.add(roomsFloorGroup);
+    const roomsHandleGroup = new THREE.Group();
+    scene.add(roomsHandleGroup);
+
     // Persistent wall-snap highlight meshes (reused in place — never rebuilt per hover)
     const wallSnapBeam = new THREE.Mesh(
       new THREE.BoxGeometry(1, 1, 1),
@@ -887,6 +957,8 @@ export default function AhuFacilityMap3D({
       facilityGroup,
       roomVertexGizmoGroup,
       roomWallGizmoGroup,
+      roomsFloorGroup,
+      roomsHandleGroup,
       splitPreviewOrb,
       ahuRootGroup,
       ghostGroup,
@@ -1034,6 +1106,28 @@ export default function AhuFacilityMap3D({
       return null;
     };
 
+    const findHitRoomCorner = (): { roomId: string; corner: number } | null => {
+      const objs = ahuSceneObjectsRef.current;
+      if (!objs) return null;
+      const hits = raycaster.intersectObjects(objs.roomsHandleGroup.children, true);
+      for (const h of hits) {
+        if (typeof h.object.userData?.roomId === "string" && typeof h.object.userData?.roomCorner === "number") {
+          return { roomId: h.object.userData.roomId as string, corner: h.object.userData.roomCorner as number };
+        }
+      }
+      return null;
+    };
+
+    const findHitRoomFloor = (): string | null => {
+      const objs = ahuSceneObjectsRef.current;
+      if (!objs) return null;
+      const hits = raycaster.intersectObjects(objs.roomsFloorGroup.children, true);
+      for (const h of hits) {
+        if (typeof h.object.userData?.roomId === "string") return h.object.userData.roomId as string;
+      }
+      return null;
+    };
+
     const handlePointerDown = (e: PointerEvent) => {
       isDragging = true;
       isDraggingModelDirectly = false;
@@ -1046,6 +1140,24 @@ export default function AhuFacilityMap3D({
       movedDist = 0;
       autoRotateRef.current = false;
       setAutoRotate(false);
+
+      // ── ROOMS editor: corner drag / room selection ──
+      if (roomsEditingRef.current && e.button === 0) {
+        updateNdc(e.clientX, e.clientY);
+        raycaster.setFromCamera(pointerNdc, camera);
+        const cornerHit = findHitRoomCorner();
+        if (cornerHit) {
+          roomCornerDragRef.current = cornerHit;
+          domEl.style.cursor = "grabbing";
+          domEl.setPointerCapture?.(e.pointerId);
+          return;
+        }
+        const floorHit = findHitRoomFloor();
+        setSelectedRoomId(floorHit);
+        setHoverRoomId(floorHit);
+        domEl.setPointerCapture?.(e.pointerId);
+        return;
+      }
 
       if (editingRoomRef.current && e.button === 0) {
         updateNdc(e.clientX, e.clientY);
@@ -1133,6 +1245,27 @@ export default function AhuFacilityMap3D({
 
     const handlePointerMove = (e: PointerEvent) => {
       const isEditingPlacement = mode === "placement" || Boolean(movingAhuIdRef.current);
+
+      // ROOMS corner drag: defer to the animation frame (same pattern as hall-vertex drags)
+      if (roomCornerDragRef.current && isDragging) {
+        roomCornerDragXY.current = { x: e.clientX, y: e.clientY };
+        roomHoverDirtyRef.current = false;
+        movedDist += Math.hypot(e.clientX - lastX, e.clientY - lastY);
+        lastX = e.clientX;
+        lastY = e.clientY;
+        return;
+      }
+
+      // ROOMS hover highlight (cheap: a few floor planes)
+      if (!movingAhuIdRef.current && mode === "explore") {
+        updateNdc(e.clientX, e.clientY);
+        raycaster.setFromCamera(pointerNdc, camera);
+        const hit = findHitRoomFloor();
+        if (hit !== hoverRoomIdRef.current) {
+          setHoverRoomId(hit);
+          domEl.style.cursor = roomsEditingRef.current && hit ? "pointer" : "default";
+        }
+      }
 
       if (isDragging) {
         const dx = e.clientX - lastX;
@@ -1280,6 +1413,37 @@ export default function AhuFacilityMap3D({
     };
 
     const handlePointerUp = (e: PointerEvent) => {
+      // ROOMS corner drag commit: snap the final rect into React state exactly once
+      if (roomCornerDragRef.current) {
+        const { roomId, corner } = roomCornerDragRef.current;
+        const last = roomCornerDragXY.current;
+        roomCornerDragRef.current = null;
+        roomCornerDragXY.current = null;
+        domEl.style.cursor = "default";
+        if (last) {
+          updateNdc(last.x, last.y);
+          raycaster.setFromCamera(pointerNdc, camera);
+          if (raycaster.ray.intersectPlane(floorPlane, planeHit)) {
+            const x = snapRoom(planeHit.x);
+            const z = snapRoom(planeHit.z);
+            const idx = roomsDraftRef.current.findIndex((r) => r.id === roomId);
+            if (idx >= 0) {
+              const room = roomsDraftRef.current[idx];
+              const next = { ...room };
+              if (corner === 0 || corner === 3) next.x1 = x;
+              else next.x2 = x;
+              if (corner === 0 || corner === 1) next.z1 = z;
+              else next.z2 = z;
+              const rect = normalizeRoomRect(next.x1, next.z1, next.x2, next.z2);
+              if (!("error" in rect)) {
+                roomsDraftRef.current = roomsDraftRef.current.map((r, i) => (i === idx ? { ...r, ...rect } : r));
+                setRoomsDraft(roomsDraftRef.current);
+              }
+            }
+          }
+        }
+      }
+
       const wasDraggingModel = isDraggingModelDirectly;
       const finishedRoomDrag = draggingRoomElement;
       if (isDragging) {
@@ -1612,8 +1776,39 @@ export default function AhuFacilityMap3D({
 
       renderer.render(scene, camera);
 
+      // ROOMS: apply deferred corner drag once per frame (plane intersect → grid snap)
+      if (roomCornerDragRef.current && roomCornerDragXY.current) {
+        updateNdc(roomCornerDragXY.current.x, roomCornerDragXY.current.y);
+        raycaster.setFromCamera(pointerNdc, camera);
+        if (raycaster.ray.intersectPlane(floorPlane, planeHit)) {
+          applyRoomCornerDrag(
+            roomCornerDragRef.current.roomId,
+            roomCornerDragRef.current.corner,
+            snapRoom(planeHit.x),
+            snapRoom(planeHit.z),
+          );
+        }
+      }
+
       const cw = domEl.clientWidth;
       const ch = domEl.clientHeight;
+      // ROOMS: project per-room temp labels
+      for (const room of roomsDraftRef.current) {
+        const el = roomLabelElsRef.current.get(room.id);
+        if (!el) continue;
+        const center = roomCenter(room);
+        projVec.set(center.x, 0.5, center.z);
+        projVec.project(camera);
+        if (projVec.z < -1 || projVec.z > 1) {
+          el.style.opacity = "0";
+          continue;
+        }
+        const sx = (projVec.x * 0.5 + 0.5) * cw;
+        const sy = (-projVec.y * 0.5 + 0.5) * ch;
+        const isActive = hoverRoomIdRef.current === room.id || selectedRoomIdRef.current === room.id;
+        el.style.opacity = isActive ? "1" : "0.82";
+        el.style.transform = `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, 0) translate(-50%, -50%)`;
+      }
       for (const u of resolvedUnitsRef.current) {
         const el = labelElsRef.current.get(u.item.ahu.id);
         if (!el) continue;
@@ -1718,6 +1913,115 @@ export default function AhuFacilityMap3D({
     }
   }, [resolvedUnits, placement, moveDraft, mode, movingAhuId, activeRoomVertices]);
 
+  // ── ROOMS layer: floor zones + corner handles (rebuilt on draft/hover/selection change) ──
+  const roomFloorMeshesRef = useRef<Map<string, THREE.Mesh>>(new Map());
+
+  useEffect(() => {
+    const objs = ahuSceneObjectsRef.current;
+    if (!objs) return;
+    const floors = objs.roomsFloorGroup;
+    disposeGroupDeep(floors);
+    roomFloorMeshesRef.current.clear();
+
+    for (const room of roomsDraft) {
+      const w = Math.max(0.1, room.x2 - room.x1);
+      const d = Math.max(0.1, room.z2 - room.z1);
+      const hovered = hoverRoomIdRef.current === room.id;
+      const selected = selectedRoomIdRef.current === room.id;
+      const color = new THREE.Color(room.color);
+      const floor = new THREE.Mesh(
+        new THREE.PlaneGeometry(w, d),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: hovered || selected ? 0.34 : 0.14,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        }),
+      );
+      floor.rotation.x = -Math.PI / 2;
+      floor.position.set((room.x1 + room.x2) / 2, 0.03, (room.z1 + room.z2) / 2);
+      floor.renderOrder = 2;
+      floor.userData = { roomId: room.id };
+      floors.add(floor);
+      roomFloorMeshesRef.current.set(room.id, floor);
+
+      // subtle border
+      const border = new THREE.LineLoop(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(room.x1, 0.05, room.z1),
+          new THREE.Vector3(room.x2, 0.05, room.z1),
+          new THREE.Vector3(room.x2, 0.05, room.z2),
+          new THREE.Vector3(room.x1, 0.05, room.z2),
+        ]),
+        new THREE.LineBasicMaterial({ color, transparent: true, opacity: hovered || selected ? 0.95 : 0.5 }),
+      );
+      floors.add(border);
+    }
+
+    // corner handles for the SELECTED room while editing
+    disposeGroupDeep(objs.roomsHandleGroup);
+    if (roomsEditingRef.current) {
+      const sel = roomsDraftRef.current.find((r) => r.id === selectedRoomIdRef.current);
+      if (sel) {
+        const corners: Array<[number, number]> = [
+          [sel.x1, sel.z1],
+          [sel.x2, sel.z1],
+          [sel.x2, sel.z2],
+          [sel.x1, sel.z2],
+        ];
+        corners.forEach(([cx, cz], corner) => {
+          const handle = new THREE.Mesh(
+            new THREE.SphereGeometry(0.22, 14, 14),
+            new THREE.MeshBasicMaterial({ color: 0xffffff }),
+          );
+          handle.position.set(cx, 0.16, cz);
+          handle.userData = { roomId: sel.id, roomCorner: corner };
+          objs.roomsHandleGroup.add(handle);
+        });
+      }
+    }
+  }, [roomsDraft, hoverRoomId, selectedRoomId, roomsEditing]);
+
+  /** Imperatively re-positions a room's floor/border + handles during a corner drag (no re-render). */
+  const applyRoomCornerDrag = useCallback((roomId: string, corner: number, x: number, z: number) => {
+    const idx = roomsDraftRef.current.findIndex((r) => r.id === roomId);
+    if (idx < 0) return;
+    const room = roomsDraftRef.current[idx];
+    const next = { ...room };
+    if (corner === 0 || corner === 3) next.x1 = x;
+    else next.x2 = x;
+    if (corner === 0 || corner === 1) next.z1 = z;
+    else next.z2 = z;
+    // normalize live so the rect stays valid while dragging
+    const xs = [next.x1, next.x2].sort((a, b) => a - b);
+    const zs = [next.z1, next.z2].sort((a, b) => a - b);
+    const norm = { ...room, x1: xs[0], x2: xs[1], z1: zs[0], z2: zs[1] };
+    roomsDraftRef.current = roomsDraftRef.current.map((r, i) => (i === idx ? norm : r));
+
+    const floor = roomFloorMeshesRef.current.get(roomId);
+    if (floor) {
+      const w = Math.max(0.1, norm.x2 - norm.x1);
+      const d = Math.max(0.1, norm.z2 - norm.z1);
+      floor.geometry.dispose();
+      floor.geometry = new THREE.PlaneGeometry(w, d);
+      floor.position.set((norm.x1 + norm.x2) / 2, 0.03, (norm.z1 + norm.z2) / 2);
+    }
+    const objs = ahuSceneObjectsRef.current;
+    if (objs) {
+      const corners: Array<[number, number]> = [
+        [norm.x1, norm.z1],
+        [norm.x2, norm.z1],
+        [norm.x2, norm.z2],
+        [norm.x1, norm.z2],
+      ];
+      objs.roomsHandleGroup.children.forEach((h, i) => {
+        const [cx, cz] = corners[i] ?? [0, 0];
+        h.position.set(cx, 0.16, cz);
+      });
+    }
+  }, []);
+
   // Rebuild 3D AHU models whenever unit statuses, positions, or moving state change
   useEffect(() => {
     const objs = ahuSceneObjectsRef.current;
@@ -1734,6 +2038,7 @@ export default function AhuFacilityMap3D({
         status: item.status,
         hasHeater: item.ahu.hasHeater,
         outdoor: !pos.indoor,
+        deviceType: item.ahu.deviceType,
         dimmed: isBeingMoved,
       });
       built.group.position.set(pos.x, 0, pos.z);
@@ -1770,6 +2075,7 @@ export default function AhuFacilityMap3D({
         status,
         hasHeater: movingSource?.item.ahu.hasHeater ?? true,
         outdoor: !activeDraft.indoor,
+        deviceType: movingSource?.item.ahu.deviceType,
       });
       built.halo.material = new THREE.MeshBasicMaterial({
         color: 0x10b981,
@@ -1883,7 +2189,9 @@ export default function AhuFacilityMap3D({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="truncate text-[14px] font-bold tracking-tight text-[#12294d] sm:text-[15.5px]">
-                {editingRoom
+                {roomsEditing
+                  ? "Rooms Editor · Zones & Temperatures"
+                  : editingRoom
                   ? "3D Room Architect · Edit Walls & Corners"
                   : mode === "placement"
                     ? "Place New 3D AHU · Indoor or Outdoor"
@@ -1901,7 +2209,9 @@ export default function AhuFacilityMap3D({
               </span>
             </div>
             <p className="truncate text-[11px] text-[#475569]">
-              {editingRoom
+              {roomsEditing
+                ? "Drag a room's corner points on the grid · click a colored floor to select · add or remove rooms below"
+                : editingRoom
                 ? "Drag any wall or corner orb · double-click a wall to add a point · extrude new wings in 1 click"
                 : mode === "placement" || movingAhuId
                   ? "Place inside any wing or anywhere outside · snaps onto the 2m floor grid · R / Shift+R rotates 90°"
@@ -1981,8 +2291,37 @@ export default function AhuFacilityMap3D({
             </>
           ) : null}
 
+          {/* ROOMS editor Button */}
+          {mode === "explore" && canEditRoom && !movingAhuId && !editingRoom ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (roomsEditing) {
+                  setRoomsEditing(false);
+                  setSelectedRoomId(null);
+                  setRoomsDraft(rooms);
+                  setRoomsError(null);
+                  setRoomsNotice(null);
+                } else {
+                  setRoomsEditing(true);
+                  setRoomsDraft(rooms);
+                  setRoomsNotice("Drag the corner points to resize a room. Click a colored floor to select it.");
+                }
+              }}
+              className={cx(
+                hudBtnBase,
+                roomsEditing
+                  ? "border-indigo-600 bg-indigo-600 text-white shadow-[0_8px_18px_-6px_rgba(79,70,229,0.75)]"
+                  : hudBtnNeutral,
+              )}
+              title="Edit rooms: add rooms, drag corners on the grid, resize or remove"
+            >
+              <LayoutGrid size={13} /> {roomsEditing ? "Exit Rooms" : "Rooms"}
+            </button>
+          ) : null}
+
           {/* Edit 3D Room Button */}
-          {mode === "explore" && canEditRoom && !movingAhuId ? (
+          {mode === "explore" && canEditRoom && !movingAhuId && !roomsEditing ? (
             <button
               type="button"
               onClick={() => (editingRoom ? cancelEditingRoom() : startEditingRoom())}
@@ -2254,7 +2593,152 @@ export default function AhuFacilityMap3D({
       >
         <div ref={mountRef} className="absolute inset-0 h-full w-full touch-none" />
 
+        {/* ROOMS editor floating panel */}
+        {roomsEditing ? (
+          <div className="absolute left-3 top-3 z-20 w-64 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-[0_18px_40px_-16px_rgba(18,41,77,0.4)] backdrop-blur-md">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Rooms ({roomsDraft.length})</span>
+              <button
+                type="button"
+                onClick={() => {
+                  const candidate: RoomRecord = {
+                    id: `room-${Math.random().toString(36).slice(2, 8)}`,
+                    name: `Room ${roomsDraft.length + 1}`,
+                    color: nextRoomColor(roomsDraft),
+                    x1: -2,
+                    z1: -6,
+                    x2: 2,
+                    z2: -2,
+                  };
+                  // nudge onto a free spot
+                  let rect = { x1: candidate.x1, z1: candidate.z1, x2: candidate.x2, z2: candidate.z2 };
+                  for (let attempt = 0; attempt < 40; attempt += 1) {
+                    const cx = rect.x1 + (rect.x2 - rect.x1) / 2;
+                    const cz = rect.z1 + (rect.z2 - rect.z1) / 2;
+                    if (!roomAt(roomsDraft, cx, cz)) break;
+                    rect = { x1: rect.x1 + 1, z1: rect.z1 + 1, x2: rect.x2 + 1, z2: rect.z2 + 1 };
+                  }
+                  const room = { ...candidate, ...rect };
+                  setRoomsDraft([...roomsDraft, room]);
+                  setSelectedRoomId(room.id);
+                  setRoomsNotice(null);
+                }}
+                className="inline-flex items-center gap-1 rounded-lg border border-[#cbe0fd] bg-[#eef5ff] px-2 py-0.5 text-[10.5px] font-bold text-[#1d6ef2] transition hover:bg-[#dceaff]"
+              >
+                <Plus size={11} /> Add Room
+              </button>
+            </div>
+            <div className="max-h-44 space-y-1 overflow-y-auto">
+              {roomsDraft.map((room) => {
+                const temp = roomTemps[room.id];
+                const sel = selectedRoomId === room.id;
+                const size = `${(room.x2 - room.x1).toFixed(1)}×${(room.z2 - room.z1).toFixed(1)} m`;
+                return (
+                  <button
+                    key={room.id}
+                    type="button"
+                    onClick={() => setSelectedRoomId(room.id)}
+                    className={cx(
+                      "flex w-full items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition",
+                      sel ? "border-[#1d6ef2] bg-[#eef5ff]" : "border-slate-200 hover:bg-slate-50",
+                    )}
+                  >
+                    <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ backgroundColor: room.color }} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[11.5px] font-bold text-[#12294d]">{room.name}</span>
+                      <span className="block font-mono text-[10px] text-slate-400">
+                        {size} · {temp != null ? `${temp.toFixed(1)}°C` : "temp unknown"}
+                      </span>
+                    </span>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setRoomsDraft(roomsDraft.filter((r) => r.id !== room.id));
+                        if (selectedRoomId === room.id) setSelectedRoomId(null);
+                      }}
+                      className="rounded p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
+                      title="Delete room"
+                    >
+                      <Trash2 size={12} />
+                    </span>
+                  </button>
+                );
+              })}
+              {roomsDraft.length === 0 ? (
+                <p className="px-1 py-2 text-[11px] text-slate-400">No rooms yet — add the first one.</p>
+              ) : null}
+            </div>
+            {roomsNotice ? <p className="mt-2 text-[10.5px] leading-snug text-emerald-600">{roomsNotice}</p> : null}
+            {roomsError ? <p className="mt-2 text-[10.5px] leading-snug text-rose-600">{roomsError}</p> : null}
+            <div className="mt-2.5 flex gap-1.5">
+              <button
+                type="button"
+                disabled={savingRooms}
+                onClick={async () => {
+                  setSavingRooms(true);
+                  setRoomsError(null);
+                  try {
+                    await onSaveRooms?.(roomsDraft);
+                    setRoomsEditing(false);
+                    setSelectedRoomId(null);
+                    setRoomsNotice(null);
+                  } catch (err) {
+                    setRoomsError(err instanceof Error ? err.message : "Failed to save rooms");
+                  } finally {
+                    setSavingRooms(false);
+                  }
+                }}
+                className="flex-1 rounded-lg bg-[#1d6ef2] px-2 py-1.5 text-[11px] font-bold text-white transition hover:bg-[#1456c7] disabled:opacity-60"
+              >
+                {savingRooms ? "Saving…" : "Save Rooms"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRoomsEditing(false);
+                  setRoomsDraft(rooms);
+                  setSelectedRoomId(null);
+                  setRoomsError(null);
+                  setRoomsNotice(null);
+                }}
+                className="rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-bold text-slate-500 transition hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          {/* ROOM temp pills: real reading inside the room, or blank (unknown) */}
+          {roomsDraft.map((room) => {
+            const temp = roomTemps[room.id];
+            const active = hoverRoomId === room.id || selectedRoomId === room.id;
+            return (
+              <div
+                key={room.id}
+                ref={(el) => {
+                  if (el) roomLabelElsRef.current.set(room.id, el);
+                  else roomLabelElsRef.current.delete(room.id);
+                }}
+                style={{ left: 0, top: 0, opacity: 0, borderColor: active ? room.color : undefined }}
+                className={cx(
+                  "absolute z-[9] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center rounded-xl border bg-white/90 px-3 py-1.5 text-center shadow-[0_10px_24px_-10px_rgba(18,41,77,0.35)] backdrop-blur-md transition-[opacity,border-color] duration-150",
+                  active ? "shadow-lg" : "",
+                )}
+              >
+                <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                  <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: room.color }} />
+                  {room.name}
+                </span>
+                <span className={cx("font-mono text-[15px] font-bold", temp != null ? "text-[#12294d]" : "text-slate-300")}>
+                  {temp != null ? `${temp.toFixed(1)}°C` : "—"}
+                </span>
+              </div>
+            );
+          })}
           {/* Compact Floating Name Pills */}
           {resolvedUnits.map(({ item, placement: pos }) => {
             const shortName = item.ahu.name.replace(new RegExp(`^${item.ahu.id}\\s*[-·]?\\s*`, "i"), "").trim();

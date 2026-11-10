@@ -75,9 +75,10 @@ const thresholdCount = Object.keys(existingThresholds).length;
 
 const fleetMeta = defaultAhuRecord(FLEET_ID);
 // The unit's pre-shared token is already in the owner's deviceOwners/ tree:
-// the app IS the commissioned controller for it.
+// the app IS the commissioned controller for it. The unit is an AHU.
 fleetMeta.physicalControlEnabled = true;
 fleetMeta.location = "Daikin S21 bridge unit";
+fleetMeta.deviceType = "AHU";
 
 const thresholdSeed: Array<Record<string, unknown>> = (fleetMeta.installedSensors ?? []).map((parameter: string) => ({
   ahuId: FLEET_ID,
@@ -95,8 +96,13 @@ const thresholdSeed: Array<Record<string, unknown>> = (fleetMeta.installedSensor
   updatedAt: Date.now(),
 }));
 
+const { ensureDefaultRooms } = await import("../src/lib/rtdb/rooms");
+const roomsCount = (await rtdb.get<Record<string, unknown>>("rooms")) ?? {};
+const roomsToSeed = Object.keys(roomsCount).length === 0;
+
 console.log(`fleet unit ${FLEET_ID}:`);
-console.log(`  devices/${FLEET_ID}/app — ${existingMeta ? "exists (kept)" : "will be created"}`);
+console.log(`  devices/${FLEET_ID}/app — ${existingMeta ? "exists (kept)" : "will be created"} (deviceType: AHU)`);
+console.log(`  rooms/ — ${roomsToSeed ? "5 default rooms will be created (NW contains the unit)" : `${Object.keys(roomsCount).length} existing (kept)`}`);
 console.log(`  ${THRESHOLDS_NODE}/${FLEET_ID} — ${thresholdCount} existing; ${thresholdSeed.length - thresholdCount} to add`);
 for (const t of thresholdSeed) {
   if (!(t.parameter as string in existingThresholds)) {
@@ -125,6 +131,10 @@ for (const t of thresholdSeed) {
   if (key in existingThresholds) continue;
   await rtdb.set(n(`${THRESHOLDS_NODE}/${FLEET_ID}/${key}`), t);
   console.log(`✓ threshold ${key}`);
+}
+if (roomsToSeed && apply) {
+  const seeded = await ensureDefaultRooms(rtdb, "provision");
+  console.log(`✓ seeded ${seeded} default room(s)`);
 }
 console.log("");
 console.log("Done — start the app; live data syncs within ~5 s.");

@@ -52,6 +52,8 @@ export interface RtdbAhuRecord {
   physicalControlEnabled: boolean;
   /** Pause switch: when false the sampler skips the unit entirely. */
   enabled?: boolean;
+  /** AHU | AC_DAK | AC_SPLIT_WALL | AC_STANDING (3D model + labeling). */
+  deviceType?: string;
   mapX: number | null;
   mapZ: number | null;
   mapRotation: number;
@@ -76,6 +78,7 @@ export function defaultAhuRecord(ahuId: string, now = Date.now()): RtdbAhuRecord
     faultCode: null,
     physicalControlEnabled: false,
     enabled: true,
+    deviceType: "AHU",
     mapX: null,
     mapZ: null,
     mapRotation: 0,
@@ -234,6 +237,7 @@ export function ahuToRow(record: RtdbAhuRecord): Record<string, unknown> {
     setpoint: record.setpoint,
     faultCode: n(record.faultCode),
     physicalControlEnabled: record.physicalControlEnabled,
+    deviceType: record.deviceType ?? "AHU",
     mapX: n(record.mapX),
     mapZ: n(record.mapZ),
     mapRotation: record.mapRotation,
