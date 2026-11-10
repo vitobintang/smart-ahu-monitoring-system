@@ -163,11 +163,25 @@ export function alarmToRow(record: RtdbAlarmRecord): Record<string, unknown> {
 
 /** JSON shape for API responses (ISO timestamps). */
 export function alarmToJson(record: RtdbAlarmRecord): Record<string, unknown> {
+  // `n()` restores nulls RTDB stripped (see live-read.ts): null acknowledgedAt/
+  // resolvedAt/breachDirection come back as undefined, and new Date(undefined)
+  // would throw RangeError on toISOString (prod 500 on /api/alarms?state=active).
+  const n = <T,>(value: T | undefined): T | null => (value === undefined ? null : (value as T));
   return {
     ...record,
-    acknowledgedAt: record.acknowledgedAt === null ? null : new Date(record.acknowledgedAt).toISOString(),
+    breachDirection: n(record.breachDirection),
+    observedValue: n(record.observedValue),
+    thresholdValue: n(record.thresholdValue),
+    acknowledgedBy: n(record.acknowledgedBy),
+    acknowledgedAt:
+      record.acknowledgedAt === undefined || record.acknowledgedAt === null
+        ? null
+        : new Date(record.acknowledgedAt).toISOString(),
     triggeredAt: new Date(record.triggeredAt).toISOString(),
-    resolvedAt: record.resolvedAt === null ? null : new Date(record.resolvedAt).toISOString(),
+    resolvedAt:
+      record.resolvedAt === undefined || record.resolvedAt === null
+        ? null
+        : new Date(record.resolvedAt).toISOString(),
   };
 }
 

@@ -4,6 +4,7 @@ import { deepStrictEqual, equal } from "node:assert/strict";
 import { InMemoryRtdb } from "../src/lib/rtdb/store";
 import {
   alarmNode,
+  alarmToJson,
   applyAlarmAck,
   applyAlarmResolve,
   writeRtdbAlarm,
@@ -82,4 +83,27 @@ test("full lifecycle: raise → ack → resolve → readback", async () => {
   // a late duplicate resolve is harmless (idempotent patch)
   await applyAlarmResolve(db, "alm-2", T0 + 61_000);
   equal((await db.get<RtdbAlarmRecord>(alarmNode("alm-2")))?.resolvedAt, T0 + 61_000);
+});
+
+test("alarmToJson survives RTDB-stripped nulls (prod /api/alarms 500 regression)", () => {
+  // RTDB strips null fields on write, so an active alarm reads back with
+  // acknowledgedAt/resolvedAt/breachDirection MISSING (undefined, not null).
+  // new Date(undefined).toISOString() used to throw RangeError → 500.
+  const stripped = {
+    id: "alm-x",
+    ahuId: "GTM-DAIKIN-001",
+    parameter: "COMMUNICATION",
+    priority: "HIGH",
+    message: "Heartbeat lost",
+    isActive: true,
+    acknowledged: false,
+    triggeredAt: 1_794_182_400_000,
+  } as unknown as Parameters<typeof alarmToJson>[0];
+  // (if this throws RangeError the test fails — the old bug)
+  const json = alarmToJson(stripped);
+  equal(json.acknowledgedAt, null);
+  equal(json.resolvedAt, null);
+  equal(json.breachDirection, null);
+  equal(json.observedValue, null);
+  equal(json.triggeredAt, new Date(1_794_182_400_000).toISOString());
 });
