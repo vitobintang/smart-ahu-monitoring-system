@@ -37,9 +37,9 @@ export interface Card {
 
 /** Product-shot preview per device kind — same white studio style as the AHU shot. */
 const DEVICE_IMG: Record<string, string> = {
-  AC_SPLIT_WALL: "/ahu/unit-split.png",
-  AC_DAK: "/ahu/unit-dak.png",
-  AC_STANDING: "/ahu/unit-standing.png",
+  AC_SPLIT_WALL: "/ahu/unit-split-t.png",
+  AC_DAK: "/ahu/unit-dak-t.png",
+  AC_STANDING: "/ahu/unit-standing-t.png",
 };
 
 const PILL: Record<AhuStatus, { label: string; cls: string }> = {
@@ -289,7 +289,7 @@ export function UnitCard({ card }: { card: Card }) {
         <div className="mt-3 flex items-center gap-3">
           <div className="relative h-[84px] w-32 flex-none overflow-hidden">
             <Image
-              src={DEVICE_IMG[card.ahu.deviceType ?? ""] ?? "/ahu/unit-iso2.png"}
+              src={DEVICE_IMG[card.ahu.deviceType ?? ""] ?? "/ahu/unit-iso2-t.png"}
               alt={`${card.ahu.id} unit`}
               fill
               sizes="128px"
