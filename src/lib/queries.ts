@@ -10,7 +10,8 @@ import {
 import { readTelemetryRange, streamTelemetryRangeDescending } from "@/lib/rtdb/history";
 import { readAlarmCounts, readAlarmHistory, alarmToRow } from "@/lib/rtdb/alarms";
 import { readCommandHistory, commandToRow, readActiveCommandSlots } from "@/lib/rtdb/commands";
-import { readRtdbAhu, readRtdbAhus, readRtdbDevices, readRtdbThresholds, ahuToRow, deviceToRow, thresholdToRow } from "@/lib/rtdb/registry";
+import { readRtdbAhu, readRtdbDevices, readRtdbThresholds, ahuToRow, deviceToRow, thresholdToRow } from "@/lib/rtdb/registry";
+import { readActiveFleetRecords } from "@/lib/rtdb/local-fleet";
 import { activeCommandOf } from "@/lib/rtdb/commands";
 import { readRtdbTrendCounts, readRtdbTrendHistory, trendToRow } from "@/lib/rtdb/trends";
 import { getLatestTelemetry } from "@/lib/rtdb/telemetry";
@@ -78,7 +79,7 @@ export async function getDashboard(): Promise<{
 }> {
   const ahuRows: Array<AhuRow> = await (async () => {
     const rtdb = await requireRtdb();
-    const registry = await readRtdbAhus(rtdb);
+    const registry = await readActiveFleetRecords(rtdb);
     return [...registry.values()]
       .sort((a, b) => (a.id < b.id ? -1 : 1))
       .map((r) => ahuToRow(r) as unknown as AhuRow);

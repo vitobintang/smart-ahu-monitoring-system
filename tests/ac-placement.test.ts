@@ -13,7 +13,12 @@ import {
   normalizeRotation,
   type WallSegment,
 } from "../src/lib/facility-layout";
-import { isAcDeviceType, resolveAcDevicePlacement, suggestAcDeviceSlot } from "../src/lib/facility-placement";
+import {
+  isAcDeviceType,
+  resolveAcDevicePlacement,
+  resolveWallPhysicsAndSnap,
+  suggestAcDeviceSlot,
+} from "../src/lib/facility-placement";
 
 /** Nearest-face distance from a point to any wall centerline (for preconditions). */
 function nearestWallFaceDist(x: number, z: number): { dist: number; seg: WallSegment; side: 1 | -1 } {
@@ -137,4 +142,31 @@ test("suggestAcDeviceSlot returns a mount-valid slot for every AC kind", () => {
     if (deviceType === "AC_SPLIT_WALL") equal(check.snappedToWall, true);
     if (deviceType === "AC_DAK") equal(check.indoor, true);
   }
+});
+
+test("2026-11-10: NO device may sit outside the building", () => {
+  // AHU outdoors is now rejected by the main solver.
+  const outdoor = resolveWallPhysicsAndSnap(OUTDOOR_CAMPUS_BOUNDS.xMax - 3, OUTDOOR_CAMPUS_BOUNDS.zMax - 3, []);
+  equal(outdoor.valid, false);
+  ok(outdoor.reason?.includes("inside the building"), `reason: ${outdoor.reason}`);
+
+  // Standing units too.
+  const tower = resolveAcDevicePlacement("AC_STANDING", OUTDOOR_CAMPUS_BOUNDS.xMax - 3, OUTDOOR_CAMPUS_BOUNDS.zMax - 3, []);
+  equal(tower.valid, false);
+
+  // A split dragged onto an OUTER wall face must land on the INDOOR face.
+  const seg = computeExteriorWallSegments(null).find((s) => Math.hypot(s.x2 - s.x1, s.z2 - s.z1) >= 4)!;
+  const len = Math.hypot(seg.x2 - seg.x1, seg.z2 - seg.z1);
+  const tx = (seg.x2 - seg.x1) / len;
+  const tz = (seg.z2 - seg.z1) / len;
+  const nx = -tz;
+  const nz = tx;
+  const { x: cx, z: cz } = centroid();
+  const toRoom = { x: cx - seg.x1, z: cz - seg.z1 };
+  const roomSide = Math.sign(toRoom.x * nx + toRoom.z * nz) as 1 | -1;
+  const outsideX = seg.x1 + tx * (len / 2) + nx * -roomSide * 0.8;
+  const outsideZ = seg.z1 + tz * (len / 2) + nz * -roomSide * 0.8;
+  const split = resolveAcDevicePlacement("AC_SPLIT_WALL", outsideX, outsideZ, []);
+  equal(split.valid, true);
+  equal(split.indoor, true, "split must hang on the indoor face");
 });

@@ -297,20 +297,29 @@ export async function acceptPendingRtdb(
     details: { ahuId, commandType: record.commandType, transition: "REQUESTED -> ACCEPTED" },
   });
 
-  // Daikin S21 integration: an accepted command is applied to the OWNER's
-  // devices/{ahuId} node immediately (power/setpoint). Failures never break
-  // the command lifecycle — the owner's bridge simply stays on its last state.
+  // Daikin S21 integration: an accepted command is applied to the device's
+  // status node immediately (power/setpoint) — the OWNER's real tree, or the
+  // app-DB localDevices tree when the local fictional fleet is active.
+  // Failures never break the command lifecycle — the bridge simply stays on
+  // its last state.
   try {
     const { readDaikinDevice, writeDaikinControl, commandsToControlPatch } = await import("./daikin");
-    let ownerRtdb: RtdbAdapter | null = owner ?? null;
-    if (!ownerRtdb) {
-      const { tryGetOwnerRtdb } = await import("@/lib/firebase/admin");
-      ownerRtdb = await tryGetOwnerRtdb();
-    }
-    if (ownerRtdb && (await readDaikinDevice(ownerRtdb, ahuId))) {
-      const patch = commandsToControlPatch([record]);
-      if (await writeDaikinControl(ownerRtdb, ahuId, patch)) {
-        console.log(`[daikin] control written to devices/${ahuId}:`, JSON.stringify(patch));
+    const { readDeviceSource, LOCAL_DEVICES_NODE } = await import("./local-fleet");
+    const patch = commandsToControlPatch([record]);
+    if ((await readDeviceSource(rtdb)) === "local" && (await readDaikinDevice(rtdb, ahuId, { devicesNode: LOCAL_DEVICES_NODE }))) {
+      if (await writeDaikinControl(rtdb, ahuId, patch, { devicesNode: LOCAL_DEVICES_NODE })) {
+        console.log(`[local-fleet] control written to localDevices/${ahuId}:`, JSON.stringify(patch));
+      }
+    } else {
+      let ownerRtdb: RtdbAdapter | null = owner ?? null;
+      if (!ownerRtdb) {
+        const { tryGetOwnerRtdb } = await import("@/lib/firebase/admin");
+        ownerRtdb = await tryGetOwnerRtdb();
+      }
+      if (ownerRtdb && (await readDaikinDevice(ownerRtdb, ahuId))) {
+        if (await writeDaikinControl(ownerRtdb, ahuId, patch)) {
+          console.log(`[daikin] control written to devices/${ahuId}:`, JSON.stringify(patch));
+        }
       }
     }
   } catch (err) {

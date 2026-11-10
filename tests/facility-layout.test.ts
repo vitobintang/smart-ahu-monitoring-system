@@ -54,7 +54,7 @@ test("facility room is non-rectangular multi-branch with 5 indoor AHUs and 2 out
   }
 });
 
-test("unrestricted outdoor campus allows placing or moving AHUs anywhere outside while solid walls snap & block clipping", () => {
+test("indoor-only placement: open-campus drops are rejected while solid walls snap & block clipping", () => {
   const existing = Object.entries(DEFAULT_AHU_PLACEMENTS).map(([id, pos]) => ({
     id,
     x: pos.x,
@@ -76,18 +76,15 @@ test("unrestricted outdoor campus allows placing or moving AHUs anywhere outside
   equal(indoorSnap.rotation, 0);
   equal(collidesWithAnyWall(indoorSnap.snappedX, indoorSnap.snappedZ, indoorSnap.rotation), false);
 
-  // Outdoor wall snap: near outside of East wall (15.6, 10.2) snaps flush outside facing East (270deg)
+  // 2026-11-10: devices must live INSIDE the building — the outdoor wall snap
+  // and open-campus placements are rejected with an explicit reason.
   const outdoorWallSnap = resolveWallPhysicsAndSnap(15.6, 10.2, existing, {
     enableWallSnap: true,
     autoAlignRotation: true,
   });
-  equal(outdoorWallSnap.valid, true);
-  equal(outdoorWallSnap.indoor, false);
-  equal(outdoorWallSnap.snappedToWall, true);
-  equal(outdoorWallSnap.rotation, 270);
-  equal(collidesWithAnyWall(outdoorWallSnap.snappedX, outdoorWallSnap.snappedZ, outdoorWallSnap.rotation), false);
+  equal(outdoorWallSnap.valid, false);
+  ok(outdoorWallSnap.reason?.includes("inside the building"));
 
-  // Unrestricted open outdoor placement anywhere around the building (no yellow pad limitation!)
   for (const [ox, oz] of [
     [-30, -26],
     [28, 24],
@@ -95,9 +92,8 @@ test("unrestricted outdoor campus allows placing or moving AHUs anywhere outside
     [0, -26],
   ]) {
     const res = validatePlatformPlacement(ox, oz, existing);
-    equal(res.valid, true, `Outdoor placement at (${ox}, ${oz}) should be allowed anywhere outside`);
-    equal(res.indoor, false);
-    equal(collidesWithAnyWall(res.snappedX, res.snappedZ, res.rotation), false);
+    equal(res.valid, false, `Outdoor placement at (${ox}, ${oz}) must be rejected`);
+    ok(res.reason?.includes("inside the building"));
   }
 });
 
@@ -127,11 +123,11 @@ test("floor platform placement rejects off-site and overlapping positions and su
     ok(Math.hypot(u.x - cleanIndoor.x, u.z - cleanIndoor.z) >= MIN_AHU_SPACING * 0.85);
   }
 
-  const cleanOutdoor = suggestCleanPlatformSlot(existing, false);
-  equal(cleanOutdoor.indoor, false);
-  const checkOut = validatePlatformPlacement(cleanOutdoor.x, cleanOutdoor.z, existing, undefined, cleanOutdoor.rotation);
-  equal(checkOut.valid, true);
-  ok(FACILITY_ZONES.some((z) => !z.indoor && z.id === cleanOutdoor.zone.id));
+  // 2026-11-10: the suggester NEVER offers an outdoor slot anymore.
+  const forcedIndoor = suggestCleanPlatformSlot(existing, false);
+  equal(forcedIndoor.indoor, true);
+  const checkForced = validatePlatformPlacement(forcedIndoor.x, forcedIndoor.z, existing, undefined, forcedIndoor.rotation);
+  equal(checkForced.valid, true);
 });
 
 test("STOP coast-down and settled 0% fan feedback keep unit online in STOP so START is immediately allowed", () => {
@@ -343,22 +339,23 @@ test("room editing snaps walls & corners exactly onto the visible 2m floor grid 
 });
 test("AHU placement snaps free positions onto the visible 2m floor grid while wall flush-snap stays magnetic", () => {
   // Free (non-wall) placement with gridStep=2 lands the AHU centre exactly on the visible
-  // 2m × 2m floor-grid intersections: (-13.4, -6.2) -> (-14, -6)
-  const gridSnapped = resolveWallPhysicsAndSnap(-13.4, -6.2, [], {
+  // 2m × 2m floor-grid intersections: (-13.4, -12.2) -> (-14, -12)  (indoor-only since 2026-11-10)
+  const gridSnapped = resolveWallPhysicsAndSnap(-13.4, -12.2, [], {
     enableWallSnap: false,
     gridStep: ROOM_GRID_SNAP_STEP,
   });
   equal(gridSnapped.valid, true);
+  equal(gridSnapped.indoor, true);
   equal(gridSnapped.snappedX, -14);
-  equal(gridSnapped.snappedZ, -6);
+  equal(gridSnapped.snappedZ, -12);
 
   // Default (no gridStep) preserves the fine 0.5 m placement grid for saved/server positions
-  const fineSnapped = resolveWallPhysicsAndSnap(-13.4, -6.2, [], { enableWallSnap: false });
+  const fineSnapped = resolveWallPhysicsAndSnap(-13.4, -12.2, [], { enableWallSnap: false });
   equal(fineSnapped.snappedX, -13.5);
-  equal(fineSnapped.snappedZ, -6);
+  equal(fineSnapped.snappedZ, -12);
 
   // Rotation requested through the snap pipeline is normalized into 0..360: 460° -> 100°
-  const rotated = resolveWallPhysicsAndSnap(-13.4, -6.2, [], {
+  const rotated = resolveWallPhysicsAndSnap(-13.4, -12.2, [], {
     enableWallSnap: false,
     rotation: 460,
     gridStep: ROOM_GRID_SNAP_STEP,

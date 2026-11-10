@@ -334,6 +334,20 @@ export function resolveWallPhysicsAndSnap(
       reason: "Blocked by wall corner — slide slightly along the wall or onto open floor.",
     };
   }
+  // Devices live INSIDE the building — outdoor placement is disabled (2026-11-10).
+  if (!footprint.indoor) {
+    return {
+      valid: false,
+      snappedX: workX,
+      snappedZ: workZ,
+      rotation,
+      indoor: false,
+      zone: footprint.zone,
+      snappedToWall: false,
+      snappedWall: null,
+      reason: "Devices must be placed inside the building.",
+    };
+  }
 
   // Step 3: Unit-to-unit solid collision check
   const { hx, hz } = getAhuHalfExtents(rotation);
@@ -395,6 +409,9 @@ export function suggestCleanPlatformSlot(
   preferIndoor = true,
   roomVertices?: FloorVertex[] | null,
 ): { x: number; z: number; rotation: number; zone: WingZone; indoor: boolean } {
+  // 2026-11-10: devices must sit inside the building — the preferOutdoor
+  // candidates are kept only for coordinate history and never suggested.
+  preferIndoor = true;
   const candidates: Array<[number, number, number]> = preferIndoor
     ? [
         [4, -6.9, 0],
@@ -718,9 +735,25 @@ export function resolveAcDevicePlacement(
       const alongMax = len - alongMin;
       const clampedAlong = Math.min(alongMax, Math.max(alongMin, along));
       const signedPerp = (clampX - seg.x1) * nx + (clampZ - seg.z1) * nz;
-      const side: 1 | -1 = signedPerp >= 0 ? 1 : -1;
       const faceDist = Math.abs(Math.abs(signedPerp) - WALL_HALF_THICK);
       if (faceDist >= bestFaceDist) continue;
+
+      // Devices live inside the building: pick the face whose hang point is
+      // indoors (fall back to the drag side when neither/both qualify).
+      const perpOffset = WALL_HALF_THICK + WALL_FLUSH_GAP + AC_SPLIT_HALF_DEPTH;
+      const sideFor = (s: 1 | -1) => ({
+        x: Number((seg.x1 + tx * clampedAlong + nx * s * perpOffset).toFixed(2)),
+        z: Number((seg.z1 + tz * clampedAlong + nz * s * perpOffset).toFixed(2)),
+      });
+      const dragSide: 1 | -1 = signedPerp >= 0 ? 1 : -1;
+      const candSide = sideFor(dragSide);
+      const otherSide = sideFor((-dragSide) as 1 | -1);
+      const dragSideIndoor = isPointInsideIndoorRoom(candSide.x, candSide.z, options?.roomVertices);
+      const otherSideIndoor = isPointInsideIndoorRoom(otherSide.x, otherSide.z, options?.roomVertices);
+      const side: 1 | -1 = dragSideIndoor ? dragSide : otherSideIndoor ? ((-dragSide) as 1 | -1) : dragSide;
+      const point = sideFor(side);
+      const indoor = isPointInsideIndoorRoom(point.x, point.z, options?.roomVertices);
+      if (!indoor) continue; // no indoor face on this wall — skip it entirely
       bestFaceDist = faceDist;
 
       // Local -Z faces the wall (same convention as the AHU wall snap) so the
@@ -728,11 +761,7 @@ export function resolveAcDevicePlacement(
       const towardWallX = -side * nx;
       const towardWallZ = -side * nz;
       const rotation = normalizeRotation((Math.atan2(towardWallX, -towardWallZ) * 180) / Math.PI);
-      const perpOffset = WALL_HALF_THICK + WALL_FLUSH_GAP + AC_SPLIT_HALF_DEPTH;
-      const x = Number((seg.x1 + tx * clampedAlong + nx * side * perpOffset).toFixed(2));
-      const z = Number((seg.z1 + tz * clampedAlong + nz * side * perpOffset).toFixed(2));
-      const indoor = isPointInsideIndoorRoom(x, z, options?.roomVertices);
-      best = { x, z, rotation, seg, indoor, zone: indoor ? describeIndoorSector(x, z) : describeOutdoorSector(x, z) };
+      best = { x: point.x, z: point.z, rotation, seg, indoor: true, zone: describeIndoorSector(point.x, point.z) };
     }
 
     if (!best) {
@@ -815,10 +844,16 @@ export function resolveAcDevicePlacement(
     if (!pushed) break;
   }
   const indoor = isPointInsideIndoorRoom(x, z, options?.roomVertices);
-  const zone = indoor ? describeIndoorSector(x, z) : describeOutdoorSector(x, z);
+  if (!indoor) {
+    return acInvalid(
+      { snappedX: x, snappedZ: z, rotation: requestedRotation },
+      "Devices must be placed inside the building.",
+    );
+  }
+  const zone = describeIndoorSector(x, z);
   const conflict = acSpacingConflict(x, z, existing, excludeId);
   if (conflict) {
-    return acInvalid({ snappedX: x, snappedZ: z, rotation: requestedRotation, indoor, zone }, conflict);
+    return acInvalid({ snappedX: x, snappedZ: z, rotation: requestedRotation, indoor: true, zone }, conflict);
   }
   return {
     valid: true,
