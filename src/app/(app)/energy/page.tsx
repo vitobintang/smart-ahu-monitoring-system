@@ -17,7 +17,11 @@ interface Detail {
 /** Read-only energy monitoring derived from the 12 supported parameters (FR-06). */
 export default function EnergyPage() {
   const [ahuId, setAhuId] = useState<string>(AHU_IDS[0]);
-  const { data, error, loading } = usePoll<Detail>(`/api/ahu/${ahuId}?window=30`, LOCAL_POLL_MS);
+  // Unit list follows the ACTIVE device fleet (Daikin DB ⇄ My DB switch).
+  const { data: listData } = usePoll<{ ahus: Array<{ id: string }> }>("/api/ahu", 30000);
+  const unitIds = listData?.ahus?.length ? listData.ahus.map((a) => a.id) : [...AHU_IDS];
+  const activeAhuId = unitIds.includes(ahuId) ? ahuId : unitIds[0];
+  const { data, error, loading } = usePoll<Detail>(`/api/ahu/${activeAhuId}?window=30`, LOCAL_POLL_MS);
 
   const latest = (data?.latest ?? {}) as Record<string, unknown>;
   const current = typeof latest.current === "number" ? latest.current : null;
@@ -45,13 +49,13 @@ export default function EnergyPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
-          {AHU_IDS.map((id) => (
+          {unitIds.map((id) => (
             <button
               key={id}
               onClick={() => setAhuId(id)}
               className={cx(
                 "rounded-lg px-2.5 py-1.5 font-mono text-[11px] font-bold transition",
-                ahuId === id ? "bg-[#2563eb] text-white shadow-[0_6px_16px_-6px_rgba(37,99,235,0.9)]" : "border border-[#e6ecf5] bg-white text-slate-500 hover:border-[#bfdbfe] hover:text-[#2563eb]",
+                activeAhuId === id ? "bg-[#2563eb] text-white shadow-[0_6px_16px_-6px_rgba(37,99,235,0.9)]" : "border border-[#e6ecf5] bg-white text-slate-500 hover:border-[#bfdbfe] hover:text-[#2563eb]",
               )}
             >
               {id}

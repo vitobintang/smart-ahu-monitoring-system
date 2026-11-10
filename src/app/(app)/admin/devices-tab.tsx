@@ -240,7 +240,11 @@ Its bearer token will be permanently revoked.`,
               </p>
               <div className="mt-3 space-y-3">
                 <Field label="AHU identity">
-                  <select className={inputClass} value={devAhu} onChange={(e) => setDevAhu(e.target.value)}>
+                  <select
+                    className={inputClass}
+                    value={registeredAhuIds.includes(devAhu) ? devAhu : registeredAhuIds[0]}
+                    onChange={(e) => setDevAhu(e.target.value)}
+                  >
                     {registeredAhuIds.map((id) => (
                       <option key={id} value={id}>
                         {id}

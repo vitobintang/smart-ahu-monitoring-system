@@ -9,7 +9,8 @@ import { AHU_IDS, PARAMETERS, type ParamKey } from "@/lib/domain";
 import { Btn, Empty, ErrorNote, Field, Spinner, cx, inputClass } from "@/components/ui";
 
 interface Threshold {
-  id: string;
+  id?: string;
+  ahuId?: string;
   parameter: string;
   enabled: boolean;
   lowLimit: number | null;
@@ -41,7 +42,10 @@ export default function ConfigPage() {
   const [selected, setSelected] = useState<string>(requestedAhu || AHU_IDS[0]);
   const { data: ahuListData } = usePoll<{ ahus: Array<{ id: string; name: string }> }>("/api/ahu", 30000);
   const unitIds = ahuListData?.ahus?.length ? ahuListData.ahus.map((a) => a.id) : [...AHU_IDS];
-  const { data, error, loading, reload } = usePoll<Detail>(`/api/ahu/${selected}`, 30000);
+  // Follow the ACTIVE device fleet: if the selected unit belongs to the inactive
+  // source (e.g. Daikin unit while My DB is active), fall back to the fleet head.
+  const effectiveSelected = unitIds.includes(selected) ? selected : unitIds[0];
+  const { data, error, loading, reload } = usePoll<Detail>(`/api/ahu/${effectiveSelected}`, 30000);
   const { data: session } = usePoll<{ user: { role: string } | null }>("/api/auth/session", 60000);
   const canEdit = session?.user ? ["Admin", "Engineering"].includes(session.user.role) : false;
 
@@ -82,7 +86,7 @@ export default function ConfigPage() {
     setSaveError(null);
     setNotice(null);
     try {
-      await api(`/api/ahu/${selected}`, {
+      await api(`/api/ahu/${effectiveSelected}`, {
         method: "PATCH",
         body: JSON.stringify({
           name,
@@ -139,8 +143,8 @@ export default function ConfigPage() {
         <div className="panel h-max rounded-2xl p-3">
           <div className="mb-2 flex items-center justify-between gap-2 px-1">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Units</p>
-            <Link href={`/devices/${selected}`} className="font-mono text-[10.5px] font-semibold uppercase tracking-wide text-cyan-300 hover:underline lg:hidden">
-              view {selected} →
+            <Link href={`/devices/${effectiveSelected}`} className="font-mono text-[10.5px] font-semibold uppercase tracking-wide text-cyan-300 hover:underline lg:hidden">
+              view {effectiveSelected} →
             </Link>
           </div>
           <div className="flex gap-1.5 overflow-x-auto pb-1 lg:block lg:space-y-1 lg:overflow-visible lg:pb-0">
@@ -149,7 +153,7 @@ export default function ConfigPage() {
                 key={id}
                 className={cx(
                   "flex flex-none items-center justify-between rounded-lg border px-3 py-2 text-left text-xs transition lg:w-full",
-                  selected === id
+                  effectiveSelected === id
                     ? "border-cyan-500/50 bg-cyan-500/12 text-cyan-100"
                     : "border-ink-700/60 text-slate-400 hover:border-ink-600 hover:text-slate-200 lg:border-transparent",
                 )}
@@ -279,10 +283,10 @@ export default function ConfigPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-ink-800/70">
-                    {thresholds.map((t) => {
+                    {thresholds.map((t, ti) => {
                       const meta = PARAMETERS.find((p) => p.key === (t.parameter as ParamKey));
                       return (
-                        <tr key={t.id}>
+                        <tr key={`${t.ahuId ?? ""}:${t.parameter}:${t.id ?? ti}`}>
                           <td className="px-3 py-2">
                             <span className="text-slate-200">{t.label ?? meta?.label ?? t.parameter}</span>
                             <span className="ml-2 font-mono text-[10px] text-slate-500">{t.parameter}</span>

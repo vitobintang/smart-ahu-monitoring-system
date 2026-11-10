@@ -582,7 +582,7 @@ export default function AppShell({
                           className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[12.5px] font-semibold text-slate-700 transition hover:bg-[#f1f5fb] hover:text-[#1d6ef2]"
                         >
                           <Users size={15} className="text-slate-500" />
-                          Manage Users &amp; AHU Modules
+                          Manage Users &amp; Modules
                         </Link>
                       ) : null}
 

@@ -263,7 +263,9 @@ export function thresholdToRow(record: RtdbThresholdRecord): Record<string, unkn
   // `n()` restores nulls RTDB stripped (see live-read.ts).
   const n = <T,>(value: T | undefined): T | null => (value === undefined ? null : (value as T));
   return {
-    id: record.id,
+    // Provisioned thresholds store the record under thresholds/{ahuId}/{parameter}
+    // WITHOUT a separate id field — derive a stable unique id for React keys etc.
+    id: record.id ?? `${record.ahuId}:${record.parameter}`,
     ahuId: record.ahuId,
     parameter: record.parameter,
     enabled: record.enabled,
