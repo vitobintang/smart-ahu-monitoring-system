@@ -26,6 +26,19 @@ export interface RtdbAdapter {
   ): Promise<{ committed: boolean; value: T | null }>;
 }
 
+/**
+ * The Realtime Database SDK rejects undefined values anywhere in the payload
+ * (nulls are stripped instead). The in-memory adapter enforces the same rule
+ * so tests catch "undefined leaks" the real backend would throw on.
+ */
+export function assertRtdbValue(value: unknown, path: string): void {
+  if (value === undefined) throw new Error(`set failed: value argument contains undefined in property '${path || "/"}'`);
+  if (value === null || typeof value !== "object") return;
+  for (const [key, child] of Object.entries(value)) {
+    assertRtdbValue(child, path ? `${path}.${key}` : key);
+  }
+}
+
 /** Segments must never contain "/", ".", "#", "$", "[", "]" (RTDB key rules). */
 export function assertRtdbPath(path: string): void {
   if (path.includes("//")) throw new Error(`Invalid RTDB path: ${path}`);
@@ -192,6 +205,7 @@ export class InMemoryRtdb implements RtdbAdapter {
 
   async set(path: string, value: unknown): Promise<void> {
     assertRtdbPath(path);
+    assertRtdbValue(value, path);
     if (!path) {
       this.root = isPlainObject(value) ? deepClone(value) : {};
       return;
