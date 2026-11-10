@@ -660,15 +660,17 @@ export async function processDaikinSnapshotRtdb(
     });
   }
 
-  if (record.source === "SIMULATION") {
-    await confirmFromReadingRtdb(
-      rtdb,
-      ahuId,
-      { runState: record.runState, fanSpeed: record.fanSpeed },
-      { setpoint: snapSetpoint, controlMode: null },
-      record.timestamp,
-    );
-  }
+  // Feedback confirmation runs for EVERY fresh mirror snapshot — the mirror
+  // is the device's own reported state regardless of classification
+  // (simulator units AND the real bridge's live node). commandFeedbackMatches
+  // decides whether an ACCEPTED command is confirmed.
+  await confirmFromReadingRtdb(
+    rtdb,
+    ahuId,
+    { runState: record.runState, fanSpeed: record.fanSpeed },
+    { setpoint: snapSetpoint, controlMode: null },
+    record.timestamp,
+  );
 
   return {
     ok: true,

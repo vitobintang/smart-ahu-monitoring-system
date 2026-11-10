@@ -265,6 +265,32 @@ test("processDaikinSnapshotRtdb: same device timestamp → 200 duplicated (FR-23
   equal(stored?.room_temp, 25, "first snapshot wins");
 });
 
+test("processDaikinSnapshotRtdb: a fresh reading CONFIRMS an ACCEPTED command (even PHYSICAL mirrors)", async () => {
+  const db = new InMemoryRtdb();
+  seedBase(db);
+  const created = (await createCommandRtdb(db, CMD_REQ, T0 - 5_000)) as { commandId: string };
+  await acceptPendingRtdb(db, "AHU-01", T0 - 4_000);
+
+  // fresh snapshot showing RUN within the command window → START confirmed
+  const result = await processDaikinSnapshotRtdb(db, "AHU-01", snapshot({ power: true, fan: 3 }, T0), T0);
+  equal(result.ok, true);
+  const record = await db.get<{ status: string; confirmedAt: number }>(`commands/${created.commandId}`);
+  equal(record?.status, "SUCCEEDED", "mirror feedback confirmed the START");
+  equal(record?.confirmedAt, T0);
+});
+
+test("processDaikinSnapshotRtdb: a reading OUTSIDE the command window does not confirm", async () => {
+  const db = new InMemoryRtdb();
+  seedBase(db);
+  const created = (await createCommandRtdb(db, CMD_REQ, T0 - 5_000)) as { commandId: string };
+  await acceptPendingRtdb(db, "AHU-01", T0 - 4_000);
+
+  // snapshot ts BEFORE the command existed → cannot confirm (ts < updatedAt)
+  await processDaikinSnapshotRtdb(db, "AHU-01", snapshot({ power: true, fan: 3 }, T0 - 6_000), T0);
+  const record = await db.get<{ status: string }>(`commands/${created.commandId}`);
+  equal(record?.status, "ACCEPTED");
+});
+
 test("processDaikinSnapshotRtdb: threshold breach raises an alarm (delay 0) with active index", async () => {
   const db = new InMemoryRtdb();
   seedBase(db);
@@ -336,4 +362,22 @@ test("processDaikinSnapshotRtdb: invalid snapshot → 422; non-object → 400", 
   const worse = await processDaikinSnapshotRtdb(db, "AHU-01", "nope" as unknown as Record<string, unknown>, T0);
   equal(worse.ok, false);
   if (!worse.ok) equal(worse.status, 400);
+});
+
+test("activeCommandOf: an EXPIRED command never surfaces as activeCommand (stuck-bar regression)", async () => {
+  const { activeCommandOf } = await import("../src/lib/rtdb/commands");
+  // newest-first history exactly as readCommandHistory returns it
+  const rows = [
+    { id: "cmd-expired", ahuId: "AHU-01", status: "EXPIRED" },
+    { id: "cmd-done", ahuId: "AHU-01", status: "SUCCEEDED" },
+  ];
+  equal(activeCommandOf(rows), null, "terminal commands are not active");
+
+  const inFlight = [{ id: "cmd-live", ahuId: "AHU-01", status: "ACCEPTED" }];
+  equal(activeCommandOf(inFlight)?.id, "cmd-live");
+
+  const requested = [{ id: "cmd-req", ahuId: "AHU-01", status: "REQUESTED" }];
+  equal(activeCommandOf(requested)?.id, "cmd-req");
+
+  equal(activeCommandOf([]), null);
 });
