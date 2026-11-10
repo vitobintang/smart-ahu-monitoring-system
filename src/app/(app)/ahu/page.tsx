@@ -23,7 +23,14 @@ import type { FacilityAhuItem, PendingPlacement } from "@/components/AhuFacility
 import { DEVICE_TYPES, DEVICE_TYPE_LABELS, type RoomRecord } from "@/lib/facility-rooms";
 import { can } from "@/lib/domain";
 import { DEFAULT_ROOM_VERTICES, normalizeRotation, type FloorVertex } from "@/lib/facility-layout";
-import { resolveAhuPlacement, resolveWallPhysicsAndSnap, suggestCleanPlatformSlot } from "@/lib/facility-placement";
+import {
+  isAcDeviceType,
+  resolveAhuPlacement,
+  resolveAcDevicePlacement,
+  resolveWallPhysicsAndSnap,
+  suggestAcDeviceSlot,
+  suggestCleanPlatformSlot,
+} from "@/lib/facility-placement";
 import { Btn, Empty, ErrorNote, Field, Spinner, StatusBadge, cx, inputClass } from "@/components/ui";
 
 const AhuFacilityMap3D = dynamic(() => import("@/components/AhuFacilityMap3D"), {
@@ -163,7 +170,9 @@ export default function AhuIndexPage() {
 
   function openAddModal() {
     const suggestedId = suggestNextAhuId(cards.map((c) => c.ahu.id));
-    const slot = suggestCleanPlatformSlot(existingCoords, true, roomVertices);
+    const slot = isAcDeviceType(newDeviceType)
+      ? suggestAcDeviceSlot(newDeviceType, existingCoords, roomVertices)
+      : suggestCleanPlatformSlot(existingCoords, true, roomVertices);
     setNewId(suggestedId);
     setNewName(`${suggestedId} Clean Air Supply`);
     setNewLocation("");
@@ -182,7 +191,9 @@ export default function AhuIndexPage() {
   }
 
   function autoPickSlot(preferIndoor: boolean) {
-    const slot = suggestCleanPlatformSlot(existingCoords, preferIndoor, roomVertices);
+    const slot = isAcDeviceType(newDeviceType)
+      ? suggestAcDeviceSlot(newDeviceType, existingCoords, roomVertices)
+      : suggestCleanPlatformSlot(existingCoords, preferIndoor, roomVertices);
     setPlacement({
       x: slot.x,
       z: slot.z,
@@ -414,7 +425,12 @@ export default function AhuIndexPage() {
                 onClick={() => {
                   if (!placement) return;
                   const nextRot = normalizeRotation(placement.rotation + 90);
-                  const check = resolveWallPhysicsAndSnap(placement.x, placement.z, existingCoords, {
+                  const check = isAcDeviceType(newDeviceType)
+                    ? resolveAcDevicePlacement(newDeviceType, placement.x, placement.z, existingCoords, {
+                        rotation: nextRot,
+                        roomVertices,
+                      })
+                    : resolveWallPhysicsAndSnap(placement.x, placement.z, existingCoords, {
                     rotation: nextRot,
                     enableWallSnap: true,
                     autoAlignRotation: false,
@@ -443,6 +459,7 @@ export default function AhuIndexPage() {
             roomVertices={roomVertices}
             draftAhuId={newId.trim() || "NEW"}
             draftAhuName={newName.trim() || "New AHU"}
+            draftDeviceType={newDeviceType}
             placement={placement}
             onPlacementChange={setPlacement}
           />

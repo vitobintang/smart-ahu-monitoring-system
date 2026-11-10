@@ -46,6 +46,18 @@ export const WALL_FLUSH_GAP = 0.03; // 3cm mounting clearance when snapped flush
 export const WALL_SNAP_RANGE = 1.65; // magnetic snap engagement distance from wall face
 export const MIN_AHU_SPACING = 3.6;
 
+/* AC device mount physics (detailed AC models + realistic mounting):
+ *   AC_SPLIT_WALL  hangs on a wall face (back plate flush against the wall)
+ *   AC_DAK         sits flush against the ceiling slab (2.85 m wall height)
+ *   AC_STANDING    stands on the floor on its base plinth
+ */
+export const AC_SPLIT_SNAP_RANGE = 2.4; // drag-to-wall engagement distance for split units
+export const AC_SPLIT_HALF_WIDTH = 0.62; // along-wall half extent of a split indoor unit
+export const AC_SPLIT_HALF_DEPTH = 0.14; // perpendicular half extent (body depth / 2)
+export const AC_FLOOR_HALF = 0.45; // standing / cassette footprint half extent
+export const AC_MIN_SPACING = 1.3; // min center distance between an AC unit and any other unit
+export const CEILING_HEIGHT = 2.85; // matches RoomMeshPool WALL_HEIGHT — cassette tops flush here
+
 /** Full 3D architectural site bounds where outdoor AHUs & room walls can be freely placed. */
 export const OUTDOOR_CAMPUS_BOUNDS = {
   xMin: -42,
