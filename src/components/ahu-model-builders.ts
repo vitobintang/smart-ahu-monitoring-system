@@ -300,11 +300,6 @@ function buildAcModel3D(opts: {
     const body = box(1.02, 0.29, 0.16, whiteMat);
     body.position.set(0, 2.08, -0.033);
     tag(body);
-    const curve = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 1.02, 20, 1, false, 0, Math.PI), whiteMat);
-    curve.rotation.z = Math.PI / 2;
-    curve.rotation.y = Math.PI / 2;
-    curve.position.set(0, 2.225, -0.033);
-    tag(curve);
     // top intake grille — proud slats floating clear of the body top (no coplanar faces)
     for (let i = 0; i < 4; i += 1) {
       const slat = box(0.98, 0.012, 0.014, darkMat);
