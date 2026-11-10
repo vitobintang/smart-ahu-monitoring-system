@@ -162,6 +162,22 @@ export function commandToRow(record: RtdbCommandRecord): Record<string, unknown>
   };
 }
 
+/**
+ * The unit's in-flight command (REQUESTED | ACCEPTED), or null. Terminal
+ * commands (EXPIRED/FAILED/SUCCEEDED) are deliberately excluded: a terminal
+ * row stays the unit's NEWEST history entry forever and would keep the
+ * control popup's progress bar + disabled buttons stuck if surfaced as
+ * "active".
+ */
+export function activeCommandOf<T extends { status: string }>(
+  rows: readonly T[],
+): T | null {
+  for (const row of rows) {
+    if (row.status === "REQUESTED" || row.status === "ACCEPTED") return row;
+  }
+  return null;
+}
+
 export interface CommandStatusPatch {
   id: string;
   ahuId: string;

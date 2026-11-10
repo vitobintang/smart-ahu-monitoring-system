@@ -11,6 +11,7 @@ import { readTelemetryRange, streamTelemetryRangeDescending } from "@/lib/rtdb/h
 import { readAlarmCounts, readAlarmHistory, alarmToRow } from "@/lib/rtdb/alarms";
 import { readCommandHistory, commandToRow, readActiveCommandSlots } from "@/lib/rtdb/commands";
 import { readRtdbAhu, readRtdbAhus, readRtdbDevices, readRtdbThresholds, ahuToRow, deviceToRow, thresholdToRow } from "@/lib/rtdb/registry";
+import { activeCommandOf } from "@/lib/rtdb/commands";
 import { readRtdbTrendCounts, readRtdbTrendHistory, trendToRow } from "@/lib/rtdb/trends";
 import { getLatestTelemetry } from "@/lib/rtdb/telemetry";
 import type { RtdbTelemetryRecord } from "@/lib/rtdb/telemetry";
@@ -134,8 +135,11 @@ export async function getDashboard(): Promise<{
   const filterLimitMap = new Map(
     filterThresholdRows.map((r) => [r.ahuId, { low: r.lowLimit, high: r.highLimit }]),
   );
+  // Only in-flight commands surface as "active" (see activeCommandOf).
   const cmdMap = new Map<string, (typeof cmdRows)[number]>();
-  for (const c of cmdRows) if (!cmdMap.has(c.ahuId)) cmdMap.set(c.ahuId, c);
+  for (const c of cmdRows) {
+    if (!cmdMap.has(c.ahuId) && activeCommandOf([c])) cmdMap.set(c.ahuId, c);
+  }
 
   const cards: AhuCard[] = ahuRows.map((ahu) => {
     const row = latest.get(ahu.id);
