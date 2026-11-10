@@ -290,6 +290,9 @@ export async function simulationTick() {
       const ahu = record as unknown as AhuRow;
       if (ownerIds.has(ahu.id)) continue;
       if ((record as { enabled?: boolean }).enabled === false) continue;
+      // Local-fleet units are driven by their own device-tree tick, not the
+      // generic simulator (which would fabricate values over the tree feed).
+      if ((record as { fleetSource?: string }).fleetSource === "local") continue;
       try {
         const ov = getOverride(ahu.id);
         if (ov.rejectCommands && !ov.commLoss) {
@@ -334,6 +337,27 @@ let monitorTickCount = 0;
 export async function syncDaikinDevices(now = new Date()): Promise<number> {
   const rtdb = await requireRtdb();
   const { processDaikinSnapshotRtdb } = await import("@/lib/rtdb/lifecycle");
+  const { readDeviceSource, localFleetTick, LOCAL_DEVICES_NODE } = await import("@/lib/rtdb/local-fleet");
+  const source = await readDeviceSource(rtdb);
+
+  // LOCAL fleet: tick the fictional device nodes (telemetry-only) then ingest
+  // the app-DB localDevices tree through the SAME daikin-shaped pipeline.
+  if (source === "local") {
+    await localFleetTick(rtdb);
+    const tree = (await rtdb.get<Record<string, unknown>>(LOCAL_DEVICES_NODE)) ?? {};
+    let localIngested = 0;
+    for (const [ahuId, node] of Object.entries(tree)) {
+      if (!node || typeof node !== "object" || Array.isArray(node)) continue;
+      try {
+        const result = await processDaikinSnapshotRtdb(rtdb, ahuId, node as Record<string, unknown>, now.getTime());
+        if (result.ok && (result.status === 201 || result.status === 200)) localIngested += 1;
+      } catch (err) {
+        console.error(`[local-fleet] sync failed for ${ahuId}:`, summarizeErr(err));
+      }
+    }
+    return localIngested;
+  }
+
   const { tryGetOwnerRtdb } = await import("@/lib/firebase/admin");
   const owner = await tryGetOwnerRtdb();
   if (!owner) return 0;

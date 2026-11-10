@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import AhuDetailed3DView from "@/components/AhuDetailed3DView";
 import Link from "next/link";
 import {
   CartesianGrid,
@@ -23,7 +24,6 @@ import {
   type DataQuality,
   type ParamKey,
 } from "@/lib/domain";
-import AhuSchematic from "@/components/AhuSchematic";
 import LiveCharts, { type ChartPoint } from "@/components/LiveCharts";
 import ControlPanel from "@/components/ControlPanel";
 import { Btn, CommandStatusBadge, Empty, ErrorNote, Metric, PriorityBadge, SourceTag, Spinner, StatusBadge, cx } from "@/components/ui";
@@ -76,6 +76,7 @@ interface Detail {
     setpoint: number;
     desiredRunState: "RUN" | "STOP";
     physicalControlEnabled: boolean;
+    deviceType?: string | null;
   };
   latest: Record<string, unknown> | null;
   thresholds: Threshold[];
@@ -260,28 +261,14 @@ export default function AhuDetailView({
 
       {/* FR-07 schematic */}
       <div className="panel rounded-2xl p-4 sm:p-5">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-100">Equipment condition</h2>
-        <AhuSchematic
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-100">Equipment condition — 3D internals</h2>
+        <AhuDetailed3DView
           ahuId={ahu.id}
-          hasHeater={ahu.hasHeater}
-          installed={ahu.installedSensors}
+          deviceType={ahu.deviceType ?? "AHU"}
           status={computed.status}
-          values={Object.fromEntries(PARAMETERS.map((p) => [p.key, typeof values[p.key] === "number" ? (values[p.key] as number) : null]))}
-          fallback={{ current: Boolean(values.isCurrentFallback), voltage: Boolean(values.isVoltageFallback) }}
-          source={source}
-          stale={stale}
-          thresholdMap={Object.fromEntries(
-            data.thresholds.map((t) => [
-              t.parameter,
-              { low: t.lowLimit, high: t.highLimit, delaySec: t.delaySec, priority: t.priority },
-            ]),
-          )}
-          limits={{
-            filterHigh: thMap.get("filterDiffPressure")?.highLimit ?? null,
-            filterLow: thMap.get("filterDiffPressure")?.lowLimit ?? null,
-            coilHigh: thMap.get("coilTemp")?.highLimit ?? null,
-            supplyHigh: thMap.get("supplyTemp")?.highLimit ?? null,
-          }}
+          hasHeater={ahu.hasHeater}
+          fanSpeed={typeof values.fanSpeed === "number" ? (values.fanSpeed as number) : null}
+          className="mb-3"
         />
         {!ahu.hasHeater ? (
           <p className="mt-2 text-[10px] text-slate-500">

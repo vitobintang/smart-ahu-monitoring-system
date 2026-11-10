@@ -13,7 +13,6 @@ import {
   Plus,
   RotateCw,
   Settings2,
-  Sun,
   X,
 } from "lucide-react";
 import { api, LOCAL_POLL_MS, timeAgo, usePoll } from "@/lib/client";
@@ -81,6 +80,37 @@ export default function AhuIndexPage() {
   const [roomVertices, setRoomVertices] = useState<FloorVertex[]>(DEFAULT_ROOM_VERTICES);
   const [isCustomRoom, setIsCustomRoom] = useState(false);
   const [rooms, setRooms] = useState<RoomRecord[]>([]);
+
+  // Device-data source switch: "daikin" (real owner tree) | "local" (fictional in-app fleet).
+  const [deviceSource, setDeviceSource] = useState<"daikin" | "local">("daikin");
+  const [sourceBusy, setSourceBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void api<{ source: "daikin" | "local" }>("/api/device-source")
+      .then((res) => {
+        if (alive && (res.source === "daikin" || res.source === "local")) setDeviceSource(res.source);
+      })
+      .catch(() => {
+        /* defaults to daikin */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  async function switchDeviceSource(next: "daikin" | "local") {
+    if (sourceBusy || next === deviceSource) return;
+    setSourceBusy(true);
+    try {
+      await api("/api/device-source", { method: "PUT", body: JSON.stringify({ source: next }) });
+      setDeviceSource(next);
+      reload();
+    } catch {
+      /* keep current source on failure */
+    } finally {
+      setSourceBusy(false);
+    }
+  }
 
   useEffect(() => {
     let alive = true;
@@ -415,13 +445,6 @@ export default function AhuIndexPage() {
               </button>
               <button
                 type="button"
-                onClick={() => autoPickSlot(false)}
-                className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-100"
-              >
-                <Sun size={12} /> Auto Outdoor Slot
-              </button>
-              <button
-                type="button"
                 onClick={() => {
                   if (!placement) return;
                   const nextRot = normalizeRotation(placement.rotation + 90);
@@ -504,6 +527,27 @@ export default function AhuIndexPage() {
 
   return (
     <div className="relative h-full w-full overflow-hidden">
+      {/* Device-data source switch — swaps ONLY the devices feed (real daikin tree vs local fictional fleet). */}
+      <div className="absolute left-3 top-3 z-30 flex items-center gap-2 rounded-full border border-white/60 bg-white/85 px-1.5 py-1 shadow-md backdrop-blur">
+        <span className="pl-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Devices</span>
+        {(["daikin", "local"] as const).map((s) => (
+          <button
+            key={s}
+            type="button"
+            disabled={!canConfigure || sourceBusy}
+            onClick={() => void switchDeviceSource(s)}
+            title={canConfigure ? `Switch device data to the ${s === "daikin" ? "real Daikin database" : "local fictional fleet (1 AHU, 2 DAK, 1 standing, 3 split)"}` : "Only Admin/Engineering can switch the device source"}
+            className={cx(
+              "rounded-full px-2.5 py-1 text-[11px] font-semibold transition",
+              deviceSource === s ? "bg-[#1d6ef2] text-white shadow" : "text-slate-600 hover:bg-slate-100",
+              !canConfigure && "cursor-not-allowed opacity-60",
+            )}
+          >
+            {s === "daikin" ? "Daikin DB" : "My DB"}
+          </button>
+        ))}
+        {sourceBusy && <Spinner label="" />}
+      </div>
       {/* Persistent Full-Viewport 3D Facility Digital Twin (cross-fades smoothly so mountain backdrop shines on List view!) */}
       <div
         aria-hidden={listOpen}

@@ -1,5 +1,6 @@
 import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
-import { readRtdbAhus, ahuToRow, type RtdbAhuRecord } from "@/lib/rtdb/registry";
+import { ahuToRow, type RtdbAhuRecord } from "@/lib/rtdb/registry";
+import { readActiveFleetRecords } from "@/lib/rtdb/local-fleet";
 
 async function requireRtdb() {
   const rtdb = await tryGetAhuRtdb();
@@ -24,7 +25,7 @@ export async function GET() {
     await requireAuth("view");
     const rtdb = await requireRtdb();
     const [registry, floorplan] = await Promise.all([
-      readRtdbAhus(rtdb),
+      readActiveFleetRecords(rtdb),
       getActiveFloorplan(),
     ]);
     const rows = [...registry.values()]
@@ -81,7 +82,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const registry = await readRtdbAhus(await requireRtdb());
+    const registry = await readActiveFleetRecords(await requireRtdb());
     if ([...registry.values()].some((r) => r.id.toUpperCase() === rawId)) {
       return Response.json(
         { error: `AHU ${rawId} already exists.` },

@@ -54,6 +54,8 @@ export interface RtdbAhuRecord {
   enabled?: boolean;
   /** AHU | AC_DAK | AC_SPLIT_WALL | AC_STANDING (3D model + labeling). */
   deviceType?: string;
+  /** Which device-data fleet this unit belongs to: "daikin" (real owner tree) | "local" (fictional app-DB fleet). */
+  fleetSource?: "daikin" | "local";
   mapX: number | null;
   mapZ: number | null;
   mapRotation: number;

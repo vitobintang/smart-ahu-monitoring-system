@@ -66,9 +66,13 @@ export function isDaikinShape(value: unknown): value is DaikinDeviceRecord {
   return "power" in record || "room_temp" in record || "s21_connected" in record;
 }
 
-export async function readDaikinDevice(rtdb: RtdbAdapter, ahuId: string): Promise<DaikinDeviceRecord | null> {
+export async function readDaikinDevice(
+  rtdb: RtdbAdapter,
+  ahuId: string,
+  opts?: { devicesNode?: string },
+): Promise<DaikinDeviceRecord | null> {
   if (typeof ahuId !== "string" || !ahuId.trim() || ahuId.length > 128) return null;
-  const node = await rtdb.get<unknown>(`${DAIKIN_DEVICES_NODE}/${ahuId}`);
+  const node = await rtdb.get<unknown>(`${opts?.devicesNode ?? DAIKIN_DEVICES_NODE}/${ahuId}`);
   if (!node || typeof node !== "object") return null;
   // Real layout: the live fields sit at devices/{id}/status.
   const status = (node as Record<string, unknown>)[DAIKIN_STATUS_CHILD];
@@ -130,13 +134,14 @@ export async function writeDaikinControl(
   rtdb: RtdbAdapter,
   ahuId: string,
   patch: { power?: boolean; setpoint?: number },
+  opts?: { devicesNode?: string },
 ): Promise<boolean> {
-  if (!(await readDaikinDevice(rtdb, ahuId))) return false;
+  if (!(await readDaikinDevice(rtdb, ahuId, opts))) return false;
   const values: Record<string, unknown> = {};
   if (typeof patch.power === "boolean") values.power = patch.power;
   if (typeof patch.setpoint === "number" && Number.isFinite(patch.setpoint)) values.setpoint = patch.setpoint;
   if (Object.keys(values).length === 0) return false;
-  await rtdb.update(`${DAIKIN_DEVICES_NODE}/${ahuId}/${DAIKIN_STATUS_CHILD}`, values);
+  await rtdb.update(`${opts?.devicesNode ?? DAIKIN_DEVICES_NODE}/${ahuId}/${DAIKIN_STATUS_CHILD}`, values);
   return true;
 }
 
