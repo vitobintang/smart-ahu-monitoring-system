@@ -261,7 +261,7 @@ export default function DashboardPage() {
               grad="from-[#3b82f6] to-[#1d4ed8]"
               glow="rgba(37,99,235,0.55)"
               value={String(data.totals.ahus)}
-              label="Total AHU"
+              label="Total Devices"
               mobileTag="Fleet"
               viz={<Bars bars={bars} color="#93c5fd" />}
               caption={
@@ -275,7 +275,7 @@ export default function DashboardPage() {
               grad="from-[#34d399] to-[#059669]"
               glow="rgba(16,185,129,0.5)"
               value={String(data.totals.online)}
-              label="Online AHU"
+              label="Online Devices"
               mobileTag={`${onlinePct}%`}
               viz={<Progress value={data.totals.online / Math.max(1, data.totals.ahus)} />}
               caption={
@@ -338,8 +338,8 @@ export default function DashboardPage() {
               <div className="mb-3 flex flex-col gap-2.5 sm:mb-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                 <div className="flex items-baseline justify-between gap-2">
                   <div>
-                    <h2 className="text-[16px] font-bold tracking-[-0.015em] text-[#12294d] sm:text-[19px]">AHU Units</h2>
-                    <p className="text-[11px] text-slate-500 sm:text-[11.5px]">Live status of all air handling units</p>
+                    <h2 className="text-[16px] font-bold tracking-[-0.015em] text-[#12294d] sm:text-[19px]">Devices</h2>
+                    <p className="text-[11px] text-slate-500 sm:text-[11.5px]">Live status of all devices</p>
                   </div>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
@@ -371,7 +371,7 @@ export default function DashboardPage() {
                       <input
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
-                        placeholder="Search AHU units…"
+                        placeholder="Search devices…"
                         className="w-full rounded-lg border border-[#e6ecf5] bg-white py-1.5 pl-8 pr-2 text-[11px] text-slate-600 outline-none focus:border-[#bfdbfe] sm:w-44"
                       />
                     </label>
@@ -406,7 +406,7 @@ export default function DashboardPage() {
                   <span className="grid h-10 w-10 place-items-center rounded-full bg-[#dbeafe] text-[#2563eb] sm:h-12 sm:w-12">
                     <Plus size={20} />
                   </span>
-                  <span className="text-[12px] font-bold text-[#12294d] sm:text-[13.5px]">Add AHU Unit</span>
+                  <span className="text-[12px] font-bold text-[#12294d] sm:text-[13.5px]">Add Device</span>
                   <span className="hidden text-[11px] text-slate-400 sm:inline">Expand your monitoring system</span>
                   <span className="mt-1 rounded-lg bg-[#dbeafe] px-3 py-1 text-[10.5px] font-bold text-[#2563eb] sm:mt-2 sm:px-4 sm:py-2 sm:text-[11.5px]">
                     Add Unit
@@ -479,7 +479,7 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="panel rounded-2xl p-4 sm:p-5">
-                  <h3 className="mb-4 text-[13.5px] font-bold text-[#12294d]">AHU Status Distribution</h3>
+                  <h3 className="mb-4 text-[13.5px] font-bold text-[#12294d]">Device Status Distribution</h3>
                   <div className="flex flex-col items-center gap-4 sm:flex-row sm:gap-5">
                     <div className="relative h-36 w-36 flex-none sm:h-40 sm:w-40">
                       <ResponsiveContainer width="100%" height="100%">

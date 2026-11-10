@@ -15,13 +15,21 @@ export async function GET(req: Request) {
     const unackedOnly = url.searchParams.get("unacked") === "1";
 
     const rtdb = await requireRtdb();
+    // Fleet scoping: without an explicit unit, only the ACTIVE fleet's trend
+    // warnings are shown (Daikin DB ⇄ My DB switch).
+    let fleetIds: Set<string> | null = null;
+    if (!ahuId) {
+      const { readActiveFleetRecords } = await import("@/lib/rtdb/local-fleet");
+      fleetIds = new Set((await readActiveFleetRecords(rtdb)).keys());
+    }
     const [analyses, history] = await Promise.all([
-      analyseTrendsBatch(ahuId ? [ahuId] : undefined),
+      analyseTrendsBatch(ahuId ? [ahuId] : [...(fleetIds ?? [])]),
       ahuId
         ? readRtdbTrendHistory(rtdb, ahuId, 200)
         : (async () => {
             const tree = (await rtdb.get<Record<string, RtdbTrendRecord>>(TREND_ALERTS_NODE)) ?? {};
             return Object.values(tree)
+              .filter((t) => fleetIds?.has(t.ahuId) ?? true)
               .sort((a, b) => b.createdAt - a.createdAt)
               .slice(0, 200);
           })(),

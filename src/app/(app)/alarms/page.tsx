@@ -91,7 +91,7 @@ export default function AlarmsPage() {
             <Filter size={12} /> filters
           </span>
           <select value={ahuId} onChange={(e) => setAhuId(e.target.value)} className="w-full rounded-lg border border-ink-600 bg-ink-950/80 px-2.5 py-1.5 text-xs text-slate-200 sm:w-auto">
-            <option value="">All AHUs</option>
+            <option value="">All devices</option>
             {unitIds.map((id) => (
               <option key={id} value={id}>
                 {id}
@@ -164,7 +164,7 @@ export default function AlarmsPage() {
             <thead className="bg-ink-900/60 text-[10px] uppercase tracking-wider text-slate-500">
               <tr>
                 <th className="px-4 py-2.5">Priority</th>
-                <th className="px-4 py-2.5">AHU</th>
+                <th className="px-4 py-2.5">Device</th>
                 <th className="px-4 py-2.5">Parameter</th>
                 <th className="px-4 py-2.5">Message</th>
                 <th className="px-4 py-2.5">Triggered</th>

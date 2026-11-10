@@ -35,6 +35,10 @@ async function loadNotifications(): Promise<NotificationsPayload> {
 
   const work = (async () => {
     const rtdb = await requireRtdb();
+    // Fleet scoping: the bell only surfaces the ACTIVE fleet's events
+    // (Daikin DB ⇄ My DB switch) — the idle source stays silent.
+    const { readActiveFleetRecords } = await import("@/lib/rtdb/local-fleet");
+    const fleetIds = new Set((await readActiveFleetRecords(rtdb)).keys());
     const [alarmRecords, trendRecords, slots] = await Promise.all([
       readActiveAlarmRecords(rtdb),
       readRtdbUnackedTrends(rtdb, 20),
@@ -42,12 +46,13 @@ async function loadNotifications(): Promise<NotificationsPayload> {
     ]);
     const payload: NotificationsPayload = {
       alarms: alarmRecords
+        .filter((r) => fleetIds.has(r.ahuId))
         .sort((a, b) => b.triggeredAt - a.triggeredAt)
         .slice(0, 20)
         .map(alarmToRow),
-      trends: trendRecords.map(trendToRow),
+      trends: trendRecords.filter((t) => fleetIds.has(t.ahuId)).map(trendToRow),
       commands: [...slots.entries()]
-        .filter(([, slot]) => slot.status === "REQUESTED" || slot.status === "ACCEPTED")
+        .filter(([ahuId, slot]) => fleetIds.has(ahuId) && (slot.status === "REQUESTED" || slot.status === "ACCEPTED"))
         .sort((a, b) => b[1].createdAt - a[1].createdAt)
         .slice(0, 10)
         .map(([ahuId, slot]) => ({

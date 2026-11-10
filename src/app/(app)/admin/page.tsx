@@ -205,10 +205,10 @@ export default function AdminPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="flex items-center gap-2 text-[20px] font-bold tracking-tight text-[#12294d] sm:text-[22px]">
-            <Users size={20} className="text-[#1d6ef2]" /> Users &amp; AHU Monitoring Modules
+            <Users size={20} className="text-[#1d6ef2]" /> Users &amp; Device Modules
           </h1>
           <p className="text-xs text-[#475569]">
-            FR-20 user accounts (Email or Username + Password across all roles) · FR-21 AHU monitoring module tokens
+            FR-20 user accounts (Email or Username + Password across all roles) · FR-21 device module tokens
           </p>
         </div>
 

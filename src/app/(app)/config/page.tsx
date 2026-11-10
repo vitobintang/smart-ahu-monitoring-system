@@ -121,7 +121,7 @@ export default function ConfigPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold tracking-tight text-slate-50 sm:text-2xl">
-            <Settings2 size={20} className="text-cyan-300" /> AHU &amp; Sensor Configuration
+            <Settings2 size={20} className="text-cyan-300" /> Device &amp; Sensor Configuration
           </h1>
           <p className="text-xs text-slate-500">
             FR-19 · editable by Admin and Engineering only · identity, location, installed sensor checklist,
@@ -185,7 +185,7 @@ export default function ConfigPage() {
             <div className="panel rounded-2xl p-4">
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-100">Unit identity</h2>
               <div className="grid gap-3 md:grid-cols-2">
-                <Field label="AHU name">
+                <Field label="Device name">
                   <input className={inputClass} value={name} disabled={!canEdit} onChange={(e) => setName(e.target.value)} />
                 </Field>
                 <Field label="Physical location">

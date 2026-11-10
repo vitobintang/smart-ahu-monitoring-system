@@ -21,6 +21,13 @@ export async function GET(req: Request) {
     const ahuId = url.searchParams.get("ahuId");
 
     const rtdb = await requireRtdb();
+    // Fleet scoping: without an explicit unit, only the ACTIVE fleet's alarms
+    // are shown (Daikin DB ⇄ My DB switch) — the idle source stays silent.
+    let fleetIds: Set<string> | null = null;
+    if (!ahuId) {
+      const { readActiveFleetRecords } = await import("@/lib/rtdb/local-fleet");
+      fleetIds = new Set((await readActiveFleetRecords(rtdb)).keys());
+    }
     let records: RtdbAlarmRecord[];
     if (state === "active") {
       // The ACTIVE list reads the alarmsActive index (kept in sync by the
@@ -31,11 +38,15 @@ export async function GET(req: Request) {
       const tree = (await rtdb.get<Record<string, RtdbAlarmRecord>>(ALARMS_NODE)) ?? {};
       records = Object.values(tree).filter((r) => !r.isActive);
     }
-    const filtered = ahuId ? records.filter((r) => r.ahuId === ahuId) : records;
+    const filtered = ahuId
+      ? records.filter((r) => r.ahuId === ahuId)
+      : records.filter((r) => fleetIds?.has(r.ahuId) ?? true);
     filtered.sort((a, b) => b.triggeredAt - a.triggeredAt);
     return Response.json({
       alarms: filtered.slice(0, 400).map(alarmToJson),
-      activeCount: (await readActiveAlarmRecords(rtdb)).length,
+      activeCount: fleetIds
+        ? (await readActiveAlarmRecords(rtdb)).filter((r) => fleetIds.has(r.ahuId)).length
+        : (await readActiveAlarmRecords(rtdb)).length,
       state,
     });
   } catch (err) {

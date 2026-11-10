@@ -384,8 +384,12 @@ export async function monitorTick() {
   g.__monitorRunning = true;
   try {
     const rtdb = await requireRtdb();
-    const registry = await readRtdbAhus(rtdb);
-    const all = [...registry.values()].sort((a, b) => a.id.localeCompare(b.id));
+    // Status sweep + trend detection cover the ACTIVE fleet only
+    // (Daikin DB ⇄ My DB switch) — the idle source must stay SILENT:
+    // no heartbeat-lost alarms, no trend warnings, no notifications.
+    const { readActiveFleetRecords } = await import("@/lib/rtdb/local-fleet");
+    const active = [...(await readActiveFleetRecords(rtdb)).values()].sort((a, b) => a.id.localeCompare(b.id));
+    const all = [...(await readRtdbAhus(rtdb)).values()].sort((a, b) => a.id.localeCompare(b.id));
     monitorTickCount += 1;
     const doTrends = monitorTickCount % TREND_EVERY_N_TICKS === 0;
 
@@ -396,7 +400,7 @@ export async function monitorTick() {
       return;
     }
 
-    for (const record of all) {
+    for (const record of active) {
       const ahuId = record.id;
       try {
         await refreshAhuStatus(ahuId, new Date());
