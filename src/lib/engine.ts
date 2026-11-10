@@ -275,6 +275,8 @@ export async function createCommand(req: CommandRequest): Promise<CommandOutcome
 
 export async function acceptPendingCommands(ahuId: string): Promise<Array<{ id: string }>> {
   const rtdb = await requireRtdb();
-  const ids = await acceptPendingRtdb(rtdb, ahuId, Date.now());
+  const { tryGetOwnerRtdb } = await import("@/lib/firebase/admin");
+  const owner = await tryGetOwnerRtdb();
+  const ids = await acceptPendingRtdb(rtdb, ahuId, Date.now(), owner ?? undefined);
   return ids.map((id) => ({ id }));
 }

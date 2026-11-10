@@ -19,6 +19,8 @@ next-env.d.ts
 # Firebase Admin service account (SERVER-ONLY secret)
 firebase-service-account.json
 *service-account*.json
+smart-monitoring-ahu-service-account.json
+daikinsmart-service-account.json
 !*.service-account.example.json
 
 # Private certificates

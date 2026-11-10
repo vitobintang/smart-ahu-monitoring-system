@@ -312,28 +312,31 @@ let monitorTickCount = 0;
  */
 export async function syncDaikinDevices(now = new Date()): Promise<number> {
   const rtdb = await requireRtdb();
-  const { readRtdbAhus, readRtdbDevices } = await import("@/lib/rtdb/registry");
-  const { readDaikinDevice, mapDaikinToSample } = await import("@/lib/rtdb/daikin");
+  const { readRtdbAhus } = await import("@/lib/rtdb/registry");
+  const { readDaikinDevice, mapDaikinToSample, readDeviceOwnerToken } = await import("@/lib/rtdb/daikin");
   const { ingestTelemetryRtdb } = await import("@/lib/rtdb/lifecycle");
+  const { tryGetOwnerRtdb } = await import("@/lib/firebase/admin");
+  const owner = await tryGetOwnerRtdb();
+  if (!owner) return 0;
 
   const registry = await readRtdbAhus(rtdb);
   let ingested = 0;
   for (const ahuId of registry.keys()) {
     try {
-      const record = await readDaikinDevice(rtdb, ahuId);
-      if (!record) continue; // not a Daikin-bridge unit
-      const bridge = (await readRtdbDevices(rtdb, ahuId)).find((d) => d.sourceType === "PHYSICAL" && d.enabled);
-      if (!bridge) continue; // no commissioned bridge gateway for this unit
+      const record = await readDaikinDevice(owner, ahuId);
+      if (!record) continue; // no bridge node on the owner tree for this unit
+      const deviceToken = await readDeviceOwnerToken(owner, ahuId);
+      if (!deviceToken) continue; // not registered (no pre-shared token yet)
       const sample = mapDaikinToSample(record, ahuId, now.getTime());
       if (!sample) continue;
-      const result = await ingestTelemetryRtdb(rtdb, bridge.token, {
+      const result = await ingestTelemetryRtdb(rtdb, deviceToken, {
         ahuId,
         messageId: sample.messageId,
         timestamp: sample.timestampIso,
         parameters: sample.parameters,
         runState: sample.runState,
         setpoint: sample.setpoint ?? null,
-      });
+      }, now.getTime(), owner);
       if (result.ok && result.status === 200) ingested += 1;
     } catch (err) {
       console.error(`[daikin] sync failed for ${ahuId}:`, summarizeErr(err));

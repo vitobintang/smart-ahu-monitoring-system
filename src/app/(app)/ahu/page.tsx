@@ -97,6 +97,7 @@ export default function AhuIndexPage() {
   const [newSetpoint, setNewSetpoint] = useState("22.0");
   const [newHasHeater, setNewHasHeater] = useState(true);
   const [newSimEnabled, setNewSimEnabled] = useState(true);
+  const [newDeviceToken, setNewDeviceToken] = useState("");
   const [placement, setPlacement] = useState<PendingPlacement | null>(null);
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
@@ -195,12 +196,14 @@ export default function AhuIndexPage() {
           setpoint: Number(newSetpoint) || 22.0,
           hasHeater: newHasHeater,
           provisionSimulator: newSimEnabled,
+          deviceToken: newDeviceToken.trim() || undefined,
           mapX: placement.x,
           mapZ: placement.z,
           mapRotation: placement.rotation,
         }),
       });
       setAddOpen(false);
+      setNewDeviceToken("");
       await reload();
       setSelected3dId(res.ahu.id);
     } catch (err) {
@@ -306,6 +309,23 @@ export default function AhuIndexPage() {
                 Auto-provision Simulation Controller
               </label>
             </div>
+
+            <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Device token (pre-shared by the AHU device side)
+              <input
+                type="text"
+                value={newDeviceToken}
+                onChange={(e) => setNewDeviceToken(e.target.value)}
+                placeholder="Paste the token to register it under deviceOwners/ — optional"
+                spellCheck={false}
+                className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-1.5 font-mono text-[12px] text-slate-800 focus:border-[#1d6ef2] focus:outline-none"
+              />
+              <span className="mt-1 block font-normal normal-case tracking-normal text-slate-400">
+                Registers the token under <code>deviceOwners/{newId.trim().toUpperCase() || "AHU-ID"}</code> and creates{" "}
+                <code>devices/{newId.trim().toUpperCase() || "AHU-ID"}</code> on the device project; enables live sync + control for this
+                unit.
+              </span>
+            </label>
 
             <div className="flex flex-wrap items-center gap-1.5">
               <button

@@ -24,6 +24,7 @@ import { getLatestTelemetry, writeTelemetryMirror, telemetryNode, telemetryDateK
 import { removeRtdbBreachTimersForAhu } from "./alarms";
 import { writeRtdbAuditLog, type RtdbAuditRecord } from "./audit";
 import { patchRtdbAhu, readRtdbAhu, readRtdbDeviceByToken, readRtdbEnabledSourceTypes, readRtdbThresholds, type RtdbAhuRecord, type RtdbThresholdRecord } from "./registry";
+import { findDeviceIdByToken } from "./daikin";
 
 /**
  * Phase 5b slice 3: RTDB-native command/alarm/ingest lifecycle.
@@ -274,7 +275,12 @@ export async function expireStaleRtdb(rtdb: RtdbAdapter, now = Date.now()): Prom
   return stale.length;
 }
 
-export async function acceptPendingRtdb(rtdb: RtdbAdapter, ahuId: string, now = Date.now()): Promise<string[]> {
+export async function acceptPendingRtdb(
+  rtdb: RtdbAdapter,
+  ahuId: string,
+  now = Date.now(),
+  owner?: RtdbAdapter,
+): Promise<string[]> {
   const sources = await readRtdbEnabledSourceTypes(rtdb, ahuId);
   // PHYSICAL stays request-only UNLESS the unit's controller integration is
   // commissioned (physicalControlEnabled) — e.g. the Daikin S21 bridge write-through.
@@ -297,9 +303,14 @@ export async function acceptPendingRtdb(rtdb: RtdbAdapter, ahuId: string, now = 
   // the command lifecycle — the owner's bridge simply stays on its last state.
   try {
     const { readDaikinDevice, writeDaikinControl, commandsToControlPatch } = await import("./daikin");
-    if (await readDaikinDevice(rtdb, ahuId)) {
+    let ownerRtdb: RtdbAdapter | null = owner ?? null;
+    if (!ownerRtdb) {
+      const { tryGetOwnerRtdb } = await import("@/lib/firebase/admin");
+      ownerRtdb = await tryGetOwnerRtdb();
+    }
+    if (ownerRtdb && (await readDaikinDevice(ownerRtdb, ahuId))) {
       const patch = commandsToControlPatch([record]);
-      if (await writeDaikinControl(rtdb, ahuId, patch)) {
+      if (await writeDaikinControl(ownerRtdb, ahuId, patch)) {
         console.log(`[daikin] control written to devices/${ahuId}:`, JSON.stringify(patch));
       }
     }
@@ -584,8 +595,35 @@ export async function ingestTelemetryRtdb(
   token: string,
   payload: RtdbIngestPayload,
   now = Date.now(),
+  owner?: RtdbAdapter,
 ): Promise<RtdbIngestResult> {
-  const device = await readRtdbDeviceByToken(rtdb, token);
+  let device = await readRtdbDeviceByToken(rtdb, token);
+  if (!device) {
+    // Not an app gateway token — try the OWNER devices project's
+    // deviceOwners/{id} registry (the real AHU device's pre-shared token).
+    let deviceId: string | null = null;
+    try {
+      let ownerRtdb: RtdbAdapter | null = owner ?? null;
+      if (!ownerRtdb) {
+        const { tryGetOwnerRtdb } = await import("@/lib/firebase/admin");
+        ownerRtdb = await tryGetOwnerRtdb();
+      }
+      deviceId = ownerRtdb ? await findDeviceIdByToken(ownerRtdb, token) : null;
+    } catch (err) {
+      console.error("[ingest] owner token lookup failed:", err instanceof Error ? err.message : err);
+    }
+    if (deviceId) {
+      device = {
+        id: `owner-${deviceId}`,
+        ahuId: deviceId,
+        label: "Owner device (pre-shared token)",
+        token,
+        sourceType: "PHYSICAL",
+        enabled: true,
+        createdAt: 0,
+      };
+    }
+  }
   if (!device) {
     return { ok: false, status: 401, body: { error: "Invalid or disabled device bearer token" } };
   }

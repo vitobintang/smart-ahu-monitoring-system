@@ -1,14 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { equal } from "node:assert/strict";
 
 import { InMemoryRtdb, type RtdbAdapter } from "../src/lib/rtdb/store";
 import {
   commandsToControlPatch,
+  findDeviceIdByToken,
+  initialDaikinDeviceRecord,
   isDaikinShape,
   mapDaikinToSample,
   readDaikinDevice,
+  readDeviceOwnerToken,
   writeDaikinControl,
+  writeDeviceOwnerToken,
 } from "../src/lib/rtdb/daikin";
+import { ingestTelemetryRtdb } from "../src/lib/rtdb/lifecycle";
 import { setRtdbDevice, writeRtdbAhu } from "../src/lib/rtdb/registry";
 import { createCommandRtdb, acceptPendingRtdb } from "../src/lib/rtdb/lifecycle";
 
@@ -147,6 +153,45 @@ test("commandsToControlPatch maps accepted command types onto bridge writes", ()
   assert.deepEqual(commandsToControlPatch([{ id: "5", commandType: "SETPOINT", payload: {} }]), {});
 });
 
+test("deviceOwners: token write/read and reverse lookup", async () => {
+  const owner: RtdbAdapter = new InMemoryRtdb();
+  assert.equal(await readDeviceOwnerToken(owner, "GTM-DAIKIN-001"), null);
+
+  await writeDeviceOwnerToken(owner, "GTM-DAIKIN-001", "preshared-token-01");
+  assert.equal(await readDeviceOwnerToken(owner, "GTM-DAIKIN-001"), "preshared-token-01");
+  assert.equal(await findDeviceIdByToken(owner, "preshared-token-01"), "GTM-DAIKIN-001");
+  assert.equal(await findDeviceIdByToken(owner, "nope"), null);
+  assert.equal(await findDeviceIdByToken(owner, ""), null);
+
+  // overwrite (re-registration)
+  await writeDeviceOwnerToken(owner, "GTM-DAIKIN-001", "rotated-token-02");
+  assert.equal(await readDeviceOwnerToken(owner, "GTM-DAIKIN-001"), "rotated-token-02");
+});
+
+test("initialDaikinDeviceRecord is inert until the bridge reports (no phantom samples)", () => {
+  const record = initialDaikinDeviceRecord(1_760_000_000_000);
+  assert.equal(isDaikinShape(record), true);
+  assert.equal(mapDaikinToSample(record, "GTM-DAIKIN-001"), null); // state_valid:false, no room_temp
+  assert.equal(record.source, "web-registration");
+});
+
+test("ingest accepts the owner's pre-shared device token (PHYSICAL)", async () => {
+  const appDb: RtdbAdapter = new InMemoryRtdb();
+  await writeRtdbAhu(appDb, ahu());
+  const ownerDb: RtdbAdapter = new InMemoryRtdb();
+  await writeDeviceOwnerToken(ownerDb, "GTM-DAIKIN-001", "preshared-token-01");
+
+  const bad = await ingestTelemetryRtdb(appDb, "wrong-token", { messageId: "m-1", timestamp: new Date(1_760_000_000_000).toISOString(), parameters: { roomTemp: 25 } }, 1_760_000_000_000, ownerDb);
+  equal(bad.ok, false);
+  if (!bad.ok) equal(bad.status, 401);
+
+  const okResult = await ingestTelemetryRtdb(appDb, "preshared-token-01", { messageId: "m-1", timestamp: new Date(1_760_000_000_000).toISOString(), parameters: { roomTemp: 25 }, runState: "RUN" }, 1_760_000_000_000, ownerDb);
+  equal(okResult.ok, true);
+  const latest = await appDb.get<{ ahuId: string; source: string }>("telemetryLatest/GTM-DAIKIN-001");
+  equal(latest?.ahuId, "GTM-DAIKIN-001");
+  equal(latest?.source, "PHYSICAL");
+});
+
 test("a commissioned physical bridge (physicalControlEnabled) accepts and writes control through", async () => {
   const rtdb: RtdbAdapter = new InMemoryRtdb();
   await seedIntegration(rtdb);
@@ -160,7 +205,7 @@ test("a commissioned physical bridge (physicalControlEnabled) accepts and writes
   });
   if ("error" in outcome) assert.fail(outcome.error);
 
-  const accepted = await acceptPendingRtdb(rtdb, "GTM-DAIKIN-001");
+  const accepted = await acceptPendingRtdb(rtdb, "GTM-DAIKIN-001", Date.now(), rtdb);
   assert.deepEqual(accepted, [outcome.commandId]);
 
   const record = await readDaikinDevice(rtdb, "GTM-DAIKIN-001");
