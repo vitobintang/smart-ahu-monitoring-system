@@ -1,16 +1,20 @@
 /**
- * seed-adoption-profiles.ts — one-shot: create RTDB role profiles for Auth
- * users that already exist on an ADOPTED Firebase project.
+ * seed-adoption-profiles.ts — one-shot: create RTDB role profiles in the APP
+ * database for Auth accounts that already exist on the AUTH project.
  *
- * Firebase Auth credentials are project-global and are NOT touched: existing
- * users keep their email + password and can sign in immediately once a
- * `users/{uid}` profile (role/username mirrors) exists — which is what this
- * script creates using the app's own claim logic (src/lib/rtdb/users.ts).
+ * Auth accounts (credentials) are NOT touched and stay wherever identity
+ * lives (the collaborator project by default — see FIREBASE_AUTH_* in
+ * .env.example). Existing users keep their email + password and can sign in
+ * immediately once a `users/{uid}` profile (role/username mirrors) exists in
+ * the APP database — which is what this script creates using the app's own
+ * claim logic (src/lib/rtdb/users.ts).
  *
  * Reads .env.local values from the environment (never reads the file itself):
- *   FIREBASE_SERVICE_ACCOUNT_PATH  the service-account JSON (server-only)
- *   FIREBASE_DATABASE_URL          or NEXT_PUBLIC_FIREBASE_DATABASE_URL
- *   RTDB_PATH_PREFIX               optional shared-database namespace
+ *   FIREBASE_SERVICE_ACCOUNT_PATH        the APP database service account
+ *   FIREBASE_AUTH_SERVICE_ACCOUNT_PATH   the AUTH project\'s service account
+ *                                        (defaults: OWNER_DEVICES_* then the app one)
+ *   FIREBASE_DATABASE_URL                or NEXT_PUBLIC_FIREBASE_DATABASE_URL
+ *   RTDB_PATH_PREFIX                     optional namespace
  *
  * Usage:
  *   DRY RUN (default — shows the plan, writes nothing):
@@ -41,12 +45,13 @@ function die(message: string): never {
   process.exit(1);
 }
 
-function loadServiceAccount() {
-  const path = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  if (!path) die("Set FIREBASE_SERVICE_ACCOUNT_PATH to the service-account .json file.");
-  return JSON.parse(readFileSync(path, "utf8"));
-}
-
+const dataPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || process.env.GOOGLE_APPLICATION_CREDENTIALS;
+if (!dataPath) die("Set FIREBASE_SERVICE_ACCOUNT_PATH to the APP database service-account .json file.");
+// Auth accounts are listed from the AUTH project (see FIREBASE_AUTH_* in .env.example).
+const authPath =
+  process.env.FIREBASE_AUTH_SERVICE_ACCOUNT_PATH ??
+  process.env.OWNER_DEVICES_SERVICE_ACCOUNT_PATH ??
+  dataPath;
 const databaseUrl = (
   process.env.FIREBASE_DATABASE_URL ??
   process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL ??
@@ -63,11 +68,15 @@ const { initializeApp, cert } = await import("firebase-admin/app");
 const { getAuth } = await import("firebase-admin/auth");
 const { getDatabase } = await import("firebase-admin/database");
 
-const app = initializeApp(
-  { credential: cert(loadServiceAccount()), databaseURL: databaseUrl.replace(/\/+$/, "") },
-  `seed-profiles-${Date.now()}`,
+const authApp = initializeApp(
+  { credential: cert(JSON.parse(readFileSync(authPath, "utf8"))), databaseURL: databaseUrl.replace(/\/+$/, "") },
+  `seed-profiles-auth-${Date.now()}`,
 );
-const rtdb: RtdbAdapter = createAdminRtdbAdapter(getDatabase(app));
+const dataApp = initializeApp(
+  { credential: cert(JSON.parse(readFileSync(dataPath, "utf8"))), databaseURL: databaseUrl.replace(/\/+$/, "") },
+  `seed-profiles-data-${Date.now()}`,
+);
+const rtdb: RtdbAdapter = createAdminRtdbAdapter(getDatabase(dataApp));
 const prefix = resolveRtdbPathPrefix();
 
 const maskEmail = (email: string) => {
@@ -82,7 +91,7 @@ console.log("");
 
 /* ── plan ────────────────────────────────────────────────────────────────── */
 
-const auth = getAuth(app);
+const auth = getAuth(authApp);
 const authUsers: Array<{ uid: string; email: string; displayName: string | null }> = [];
 let pageToken: string | undefined;
 do {

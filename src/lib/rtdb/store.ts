@@ -36,7 +36,8 @@ export function assertRtdbPath(path: string): void {
 }
 
 /** Production adapter over firebase-admin's Database. */
-export function createAdminRtdbAdapter(db: Database): RtdbAdapter {
+export function createAdminRtdbAdapter(db: Database, prefixOverride?: string): RtdbAdapter {
+  const prefix = prefixOverride ?? resolveRtdbPathPrefix();
   const ref = (path: string) => {
     assertRtdbPath(path);
     return db.ref(path);
@@ -61,7 +62,7 @@ export function createAdminRtdbAdapter(db: Database): RtdbAdapter {
         return { committed: result.committed, value: (result.snapshot?.val() ?? null) as T | null };
       },
     },
-    resolveRtdbPathPrefix(),
+    prefix,
   );
 }
 

@@ -21,6 +21,8 @@ import type { RtdbAdapter } from "./store";
 
 /** The OWNER's live-state tree — intentionally the root `devices` name. */
 export const DAIKIN_DEVICES_NODE = "devices";
+/** The OWNER's token registry — deviceOwners/{id} holds the pre-shared bearer token (scalar). */
+export const DAIKIN_OWNERS_NODE = "deviceOwners";
 
 export interface DaikinDeviceRecord {
   capabilities?: unknown;
@@ -137,4 +139,44 @@ export function commandsToControlPatch(commands: AcceptedCommandLike[]): { power
     }
   }
   return patch;
+}
+
+/* ------------------------------------------------------------------------- */
+/* deviceOwners — the pre-shared device tokens                                */
+/* ------------------------------------------------------------------------- */
+
+/** The pre-shared bearer token for a device (scalar string), or null. */
+export async function readDeviceOwnerToken(owner: RtdbAdapter, ahuId: string): Promise<string | null> {
+  if (typeof ahuId !== "string" || !ahuId.trim() || ahuId.length > 128) return null;
+  const value = await owner.get<unknown>(`${DAIKIN_OWNERS_NODE}/${ahuId}`);
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+/** Registers/overwrites a device token (Admin "input token" flow). */
+export async function writeDeviceOwnerToken(owner: RtdbAdapter, ahuId: string, token: string): Promise<void> {
+  await owner.set(`${DAIKIN_OWNERS_NODE}/${ahuId}`, token);
+}
+
+/** Reverse lookup: which device id does this bearer token belong to? */
+export async function findDeviceIdByToken(owner: RtdbAdapter, token: string): Promise<string | null> {
+  if (typeof token !== "string" || !token) return null;
+  const tree = (await owner.get<Record<string, string>>(DAIKIN_OWNERS_NODE)) ?? {};
+  for (const [id, value] of Object.entries(tree)) {
+    if (typeof value === "string" && value === token) return id;
+  }
+  return null;
+}
+
+/** Initial `devices/{id}` record for a freshly registered unit — the bridge owns it afterwards. */
+export function initialDaikinDeviceRecord(now = Date.now()): DaikinDeviceRecord & { timestamp: number } {
+  return {
+    mode: "cool",
+    online: false,
+    power: false,
+    s21_connected: false,
+    simulated: false,
+    source: "web-registration",
+    state_valid: false,
+    timestamp: now,
+  };
 }

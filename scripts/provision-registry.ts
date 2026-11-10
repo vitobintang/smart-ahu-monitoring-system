@@ -2,16 +2,16 @@
  * provision-registry.ts — one-shot: create the AHU registry (units, thresholds,
  * simulation gateway devices) directly in Firebase RTDB.
  *
- * Sized for the ADOPTED project: the fleet is the single real unit
- * `GTM-DAIKIN-001` (the friend's Daikin S21 monitor) living under the
- * RTDB_PATH_PREFIX namespace — the owner's own root nodes are never touched.
- * Idempotent: existing AHUs/thresholds/devices are left untouched, so it is
- * safe to re-run.
+ * Writes to YOUR app project only. The fleet seeds the single real unit
+ * `GTM-DAIKIN-001` (the collaborator's Daikin S21 monitor); the device's
+ * pre-shared token lives on the OWNER project's deviceOwners/{id} — register
+ * further units via Admin → Add-unit "Device token". Idempotent: existing
+ * AHUs/thresholds/devices are left untouched.
  *
  * Reads .env.local values from the environment (never reads the file itself):
- *   FIREBASE_SERVICE_ACCOUNT_PATH  the service-account JSON (server-only)
+ *   FIREBASE_SERVICE_ACCOUNT_PATH  the APP project's service-account JSON
  *   FIREBASE_DATABASE_URL          or NEXT_PUBLIC_FIREBASE_DATABASE_URL
- *   RTDB_PATH_PREFIX               optional shared-database namespace
+ *   RTDB_PATH_PREFIX               optional namespace (leave empty: your own project)
  *
  * Usage (from the repo root):
  *   node --env-file=.env.local --import tsx scripts/provision-registry.ts
@@ -56,10 +56,10 @@ const ALL: ParamKey[] = PARAMETERS.map((p) => p.key);
  * so the full app (thresholds, trends, reports) works out of the box; trim the
  * per-sensor toggles in Admin → Config when a sensor is not physically present.
  *
- * physicalControlEnabled is TRUE: the app IS the commissioned controller for
- * this unit — accepted START/STOP/SETPOINT commands write power/setpoint
- * directly into the owner's root `devices/GTM-DAIKIN-001` node (rtdb/daikin.ts),
- * and workers sync its live state back through the ingest pipeline.
+ * physicalControlEnabled is TRUE for GTM-DAIKIN-001 (its token is already in
+ * the owner's deviceOwners/): accepted START/STOP/SETPOINT commands write
+ * power/setpoint into the owner's devices/{id} node, and the worker sampler
+ * syncs its live state back through the ingest pipeline.
  */
 const AHU_SEEDS: AhuSeed[] = [
   {
@@ -177,21 +177,6 @@ for (const seed of AHU_SEEDS) {
     }
   }
 
-  const existingBridge = existingDevices.find((d) => d.ahuId === seed.id && d.sourceType === "PHYSICAL");
-  if (!existingBridge) {
-    const token = `s21_${seed.id.toLowerCase().replace(/-/g, "")}_${randomHex(8)}`;
-    await setRtdbDevice(rtdb, {
-      id: randomId(),
-      ahuId: seed.id,
-      label: `${seed.id} Daikin S21 Bridge (system)`,
-      token,
-      sourceType: "PHYSICAL",
-      enabled: true,
-      createdAt: now,
-    });
-    createdDevices += 1;
-    simTokens.push(`${seed.id} (physical bridge): ${token}`);
-  }
   if (!existingSimAhuIds.has(seed.id)) {
     const token = `sim_${seed.id.toLowerCase().replace(/-/g, "")}_${randomHex(8)}`;
     await setRtdbDevice(rtdb, {

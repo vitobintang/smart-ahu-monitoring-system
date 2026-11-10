@@ -64,6 +64,8 @@ export async function POST(req: Request) {
       installedSensors?: string[];
       desiredRunState?: "RUN" | "STOP";
       provisionSimulator?: boolean;
+      /** Pre-shared AHU device token — written to the OWNER tree (deviceOwners/{id} + devices/{id}). */
+      deviceToken?: string;
       mapX?: number;
       mapZ?: number;
       mapRotation?: number;
@@ -139,6 +141,10 @@ export async function POST(req: Request) {
     const hasHeater = Boolean(body.hasHeater);
     const desiredRunState = body.desiredRunState === "STOP" ? "STOP" : "RUN";
     const provisionSimulator = body.provisionSimulator !== false;
+    const deviceToken =
+      typeof body.deviceToken === "string" && body.deviceToken.trim().length >= 8 && body.deviceToken.trim().length <= 128
+        ? body.deviceToken.trim()
+        : null;
 
     let sensors: ParamKey[] = Array.isArray(body.installedSensors)
       ? body.installedSensors.filter((s): s is ParamKey => PARAM_KEYS.includes(s as ParamKey))
@@ -156,6 +162,8 @@ export async function POST(req: Request) {
       return rtdb;
     })();
     const { writeRtdbAhu, setRtdbThreshold, setRtdbDevice } = await import("@/lib/rtdb/registry");
+    const { tryGetOwnerRtdb } = await import("@/lib/firebase/admin");
+    const ownerRtdb = await tryGetOwnerRtdb();
     const nowMs = Date.now();
     await writeRtdbAhu(rtdb, {
       id: rawId,
@@ -170,7 +178,8 @@ export async function POST(req: Request) {
       desiredRunState,
       setpoint,
       faultCode: null,
-      physicalControlEnabled: false,
+      // A registered device token means the app IS the commissioned controller.
+      physicalControlEnabled: deviceToken !== null,
       mapX: placement.snappedX,
       mapZ: placement.snappedZ,
       mapRotation: rotation,
@@ -207,6 +216,15 @@ export async function POST(req: Request) {
         createdAt: nowMs,
       });
     }
+    if (deviceToken && ownerRtdb) {
+      // Owner devices tree: register the pre-shared token and create the
+      // device record — the S21 bridge owns the node from here on.
+      const { writeDeviceOwnerToken, initialDaikinDeviceRecord } = await import("@/lib/rtdb/daikin");
+      await writeDeviceOwnerToken(ownerRtdb, rawId, deviceToken);
+      if ((await ownerRtdb.get(`devices/${rawId}`)) === null) {
+        await ownerRtdb.set(`devices/${rawId}`, initialDaikinDeviceRecord(nowMs));
+      }
+    }
     await writeAudit({
       userId: actor.user.id,
       userEmail: actor.user.email,
@@ -220,6 +238,7 @@ export async function POST(req: Request) {
         hasHeater,
         setpoint,
         provisionSimulator,
+        deviceRegistered: deviceToken !== null,
         mapX: placement.snappedX,
         mapZ: placement.snappedZ,
         mapRotation: rotation,

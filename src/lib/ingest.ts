@@ -31,6 +31,8 @@ export interface IngestResult {
 export async function ingestTelemetry(token: string, payload: TelemetryPayload): Promise<IngestResult> {
   const rtdb = await requireRtdb();
   if (!rtdb) throw new Error("Firebase RTDB is not configured");
-  const result = await ingestTelemetryRtdb(rtdb, token, payload);
+  const { tryGetOwnerRtdb } = await import("@/lib/firebase/admin");
+  const owner = await tryGetOwnerRtdb();
+  const result = await ingestTelemetryRtdb(rtdb, token, payload, Date.now(), owner ?? undefined);
   return result as IngestResult;
 }
