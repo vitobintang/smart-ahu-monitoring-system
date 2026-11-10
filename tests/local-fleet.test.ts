@@ -83,3 +83,29 @@ test("readActiveFleetRecords filters by the active source", async () => {
   ok(!local.has("GTM-DAIKIN-001"), "real unit hidden while source=local");
   equal(local.size, 7);
 });
+
+test("readActiveFleetRecords infers legacy records without fleetSource from localDevices membership", async () => {
+  const rtdb = new InMemoryRtdb();
+  // Legacy real unit: no fleetSource, NOT in localDevices → daikin.
+  const real: RtdbAhuRecord = { ...defaultAhuRecord("GTM-DAIKIN-001"), mapX: -12, mapZ: -13 };
+  delete (real as Partial<RtdbAhuRecord>).fleetSource;
+  await writeRtdbAhu(rtdb, real);
+  // Legacy local unit: no fleetSource but present in the localDevices tree → local.
+  const legacyLocal: RtdbAhuRecord = { ...defaultAhuRecord("LOC-AHU-01"), mapX: -5, mapZ: -6 };
+  delete (legacyLocal as Partial<RtdbAhuRecord>).fleetSource;
+  await writeRtdbAhu(rtdb, legacyLocal);
+  await rtdb.set("localDevices/LOC-AHU-01/status", { timestamp: Date.now() });
+
+  deepStrictEqual(
+    [...(await readActiveFleetRecords(rtdb)).keys()],
+    ["GTM-DAIKIN-001"],
+    "legacy record without localDevices node stays daikin",
+  );
+
+  await writeDeviceSource(rtdb, "local");
+  deepStrictEqual(
+    [...(await readActiveFleetRecords(rtdb)).keys()],
+    ["LOC-AHU-01"],
+    "legacy record WITH a localDevices node follows the local fleet",
+  );
+});

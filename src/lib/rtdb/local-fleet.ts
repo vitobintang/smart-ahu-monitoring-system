@@ -203,12 +203,20 @@ export async function localFleetTick(rtdb: RtdbAdapter): Promise<number> {
 /**
  * Registry rows of the ACTIVE fleet only (settings/deviceSource). Units carry
  * fleetSource ("local" for the fictional fleet, "daikin" otherwise/legacy).
+ * Records written before the fleetSource field existed are inferred from
+ * localDevices membership so legacy data can never leak across the switch.
  */
 export async function readActiveFleetRecords(rtdb: RtdbAdapter): Promise<Map<string, RtdbAhuRecord>> {
-  const [registry, source] = await Promise.all([readRtdbAhus(rtdb), readDeviceSource(rtdb)]);
+  const [registry, source, localIds] = await Promise.all([
+    readRtdbAhus(rtdb),
+    readDeviceSource(rtdb),
+    listLocalDeviceIds(rtdb),
+  ]);
+  const localSet = new Set(localIds);
   const active = new Map<string, RtdbAhuRecord>();
   for (const [id, record] of registry) {
-    if ((record.fleetSource ?? "daikin") === source) active.set(id, record);
+    const fleet = record.fleetSource ?? (localSet.has(id) ? "local" : "daikin");
+    if (fleet === source) active.set(id, record);
   }
   return active;
 }
