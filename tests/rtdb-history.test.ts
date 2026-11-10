@@ -80,6 +80,8 @@ async function seedSnap(db: InMemoryRtdb, r: RtdbTelemetryRecord): Promise<void>
     simulated: r.source === "SIMULATION",
     timestamp: r.timestamp,
   };
+  // RTDB rejects undefined values — omit absent fields like the real SDK does.
+  for (const [k, v] of Object.entries(node)) if (v === undefined) delete node[k];
   await writeDeviceSnapshot(db, r.ahuId, node);
 }
 

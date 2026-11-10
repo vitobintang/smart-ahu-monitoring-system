@@ -1,5 +1,5 @@
 import { test } from "node:test";
-import { deepStrictEqual, equal } from "node:assert/strict";
+import { deepStrictEqual, equal, rejects } from "node:assert/strict";
 
 import { InMemoryRtdb } from "../src/lib/rtdb/store";
 import { alarmToRow } from "../src/lib/rtdb/alarms";
@@ -87,6 +87,24 @@ function threshold(ahuId: string, parameter: string, overrides: Partial<RtdbThre
 }
 
 /* ── registry ─────────────────────────────────────────────────────── */
+
+test("registry writes never contain undefined (RTDB rejects them — provision bug regression)", async () => {
+  const db = new InMemoryRtdb();
+  const { defaultAhuRecord } = await import("../src/lib/rtdb/registry");
+  // this exact shape crashed the real provision script (id: undefined)
+  await writeRtdbAhu(db, defaultAhuRecord("GTM-DAIKIN-001"));
+  const stored = await db.get<Record<string, unknown>>("devices/GTM-DAIKIN-001/app");
+  equal("id" in (stored ?? {}), false, "id is the path key, not a stored field");
+  equal(stored?.physicalControlEnabled, false);
+
+  // the adapter itself mirrors the real SDK's undefined rejection
+  await rejects(() => db.set("devices/X/app", { a: 1, b: undefined }), /contains undefined/);
+  await rejects(() => db.update("devices/X/app", { a: undefined }), /contains undefined/);
+  // nested undefined is caught too
+  await rejects(() => db.set("devices/X/app", { nested: { deep: undefined } }), /contains undefined/);
+  // nulls remain legal (stripped by the real backend)
+  await db.set("devices/X/app", { lastSeenAt: null, name: "ok" });
+});
 
 test("ahu registry: write, patch and read round-trip; ahuToRow maps Dates", async () => {
   const db = new InMemoryRtdb();

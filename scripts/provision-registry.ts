@@ -114,7 +114,10 @@ if (!apply) {
 }
 
 if (!existingMeta) {
-  await rtdb.set(n(`devices/${FLEET_ID}/app`), { ...fleetMeta, id: undefined });
+  // RTDB rejects undefined values — omit `id` (it is the path key) properly.
+  const { id: _ignored, ...appMeta } = fleetMeta;
+  void _ignored;
+  await rtdb.set(n(`devices/${FLEET_ID}/app`), appMeta);
   console.log(`✓ created devices/${FLEET_ID}/app`);
 }
 for (const t of thresholdSeed) {
