@@ -510,7 +510,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="mt-4 flex items-center justify-between border-t border-[#eef2f7] pt-3">
                     <span className="text-[12px] font-bold text-emerald-600">{onlinePct}% Units Online</span>
-                    <Link href="/ahu" className="grid h-7 w-7 place-items-center rounded-lg bg-emerald-50 text-emerald-600 transition hover:bg-emerald-100">
+                    <Link href="/devices" className="grid h-7 w-7 place-items-center rounded-lg bg-emerald-50 text-emerald-600 transition hover:bg-emerald-100">
                       <ArrowRight size={14} />
                     </Link>
                   </div>

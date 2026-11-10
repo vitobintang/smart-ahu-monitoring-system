@@ -93,7 +93,7 @@ export default function AhuUnitGrid() {
           {visible.map((id) => (
             <Link
               key={id}
-              href={`/ahu/${id}`}
+              href={`/devices/${id}`}
               prefetch={false}
               className="group block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-blue-400 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 motion-reduce:transition-none"
             >

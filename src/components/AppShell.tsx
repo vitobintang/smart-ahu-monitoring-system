@@ -231,7 +231,7 @@ export default function AppShell({
   }
 
   const items = NAV.filter((n) => can(currentUser.role, n.activity));
-  const isImmersive3dPage = pathname === "/ahu";
+  const isImmersive3dPage = pathname === "/devices";
   const unackedAlarms = (feed?.alarms ?? []).filter((a) => !a.acknowledged).length;
   const displayName =
     currentUser.fullName?.trim() ||
@@ -415,8 +415,8 @@ export default function AppShell({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     const q = e.currentTarget.value.trim().toUpperCase();
-                    if (/^AHU-0[1-7]$/.test(q)) router.push(`/ahu/${q}`);
-                    else if (q) router.push("/ahu");
+                    if (/^AHU-0[1-7]$/.test(q)) router.push(`/devices/${q}`);
+                    else if (q) router.push("/devices");
                   }
                 }}
               />

@@ -139,7 +139,7 @@ export default function ConfigPage() {
         <div className="panel h-max rounded-2xl p-3">
           <div className="mb-2 flex items-center justify-between gap-2 px-1">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Units</p>
-            <Link href={`/ahu/${selected}`} className="font-mono text-[10.5px] font-semibold uppercase tracking-wide text-cyan-300 hover:underline lg:hidden">
+            <Link href={`/devices/${selected}`} className="font-mono text-[10.5px] font-semibold uppercase tracking-wide text-cyan-300 hover:underline lg:hidden">
               view {selected} →
             </Link>
           </div>
@@ -161,7 +161,7 @@ export default function ConfigPage() {
                 >
                   {id}
                 </button>
-                <Link href={`/ahu/${id}`} className="ml-2 hidden text-[10px] uppercase tracking-wide opacity-70 hover:opacity-100 lg:inline">
+                <Link href={`/devices/${id}`} className="ml-2 hidden text-[10px] uppercase tracking-wide opacity-70 hover:opacity-100 lg:inline">
                   view
                 </Link>
               </div>

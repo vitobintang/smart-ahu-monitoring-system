@@ -102,6 +102,18 @@ export interface PendingPlacement {
   snappedToWall?: boolean;
 }
 
+/** Hover-badge anchor height per device type — the cassette hangs at 2.85 m, so its badge floats above the ceiling slab. */
+function unitLabelWorldY(deviceType?: string | null): number {
+  if (deviceType === "AC_DAK") return 3.38;
+  if (deviceType === "AC_SPLIT_WALL") return 2.5;
+  if (deviceType === "AC_STANDING") return 2.12;
+  return 2.52;
+}
+
+function unitCardWorldY(deviceType?: string | null): number {
+  return unitLabelWorldY(deviceType) + 0.18;
+}
+
 interface Props {
   items: FacilityAhuItem[];
   mode?: "explore" | "placement";
@@ -129,6 +141,8 @@ interface Props {
   draftDeviceType?: string | null;
   placement?: PendingPlacement | null;
   onPlacementChange?: (next: PendingPlacement) => void;
+  /** Optional slot rendered inside the top HUD controls (device-source switch). */
+  sourceSwitch?: React.ReactNode;
 }
 
 
@@ -166,6 +180,7 @@ export default function AhuFacilityMap3D({
   onResetRoomVertices,
   rooms = [],
   onSaveRooms,
+  sourceSwitch,
   draftAhuId = "AHU-08",
   draftAhuName = "New Air Handling Unit",
   draftDeviceType = null,
@@ -662,9 +677,10 @@ export default function AhuFacilityMap3D({
       targetVisible: boolean;
       currentScale: number;
     }>;
-    rotors: Array<{ rotor: THREE.Group; running: boolean }>;
+    rotors: Array<{ obj: THREE.Group; axis: "x" | "y" | "z"; running: boolean }>;
+    flaps: Array<{ obj: THREE.Object3D; axis: "x" | "z"; base: number; phase: number; running: boolean }>;
+    airflows: import("@/components/ahu-model-builders").DeviceAirflow[];
     halos: Map<string, THREE.Mesh>;
-    beacons: Array<{ mat: THREE.MeshStandardMaterial; fault: boolean }>;
     roomPool: RoomMeshPool;
     wallSnapBeam: THREE.Mesh;
     wallSnapRail: THREE.Mesh;
@@ -751,7 +767,8 @@ export default function AhuFacilityMap3D({
     sunLight.shadow.camera.right = d;
     sunLight.shadow.camera.top = d;
     sunLight.shadow.camera.bottom = -d;
-    sunLight.shadow.bias = -0.0004;
+    sunLight.shadow.bias = -0.0002;
+    sunLight.shadow.normalBias = 0.025;
     scene.add(sunLight);
 
     const skyFillLight = new THREE.DirectionalLight(0x93c5fd, 0.45);
@@ -978,8 +995,9 @@ export default function AhuFacilityMap3D({
       sharedMats,
       trees: treeEntries,
       rotors: [],
+      flaps: [],
+      airflows: [],
       halos: new Map(),
-      beacons: [],
       roomPool,
       wallSnapBeam,
       wallSnapRail,
@@ -1767,8 +1785,13 @@ export default function AhuFacilityMap3D({
 
       if (objs) {
         for (const r of objs.rotors) {
-          if (r.running) r.rotor.rotation.z -= dt * 7.5;
+          if (r.running) r.obj.rotation[r.axis] -= dt * 7.5;
         }
+        for (const f of objs.flaps) {
+          const target = f.running ? f.base + Math.sin(elapsed * 1.8 + f.phase) * 0.3 : f.base * 0.5;
+          f.obj.rotation[f.axis] += (target - f.obj.rotation[f.axis]) * Math.min(1, dt * 6);
+        }
+        for (const a of objs.airflows) a.update(dt, true);
         for (const t of objs.trees) {
           const goal = t.targetVisible ? 1 : 0;
           if (Math.abs(t.currentScale - goal) > 0.002) {
@@ -1790,11 +1813,6 @@ export default function AhuFacilityMap3D({
           const mat = haloMesh.material as THREE.MeshBasicMaterial;
           const isSel = id === selectedIdRef.current && !editingRoomRef.current;
           mat.opacity = isSel ? 0.65 + Math.sin(elapsed * 4) * 0.2 : 0;
-        }
-        for (const b of objs.beacons) {
-          if (b.fault) {
-            b.mat.emissiveIntensity = 0.4 + Math.abs(Math.sin(elapsed * 5.5)) * 1.0;
-          }
         }
       }
 
@@ -1844,7 +1862,7 @@ export default function AhuFacilityMap3D({
           el.style.pointerEvents = "none";
           continue;
         }
-        projVec.set(u.placement.x, 2.52, u.placement.z);
+        projVec.set(u.placement.x, unitLabelWorldY(u.item.ahu.deviceType), u.placement.z);
         projVec.project(camera);
         if (projVec.z < -1 || projVec.z > 1) {
           el.style.opacity = "0";
@@ -1862,7 +1880,7 @@ export default function AhuFacilityMap3D({
       if (cardAnchorRef.current && displayedCardIdRef.current) {
         const cardOwner = resolvedUnitsRef.current.find((u) => u.item.ahu.id === displayedCardIdRef.current);
         if (cardOwner) {
-          projVec.set(cardOwner.placement.x, 2.65, cardOwner.placement.z);
+          projVec.set(cardOwner.placement.x, unitCardWorldY(cardOwner.item.ahu.deviceType), cardOwner.placement.z);
           projVec.project(camera);
           const rawX = (projVec.x * 0.5 + 0.5) * cw;
           const rawY = (-projVec.y * 0.5 + 0.5) * ch;
@@ -2052,8 +2070,9 @@ export default function AhuFacilityMap3D({
     if (!objs) return;
     disposeGroupDeep(objs.ahuRootGroup);
     objs.rotors = [];
+    objs.flaps = [];
+    objs.airflows = [];
     objs.halos.clear();
-    objs.beacons = [];
 
     for (const { item, placement: pos } of resolvedUnits) {
       const isBeingMoved = item.ahu.id === movingAhuId;
@@ -2068,9 +2087,20 @@ export default function AhuFacilityMap3D({
       built.group.position.set(pos.x, 0, pos.z);
       built.group.rotation.y = (-pos.rotation * Math.PI) / 180;
       objs.ahuRootGroup.add(built.group);
-      objs.rotors.push({ rotor: built.rotor, running: item.status === "RUN" && !isBeingMoved });
+      const running = item.status === "RUN" && !isBeingMoved;
+      for (const r of built.rotors) objs.rotors.push({ obj: r.obj, axis: r.axis, running });
+      for (const f of built.flaps) {
+        const ud = f.userData as { oscAxis?: "x" | "z"; oscBase?: number; oscPhase?: number };
+        objs.flaps.push({
+          obj: f,
+          axis: ud.oscAxis ?? "x",
+          base: ud.oscBase ?? 0,
+          phase: ud.oscPhase ?? 0,
+          running,
+        });
+      }
+      if (built.airflow) objs.airflows.push(built.airflow);
       objs.halos.set(item.ahu.id, built.halo);
-      objs.beacons.push({ mat: built.beaconMat, fault: item.status === "FAULT" && !isBeingMoved });
     }
   }, [resolvedUnits, movingAhuId]);
 
@@ -2231,10 +2261,10 @@ export default function AhuFacilityMap3D({
                   : editingRoom
                   ? "3D Room Architect · Edit Walls & Corners"
                   : mode === "placement"
-                    ? "Place New 3D AHU · Indoor or Outdoor"
+                    ? "Place New Device · Indoor Only"
                     : movingAhuId
                       ? `Moving ${movingAhuId} in 3D Facility`
-                      : "AHU Units · 3D Facility Digital Twin"}
+                      : "Devices · 3D Facility Digital Twin"}
               </h1>
               <span
                 ref={roomAreaLabelRef}
@@ -2251,15 +2281,16 @@ export default function AhuFacilityMap3D({
                 : editingRoom
                 ? "Drag any wall or corner orb · double-click a wall to add a point · extrude new wings in 1 click"
                 : mode === "placement" || movingAhuId
-                  ? "Place inside any wing or anywhere outside · snaps onto the 2m floor grid · R / Shift+R rotates 90°"
+                  ? "Place inside any indoor wing · snaps onto the 2m floor grid · R / Shift+R rotates 90°"
                   : pickToMove
-                    ? "Click any 3D AHU model (or its name badge) to drag & move it indoors or anywhere outdoors"
-                    : "Drag to rotate 360° · scroll to zoom · click any 3D AHU to view live status & controls"}
+                    ? "Click any 3D device model (or its name badge) to drag & move it to a new indoor spot"
+                    : "Drag to rotate 360° · scroll to zoom · click any 3D device to view live status & controls"}
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
+          {sourceSwitch}
           {/* Open Classic AHU Units List View */}
           {mode === "explore" && !editingRoom && onOpenList ? (
             <button
@@ -2917,7 +2948,7 @@ export default function AhuFacilityMap3D({
                     <Settings2 size={12} /> Config
                   </Link>
                   <Link
-                    href={`/ahu/${encodeURIComponent(displayedCardUnit.item.ahu.id)}?from=/ahu`}
+                    href={`/devices/${encodeURIComponent(displayedCardUnit.item.ahu.id)}?from=/devices`}
                     className="inline-flex items-center justify-center gap-1 rounded-xl bg-gradient-to-r from-[#2563eb] to-[#1d6ef2] px-2.5 py-1.5 text-[11px] font-bold text-white shadow-[0_6px_16px_-6px_rgba(37,99,235,0.8)] transition hover:brightness-105"
                   >
                     Detail <ExternalLink size={11} />

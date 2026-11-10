@@ -117,7 +117,7 @@ export default function TrendsPage() {
           return (
             <div key={ahuId} className="panel rounded-2xl p-4">
               <div className="mb-3 flex items-center gap-2">
-                <Link href={`/ahu/${ahuId}`} className="font-mono text-sm font-bold text-cyan-300 hover:text-cyan-200">
+                <Link href={`/devices/${ahuId}`} className="font-mono text-sm font-bold text-cyan-300 hover:text-cyan-200">
                   {ahuId}
                 </Link>
                 <span className="text-[11px] text-slate-500">{shown.length} trend-enabled parameters</span>
@@ -218,7 +218,7 @@ export default function TrendsPage() {
                     {timeAgo(t.createdAt)}
                   </td>
                   <td className="px-3 py-2.5">
-                    <Link href={`/ahu/${t.ahuId}`} className="font-mono text-cyan-300">
+                    <Link href={`/devices/${t.ahuId}`} className="font-mono text-cyan-300">
                       {t.ahuId}
                     </Link>
                   </td>

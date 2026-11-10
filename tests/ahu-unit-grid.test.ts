@@ -16,7 +16,7 @@ test("initial grid shows the adopted unit with an unavailable status", () => {
   const html = renderToStaticMarkup(createElement(AhuUnitGrid));
 
   match(html, /1 of 1 planned units/);
-  match(html, /href="\/ahu\/GTM-DAIKIN-001"/);
+  match(html, /href="\/devices\/GTM-DAIKIN-001"/);
 
   equal((html.match(/Status unavailable/g) ?? []).length, 1);
   doesNotMatch(html, /Status running/i);

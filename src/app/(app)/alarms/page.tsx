@@ -122,7 +122,7 @@ export default function AlarmsPage() {
             <div key={a.id} className="space-y-2 p-3.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <Link href={`/ahu/${a.ahuId}`} className="font-mono text-xs font-bold text-cyan-300 hover:underline">
+                  <Link href={`/devices/${a.ahuId}`} className="font-mono text-xs font-bold text-cyan-300 hover:underline">
                     {a.ahuId}
                   </Link>
                   <span className="font-mono text-[11px] text-slate-400">{a.parameter}</span>
@@ -184,7 +184,7 @@ export default function AlarmsPage() {
                     <PriorityBadge priority={a.priority} />
                   </td>
                   <td className="px-4 py-2.5">
-                    <Link href={`/ahu/${a.ahuId}`} className="font-mono text-cyan-300 hover:text-cyan-200">
+                    <Link href={`/devices/${a.ahuId}`} className="font-mono text-cyan-300 hover:text-cyan-200">
                       {a.ahuId}
                     </Link>
                   </td>

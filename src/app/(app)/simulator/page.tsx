@@ -155,7 +155,7 @@ export default function SimulatorPage() {
           return (
             <div key={a.id} className="panel rounded-2xl p-4">
               <div className="flex items-center justify-between gap-2">
-                <Link href={`/ahu/${a.id}`} className="font-mono text-sm font-bold text-cyan-300 hover:text-cyan-200">
+                <Link href={`/devices/${a.id}`} className="font-mono text-sm font-bold text-cyan-300 hover:text-cyan-200">
                   {a.id}
                 </Link>
                 <span className="rounded bg-ink-800 px-2 py-0.5 font-mono text-[10px] uppercase text-slate-300">
