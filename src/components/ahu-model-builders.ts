@@ -130,65 +130,41 @@ function buildAcModel3D(opts: {
   const transparent = isGhost || dimmed;
   const baseOpacity = isGhost ? 0.68 : dimmed ? 0.3 : 1;
   const ghostTint = !isGhost ? null : isValidGhost ? 0x10b981 : 0xef4444;
-  const bodyColor = ghostTint ?? (status === "RUN" ? 0xe2e8f0 : 0xcbd5e1);
+  const bodyColor = ghostTint ?? (status === "RUN" ? 0xeef2f7 : 0xd7dee8);
 
-  const mat = new THREE.MeshStandardMaterial({
-    color: bodyColor,
-    roughness: 0.55,
-    metalness: 0.15,
-    transparent,
-    opacity: baseOpacity,
-  });
+  const mat = (extra?: Partial<THREE.MeshStandardMaterialParameters>) =>
+    new THREE.MeshStandardMaterial({
+      color: bodyColor,
+      roughness: 0.5,
+      metalness: 0.12,
+      transparent,
+      opacity: baseOpacity,
+      ...extra,
+    });
+  const whiteMat = mat();
+  const glossMat = mat({ roughness: 0.25, metalness: 0.05 });
   const accentMat = new THREE.MeshStandardMaterial({
     color: ghostTint ?? 0x1d6ef2,
     roughness: 0.4,
     transparent,
     opacity: baseOpacity,
   });
+  const darkMat = mat({ color: ghostTint ?? 0x1e293b, roughness: 0.7, metalness: 0.25 });
+  const midMat = mat({ color: ghostTint ?? 0x94a3b8, roughness: 0.6 });
+
+  const tag = (mesh: THREE.Mesh) => {
+    mesh.castShadow = !transparent;
+    mesh.receiveShadow = true;
+    mesh.userData = { ahuId: id };
+    group.add(mesh);
+    return mesh;
+  };
+  const box = (w: number, h: number, d: number, m: THREE.MeshStandardMaterial) =>
+    new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
 
   const rotor = new THREE.Group();
-  let body: THREE.Mesh;
-
-  if (deviceType === "AC_DAK") {
-    // ceiling cassette: 0.95 m square plate at ceiling height + swirl fan beneath
-    body = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.09, 0.95), mat);
-    body.position.set(0, 2.68, 0);
-    const skirt = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.07, 0.62), accentMat);
-    skirt.position.set(0, 2.6, 0);
-    skirt.userData = { ahuId: id };
-    group.add(skirt);
-    rotor.position.set(0, 2.5, 0);
-    rotor.rotation.x = Math.PI / 2;
-  } else if (deviceType === "AC_SPLIT_WALL") {
-    // split wall unit: slim 1.1 m slab at 2.1 m with a louver strip
-    body = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.32, 0.22), mat);
-    body.position.set(0, 2.1, 0);
-    const louver = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.05, 0.24), accentMat);
-    louver.position.set(0, 2.0, 0);
-    louver.userData = { ahuId: id };
-    group.add(louver);
-    rotor.position.set(0.42, 2.1, 0.12);
-    rotor.rotation.y = Math.PI / 2;
-  } else {
-    // AC_STANDING: 0.55 × 1.8 × 0.55 floor tower with grill lines
-    body = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.8, 0.55), mat);
-    body.position.set(0, 0.9, 0);
-    for (let g = 0; g < 4; g += 1) {
-      const grill = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.03, 0.06), accentMat);
-      grill.position.set(0, 0.45 + g * 0.22, 0.29);
-      grill.userData = { ahuId: id };
-      group.add(grill);
-    }
-    rotor.position.set(0, 1.62, 0.29);
-  }
-
-  body.castShadow = !transparent;
-  body.receiveShadow = true;
-  body.userData = { ahuId: id };
-  group.add(body);
-
   const fanMat = new THREE.MeshStandardMaterial({
-    color: status === "RUN" ? 0x38bdf8 : 0x94a3b8,
+    color: status === "RUN" ? 0x38bdf8 : 0x8ea3ba,
     emissive: status === "RUN" ? 0x0ea5e9 : 0x000000,
     emissiveIntensity: status === "RUN" ? 0.35 : 0,
     metalness: 0.45,
@@ -196,13 +172,119 @@ function buildAcModel3D(opts: {
     transparent,
     opacity: baseOpacity,
   });
+  const bladeRadius = deviceType === "AC_STANDING" ? 0.13 : 0.1;
   for (let b = 0; b < 5; b += 1) {
-    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.05, 0.02), fanMat);
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(bladeRadius * 1.7, 0.045, 0.02), fanMat);
     const angle = (b * Math.PI * 2) / 5;
-    blade.position.set(Math.cos(angle) * 0.1, Math.sin(angle) * 0.1, 0);
+    blade.position.set(Math.cos(angle) * bladeRadius * 0.62, Math.sin(angle) * bladeRadius * 0.62, 0);
     blade.rotation.z = angle + 0.4;
     rotor.add(blade);
   }
+
+  if (deviceType === "AC_SPLIT_WALL") {
+    // Wall-mounted split indoor unit — back plate sits flush against the wall
+    // (the placement solver puts local -Z against the wall face), head height.
+    const plate = box(1.08, 0.32, 0.025, darkMat);
+    plate.position.set(0, 2.08, -0.125);
+    tag(plate);
+    const body = box(1.04, 0.3, 0.185, whiteMat);
+    body.position.set(0, 2.08, -0.012);
+    tag(body);
+    // rounded top-front curve
+    const curve = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.095, 1.04, 20, 1, false, 0, Math.PI), whiteMat);
+    curve.rotation.z = Math.PI / 2;
+    curve.rotation.y = Math.PI / 2;
+    curve.position.set(0, 2.23, -0.012);
+    tag(curve);
+    const gloss = box(1.02, 0.14, 0.012, glossMat);
+    gloss.position.set(0, 2.14, 0.084);
+    tag(gloss);
+    const louver = box(0.96, 0.04, 0.014, darkMat);
+    louver.position.set(0, 2.035, 0.088);
+    tag(louver);
+    const flap = box(0.96, 0.012, 0.07, whiteMat);
+    flap.position.set(0, 2.012, 0.112);
+    flap.rotation.x = 0.55;
+    tag(flap);
+    const stripe = box(0.9, 0.012, 0.012, accentMat);
+    stripe.position.set(0, 2.185, 0.093);
+    tag(stripe);
+    const display = box(0.05, 0.022, 0.01, accentMat);
+    display.position.set(0.36, 2.15, 0.093);
+    tag(display);
+    rotor.position.set(0, 2.265, -0.05);
+    rotor.rotation.x = Math.PI / 2;
+  } else if (deviceType === "AC_DAK") {
+    // Ceiling cassette — flush against the 2.85 m ceiling slab on four drop rods.
+    for (const [rx, rz] of [[-0.34, -0.34], [0.34, -0.34], [-0.34, 0.34], [0.34, 0.34]] as const) {
+      const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.12, 8), midMat);
+      rod.position.set(rx, 2.81, rz);
+      tag(rod);
+    }
+    const ceilingPlate = box(0.46, 0.025, 0.46, whiteMat);
+    ceilingPlate.position.set(0, 2.855, 0);
+    tag(ceilingPlate);
+    const frame = box(0.9, 0.11, 0.9, whiteMat);
+    frame.position.set(0, 2.695, 0);
+    tag(frame);
+    const skirt = box(0.8, 0.05, 0.8, glossMat);
+    skirt.position.set(0, 2.625, 0);
+    tag(skirt);
+    const under = box(0.64, 0.025, 0.64, darkMat);
+    under.position.set(0, 2.594, 0);
+    tag(under);
+    // four-way discharge louvers around the underside
+    for (const s of [-1, 1]) {
+      const louverX = box(0.56, 0.03, 0.05, whiteMat);
+      louverX.position.set(0, 2.588, s * 0.295);
+      tag(louverX);
+      const louverZ = box(0.05, 0.03, 0.56, whiteMat);
+      louverZ.position.set(s * 0.295, 2.588, 0);
+      tag(louverZ);
+    }
+    const intake = box(0.3, 0.02, 0.3, midMat);
+    intake.position.set(0, 2.587, 0);
+    tag(intake);
+    rotor.position.set(0, 2.6, 0);
+    rotor.rotation.x = Math.PI / 2;
+  } else {
+    // AC_STANDING — floor tower on a base plinth, top discharge, front grille.
+    for (const [fx, fz] of [[-0.2, -0.2], [0.2, -0.2], [-0.2, 0.2], [0.2, 0.2]] as const) {
+      const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 0.04, 10), darkMat);
+      foot.position.set(fx, 0.02, fz);
+      tag(foot);
+    }
+    const plinth = box(0.56, 0.07, 0.56, darkMat);
+    plinth.position.set(0, 0.075, 0);
+    tag(plinth);
+    const body = box(0.5, 1.66, 0.5, whiteMat);
+    body.position.set(0, 0.94, 0);
+    tag(body);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.1, 24), glossMat);
+    cap.position.set(0, 1.82, 0);
+    tag(cap);
+    const discharge = box(0.36, 0.022, 0.36, darkMat);
+    discharge.position.set(0, 1.875, 0);
+    tag(discharge);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.018, 10, 28), darkMat);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(0, 1.885, 0);
+    tag(ring);
+    for (let g = 0; g < 9; g += 1) {
+      const slat = box(0.42, 0.03, 0.018, midMat);
+      slat.position.set(0, 0.32 + g * 0.145, 0.262);
+      tag(slat);
+    }
+    const panel = box(0.3, 0.1, 0.02, darkMat);
+    panel.position.set(0, 1.62, 0.258);
+    tag(panel);
+    const display = box(0.12, 0.032, 0.012, accentMat);
+    display.position.set(0, 1.62, 0.271);
+    tag(display);
+    rotor.position.set(0, 1.85, 0);
+    rotor.rotation.x = Math.PI / 2;
+  }
+
   group.add(rotor);
 
   const statusColor = ghostTint ?? STATUS_HEX[status];
@@ -214,9 +296,13 @@ function buildAcModel3D(opts: {
     transparent,
     opacity: baseOpacity,
   });
-  const beaconY = deviceType === "AC_STANDING" ? 1.86 : deviceType === "AC_SPLIT_WALL" ? 2.3 : 2.78;
-  const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, 0.12, 14), beaconMat);
-  beacon.position.set(deviceType === "AC_SPLIT_WALL" ? -0.48 : 0.2, beaconY, 0);
+  const beacon =
+    deviceType === "AC_SPLIT_WALL"
+      ? new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.07, 14), beaconMat)
+      : new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.1, 14), beaconMat);
+  if (deviceType === "AC_SPLIT_WALL") beacon.position.set(0.47, 2.32, 0.02);
+  else if (deviceType === "AC_DAK") beacon.position.set(0.38, 2.73, 0.38);
+  else beacon.position.set(0, 1.94, 0);
   beacon.userData = { ahuId: id };
   group.add(beacon);
 

@@ -9,7 +9,7 @@ async function requireRtdb() {
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { PARAMETERS, PARAM_KEYS, SETPOINT_MAX, SETPOINT_MIN, type ParamKey } from "@/lib/domain";
 import { normalizeRotation } from "@/lib/facility-layout";
-import { resolveAhuPlacement, validatePlatformPlacement } from "@/lib/facility-placement";
+import { isAcDeviceType, resolveAhuPlacement, resolveAcDevicePlacement, validatePlatformPlacement } from "@/lib/facility-placement";
 import { getActiveFloorplan } from "@/lib/floorplan-store";
 import { randomHex, randomId } from "@/lib/ids";
 import { simulationTick } from "@/lib/workers";
@@ -107,14 +107,20 @@ export async function POST(req: Request) {
       typeof body.mapRotation === "number" && Number.isFinite(body.mapRotation)
         ? normalizeRotation(body.mapRotation)
         : undefined;
-    const placement = validatePlatformPlacement(
-      body.mapX,
-      body.mapZ,
-      existingPlacements,
-      undefined,
-      requestedRot,
-      floorplan.vertices,
-    );
+    const placementDeviceType = typeof body.deviceType === "string" ? body.deviceType : "AHU";
+    const placement = isAcDeviceType(placementDeviceType)
+      ? resolveAcDevicePlacement(placementDeviceType, body.mapX, body.mapZ, existingPlacements, {
+          rotation: requestedRot,
+          roomVertices: floorplan.vertices,
+        })
+      : validatePlatformPlacement(
+          body.mapX,
+          body.mapZ,
+          existingPlacements,
+          undefined,
+          requestedRot,
+          floorplan.vertices,
+        );
     if (!placement.valid || !placement.zone) {
       return Response.json(
         { error: placement.reason ?? "Invalid 3D floor platform position." },

@@ -52,6 +52,8 @@ import {
   isOutdoorTreeSpotClear,
   MAX_VISIBLE_OUTDOOR_TREES,
   resolveAhuPlacement,
+  isAcDeviceType,
+  resolveAcDevicePlacement,
   resolveWallPhysicsAndSnap,
   type PlacementValidation,
 } from "@/lib/facility-placement";
@@ -123,6 +125,8 @@ interface Props {
   /** Used in placement mode */
   draftAhuId?: string;
   draftAhuName?: string;
+  /** Device kind being placed (mount-aware placement: split = wall, dak = ceiling, standing = floor). */
+  draftDeviceType?: string | null;
   placement?: PendingPlacement | null;
   onPlacementChange?: (next: PendingPlacement) => void;
 }
@@ -164,6 +168,7 @@ export default function AhuFacilityMap3D({
   onSaveRooms,
   draftAhuId = "AHU-08",
   draftAhuName = "New Air Handling Unit",
+  draftDeviceType = null,
   placement = null,
   onPlacementChange,
 }: Props) {
@@ -560,6 +565,12 @@ export default function AhuFacilityMap3D({
 
   const existingCoordsRef = useRef(existingCoords);
   existingCoordsRef.current = existingCoords;
+  // Mount-aware placement (DEL-60): which device kind is being placed / moved.
+  const draftDeviceTypeRef = useRef<string | null>(draftDeviceType);
+  draftDeviceTypeRef.current = draftDeviceType;
+  const movingDeviceTypeRef = useRef<string | null>(null);
+  movingDeviceTypeRef.current =
+    resolvedUnits.find((u) => u.item.ahu.id === movingAhuId)?.item.ahu.deviceType ?? null;
 
   const onPlacementChangeRef = useRef(onPlacementChange);
   onPlacementChangeRef.current = onPlacementChange;
@@ -1022,6 +1033,17 @@ export default function AhuFacilityMap3D({
       const currentDraft = mode === "placement" ? placementRef.current : moveDraftRef.current;
       const baseRot = currentDraft?.rotation ?? 0;
 
+      // DEL-60: AC devices mount realistically — split snaps flush onto a wall,
+      // dak hangs from the ceiling slab indoors, standing stands on the floor.
+      const activeDeviceType = mode === "placement" ? draftDeviceTypeRef.current : movingDeviceTypeRef.current;
+      if (isAcDeviceType(activeDeviceType)) {
+        return resolveAcDevicePlacement(activeDeviceType, planeHit.x, planeHit.z, existingCoordsRef.current, {
+          excludeId: activeMovingId ?? undefined,
+          rotation: baseRot,
+          roomVertices: activeRoomVerticesRef.current,
+        });
+      }
+
       return resolveWallPhysicsAndSnap(planeHit.x, planeHit.z, existingCoordsRef.current, {
         excludeId: activeMovingId ?? undefined,
         rotation: baseRot,
@@ -1040,7 +1062,8 @@ export default function AhuFacilityMap3D({
       if (!objs) return;
       // Rebuild the ghost model ONLY when its look (indoor/outdoor × valid/invalid) changes;
       // while dragging across open ground it is merely repositioned — no geometry churn.
-      const ghostKey = `${check.indoor ? 1 : 0}|${check.valid ? 1 : 0}`;
+      const activeDeviceType = mode === "placement" ? draftDeviceTypeRef.current : movingDeviceTypeRef.current;
+      const ghostKey = `${activeDeviceType ?? "AHU"}|${check.indoor ? 1 : 0}|${check.valid ? 1 : 0}`;
       if (objs.ghostGroup.children.length === 0 || objs.ghostGroup.userData.ghostKey !== ghostKey) {
         disposeGroupDeep(objs.ghostGroup);
         const built = buildAhuModel3D({
@@ -1048,6 +1071,7 @@ export default function AhuFacilityMap3D({
           status: "RUN",
           hasHeater: false,
           outdoor: !check.indoor,
+          deviceType: activeDeviceType ?? undefined,
           isGhost: true,
           isValidGhost: check.valid,
         });
@@ -2067,7 +2091,8 @@ export default function AhuFacilityMap3D({
     }
     const movingSource = resolvedUnits.find((u) => u.item.ahu.id === activeId);
     const status = movingSource?.item.status ?? "RUN";
-    const modelKey = `${mode}|${activeId}|${activeDraft.indoor ? 1 : 0}|${status}`;
+    const draftType = movingSource?.item.ahu.deviceType ?? (mode === "placement" ? draftDeviceType : null);
+    const modelKey = `${mode}|${activeId}|${draftType ?? "AHU"}|${activeDraft.indoor ? 1 : 0}|${status}`;
     if (objs.placedDraftGroup.userData.modelKey !== modelKey || objs.placedDraftGroup.children.length === 0) {
       disposeGroupDeep(objs.placedDraftGroup);
       const built = buildAhuModel3D({
@@ -2075,7 +2100,7 @@ export default function AhuFacilityMap3D({
         status,
         hasHeater: movingSource?.item.ahu.hasHeater ?? true,
         outdoor: !activeDraft.indoor,
-        deviceType: movingSource?.item.ahu.deviceType,
+        deviceType: draftType,
       });
       built.halo.material = new THREE.MeshBasicMaterial({
         color: 0x10b981,
@@ -2089,7 +2114,7 @@ export default function AhuFacilityMap3D({
     objs.placedDraftGroup.children[0].rotation.y = (-activeDraft.rotation * Math.PI) / 180;
     objs.placedDraftGroup.position.set(activeDraft.x, 0, activeDraft.z);
     objs.placedDraftGroup.visible = true;
-  }, [mode, placement, moveDraft, draftAhuId, movingAhuId, resolvedUnits]);
+  }, [mode, placement, moveDraft, draftAhuId, draftDeviceType, movingAhuId, resolvedUnits]);
 
   const indoorCount = resolvedUnits.filter((u) => u.placement.indoor).length;
   const outdoorCount = resolvedUnits.length - indoorCount;
@@ -2099,7 +2124,12 @@ export default function AhuFacilityMap3D({
       setManualRotLocked(true);
       if (mode === "placement" && placement && onPlacementChange) {
         const nextRot = normalizeRotation(placement.rotation + 90 * direction);
-        const check = resolveWallPhysicsAndSnap(placement.x, placement.z, existingCoords, {
+        const check = isAcDeviceType(draftDeviceType)
+          ? resolveAcDevicePlacement(draftDeviceType, placement.x, placement.z, existingCoords, {
+              rotation: nextRot,
+              roomVertices: activeRoomVertices,
+            })
+          : resolveWallPhysicsAndSnap(placement.x, placement.z, existingCoords, {
           rotation: nextRot,
           enableWallSnap: wallSnapEnabled,
           autoAlignRotation: false,
@@ -2117,7 +2147,14 @@ export default function AhuFacilityMap3D({
         });
       } else if (movingAhuId && moveDraft) {
         const nextRot = normalizeRotation(moveDraft.rotation + 90 * direction);
-        const check = resolveWallPhysicsAndSnap(moveDraft.x, moveDraft.z, existingCoords, {
+        const movingType = movingDeviceTypeRef.current;
+        const check = isAcDeviceType(movingType)
+          ? resolveAcDevicePlacement(movingType, moveDraft.x, moveDraft.z, existingCoords, {
+              excludeId: movingAhuId,
+              rotation: nextRot,
+              roomVertices: activeRoomVertices,
+            })
+          : resolveWallPhysicsAndSnap(moveDraft.x, moveDraft.z, existingCoords, {
           excludeId: movingAhuId,
           rotation: nextRot,
           enableWallSnap: wallSnapEnabled,
@@ -2136,7 +2173,7 @@ export default function AhuFacilityMap3D({
         });
       }
     },
-    [mode, placement, onPlacementChange, existingCoords, wallSnapEnabled, activeRoomVertices, movingAhuId, moveDraft],
+    [mode, placement, onPlacementChange, existingCoords, wallSnapEnabled, activeRoomVertices, movingAhuId, moveDraft, draftDeviceType],
   );
 
   // Keyboard rotation while placing or moving an AHU: R = 90° clockwise, Shift+R = counter-clockwise.

@@ -5,6 +5,11 @@ import {
   DEFAULT_ROOM_VERTICES,
   FACILITY_ZONES,
   MIN_AHU_SPACING,
+  AC_FLOOR_HALF,
+  AC_MIN_SPACING,
+  AC_SPLIT_HALF_DEPTH,
+  AC_SPLIT_HALF_WIDTH,
+  AC_SPLIT_SNAP_RANGE,
   OUTDOOR_CAMPUS_BOUNDS,
   WALL_FLUSH_GAP,
   WALL_HALF_THICK,
@@ -610,4 +615,288 @@ export function generateRandomTreePool(
   }
 
   return pool;
+}
+
+/* ------------------------------------------------------------------ */
+/* AC device mount placement (AC_SPLIT_WALL / AC_DAK / AC_STANDING)    */
+/* ------------------------------------------------------------------ */
+
+export type AcDeviceType = "AC_DAK" | "AC_SPLIT_WALL" | "AC_STANDING";
+
+export function isAcDeviceType(deviceType: string | null | undefined): deviceType is AcDeviceType {
+  return deviceType === "AC_DAK" || deviceType === "AC_SPLIT_WALL" || deviceType === "AC_STANDING";
+}
+
+function acInvalid(
+  partial: Partial<PlacementValidation>,
+  reason: string,
+): PlacementValidation {
+  return {
+    valid: false,
+    snappedX: partial.snappedX ?? 0,
+    snappedZ: partial.snappedZ ?? 0,
+    rotation: partial.rotation ?? 0,
+    indoor: partial.indoor ?? false,
+    zone: partial.zone ?? null,
+    snappedToWall: false,
+    snappedWall: null,
+    reason,
+  };
+}
+
+/** Center-distance clearance between an AC unit and every other registered unit. */
+function acSpacingConflict(
+  x: number,
+  z: number,
+  existing: Array<{ id: string; x: number; z: number; rotation?: number }>,
+  excludeId?: string,
+): string | null {
+  for (const unit of existing) {
+    if (excludeId && unit.id === excludeId) continue;
+    const other = getAhuHalfExtents(unit.rotation ?? 0);
+    const otherRadius = Math.max(other.hx, other.hz);
+    const dist = Math.hypot(unit.x - x, unit.z - z);
+    if (dist < Math.max(AC_MIN_SPACING, otherRadius + 0.85)) {
+      return `Too close to ${unit.id} — maintain safe equipment clearance.`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Mount-aware placement for the detailed AC device models:
+ *  - AC_SPLIT_WALL: MUST hang flush on a wall face (magnetic snap to the nearest
+ *    wall within AC_SPLIT_SNAP_RANGE, back plate against the wall, facing the room).
+ *    It can never float mid-floor or sit on the ground.
+ *  - AC_DAK: MUST be inside the building — it mounts flush against the ceiling slab.
+ *  - AC_STANDING: MUST stand on the floor (wall push-out keeps the tower clear).
+ * The rotation is mount-managed: wall-aligned for splits, free for the others.
+ */
+export function resolveAcDevicePlacement(
+  deviceType: AcDeviceType,
+  rawX: number,
+  rawZ: number,
+  existing: Array<{ id: string; x: number; z: number; rotation?: number }>,
+  options?: {
+    excludeId?: string;
+    rotation?: number;
+    roomVertices?: FloorVertex[] | null;
+  },
+): PlacementValidation {
+  const excludeId = options?.excludeId;
+  const requestedRotation = normalizeRotation(options?.rotation ?? 0);
+
+  const clampX = Math.min(OUTDOOR_CAMPUS_BOUNDS.xMax - 0.8, Math.max(OUTDOOR_CAMPUS_BOUNDS.xMin + 0.8, rawX));
+  const clampZ = Math.min(OUTDOOR_CAMPUS_BOUNDS.zMax - 0.8, Math.max(OUTDOOR_CAMPUS_BOUNDS.zMin + 0.8, rawZ));
+
+  if (deviceType === "AC_SPLIT_WALL") {
+    // Find the closest wall face within snap range (any polygon wall, H/V/angled).
+    let best: {
+      x: number;
+      z: number;
+      rotation: number;
+      seg: WallSegment;
+      indoor: boolean;
+      zone: WingZone;
+    } | null = null;
+    let bestFaceDist = AC_SPLIT_SNAP_RANGE;
+
+    for (const seg of computeExteriorWallSegments(options?.roomVertices)) {
+      const dx = seg.x2 - seg.x1;
+      const dz = seg.z2 - seg.z1;
+      const len = Math.hypot(dx, dz);
+      if (len < 1.6) continue;
+      const tx = dx / len;
+      const tz = dz / len;
+      const nx = -tz;
+      const nz = tx;
+
+      const along = (clampX - seg.x1) * tx + (clampZ - seg.z1) * tz;
+      // Only walls the unit actually hangs BESIDE count — never one across the room.
+      if (along < 0 || along > len) continue;
+      const alongMin = Math.min(AC_SPLIT_HALF_WIDTH + 0.35, len / 2);
+      const alongMax = len - alongMin;
+      const clampedAlong = Math.min(alongMax, Math.max(alongMin, along));
+      const signedPerp = (clampX - seg.x1) * nx + (clampZ - seg.z1) * nz;
+      const side: 1 | -1 = signedPerp >= 0 ? 1 : -1;
+      const faceDist = Math.abs(Math.abs(signedPerp) - WALL_HALF_THICK);
+      if (faceDist >= bestFaceDist) continue;
+      bestFaceDist = faceDist;
+
+      // Local -Z faces the wall (same convention as the AHU wall snap) so the
+      // model's back plate rests against the wall face.
+      const towardWallX = -side * nx;
+      const towardWallZ = -side * nz;
+      const rotation = normalizeRotation((Math.atan2(towardWallX, -towardWallZ) * 180) / Math.PI);
+      const perpOffset = WALL_HALF_THICK + WALL_FLUSH_GAP + AC_SPLIT_HALF_DEPTH;
+      const x = Number((seg.x1 + tx * clampedAlong + nx * side * perpOffset).toFixed(2));
+      const z = Number((seg.z1 + tz * clampedAlong + nz * side * perpOffset).toFixed(2));
+      const indoor = isPointInsideIndoorRoom(x, z, options?.roomVertices);
+      best = { x, z, rotation, seg, indoor, zone: indoor ? describeIndoorSector(x, z) : describeOutdoorSector(x, z) };
+    }
+
+    if (!best) {
+      return acInvalid(
+        { snappedX: Number(snapToPlatformGrid(clampX).toFixed(2)), snappedZ: Number(snapToPlatformGrid(clampZ).toFixed(2)), rotation: requestedRotation },
+        "Split units mount flush on a wall — drag the unit next to a wall.",
+      );
+    }
+
+    const conflict = acSpacingConflict(best.x, best.z, existing, excludeId);
+    if (conflict) {
+      return acInvalid(
+        { snappedX: best.x, snappedZ: best.z, rotation: best.rotation, indoor: best.indoor, zone: best.zone },
+        conflict,
+      );
+    }
+    return {
+      valid: true,
+      snappedX: best.x,
+      snappedZ: best.z,
+      rotation: best.rotation,
+      indoor: best.indoor,
+      zone: best.zone,
+      snappedToWall: true,
+      snappedWall: best.seg,
+    };
+  }
+
+  if (deviceType === "AC_DAK") {
+    const x = Number(snapToPlatformGrid(clampX).toFixed(2));
+    const z = Number(snapToPlatformGrid(clampZ).toFixed(2));
+    if (!isPointInsideIndoorRoom(x, z, options?.roomVertices)) {
+      return acInvalid(
+        { snappedX: x, snappedZ: z, rotation: requestedRotation },
+        "Cassette units mount against the ceiling slab — place them inside the building.",
+      );
+    }
+    const conflict = acSpacingConflict(x, z, existing, excludeId);
+    if (conflict) {
+      return acInvalid({ snappedX: x, snappedZ: z, rotation: requestedRotation, indoor: true, zone: describeIndoorSector(x, z) }, conflict);
+    }
+    return {
+      valid: true,
+      snappedX: x,
+      snappedZ: z,
+      rotation: requestedRotation,
+      indoor: true,
+      zone: describeIndoorSector(x, z),
+      snappedToWall: false,
+      snappedWall: null,
+    };
+  }
+
+  // AC_STANDING — floor tower: 0.5 m grid, then wall push-out with the small footprint
+  // (snapping first means the push-out result is the final position).
+  let x = Number(snapToPlatformGrid(clampX).toFixed(2));
+  let z = Number(snapToPlatformGrid(clampZ).toFixed(2));
+  for (let iter = 0; iter < 6; iter += 1) {
+    let pushed = false;
+    for (const seg of computeExteriorWallSegments(options?.roomVertices)) {
+      const dx = seg.x2 - seg.x1;
+      const dz = seg.z2 - seg.z1;
+      const len = Math.hypot(dx, dz);
+      if (len < 1e-4) continue;
+      const tx = dx / len;
+      const tz = dz / len;
+      const nx = -tz;
+      const nz = tx;
+      const along = (x - seg.x1) * tx + (z - seg.z1) * tz;
+      const signedPerp = (x - seg.x1) * nx + (z - seg.z1) * nz;
+      const minPerp = WALL_HALF_THICK + AC_FLOOR_HALF + WALL_FLUSH_GAP;
+      if (along > -0.6 && along < len + 0.6 && Math.abs(signedPerp) < minPerp) {
+        const side = signedPerp >= 0 ? 1 : -1;
+        const pushDelta = minPerp - Math.abs(signedPerp);
+        x = Number((x + nx * side * pushDelta).toFixed(2));
+        z = Number((z + nz * side * pushDelta).toFixed(2));
+        pushed = true;
+      }
+    }
+    if (!pushed) break;
+  }
+  const indoor = isPointInsideIndoorRoom(x, z, options?.roomVertices);
+  const zone = indoor ? describeIndoorSector(x, z) : describeOutdoorSector(x, z);
+  const conflict = acSpacingConflict(x, z, existing, excludeId);
+  if (conflict) {
+    return acInvalid({ snappedX: x, snappedZ: z, rotation: requestedRotation, indoor, zone }, conflict);
+  }
+  return {
+    valid: true,
+    snappedX: x,
+    snappedZ: z,
+    rotation: requestedRotation,
+    indoor,
+    zone,
+    snappedToWall: false,
+    snappedWall: null,
+  };
+}
+
+/** Picks a guaranteed-valid mount slot for a new AC device (wall / ceiling / floor). */
+export function suggestAcDeviceSlot(
+  deviceType: AcDeviceType,
+  existing: Array<{ id: string; x: number; z: number; rotation?: number }>,
+  roomVertices?: FloorVertex[] | null,
+): { x: number; z: number; rotation: number; zone: WingZone; indoor: boolean } {
+  const attempt = (rawX: number, rawZ: number) => resolveAcDevicePlacement(deviceType, rawX, rawZ, existing, { roomVertices });
+
+  if (deviceType === "AC_SPLIT_WALL") {
+    // Walk the walls: try quarter points of every long-enough segment, both faces.
+    for (const seg of computeExteriorWallSegments(roomVertices)) {
+      const len = Math.hypot(seg.x2 - seg.x1, seg.z2 - seg.z1);
+      if (len < 2.4) continue;
+      for (const f of [0.5, 0.3, 0.7, 0.2, 0.8]) {
+        const ax = seg.x1 + (seg.x2 - seg.x1) * f;
+        const az = seg.z1 + (seg.z2 - seg.z1) * f;
+        const check = attempt(ax, az);
+        if (check.valid && check.zone) {
+          return { x: check.snappedX, z: check.snappedZ, rotation: check.rotation, zone: check.zone, indoor: check.indoor };
+        }
+      }
+    }
+  }
+
+  if (deviceType === "AC_DAK") {
+    const room = roomVertices ?? DEFAULT_ROOM_VERTICES;
+    const cx = room.reduce((s, v) => s + v.x, 0) / room.length;
+    const cz = room.reduce((s, v) => s + v.z, 0) / room.length;
+    const candidates: Array<[number, number]> = [
+      [cx, cz],
+      [cx + 2, cz + 2],
+      [cx - 2, cz + 2],
+      [cx + 2, cz - 2],
+      [cx - 2, cz - 2],
+      [cx + 5, cz],
+      [cx - 5, cz],
+      [cx, cz + 5],
+      [cx, cz - 5],
+    ];
+    for (const [ax, az] of candidates) {
+      const check = attempt(ax, az);
+      if (check.valid && check.zone) {
+        return { x: check.snappedX, z: check.snappedZ, rotation: check.rotation, zone: check.zone, indoor: check.indoor };
+      }
+    }
+  }
+
+  // AC_STANDING — reuse the AHU floor candidates (they are plain floor slots).
+  const floorCandidates: Array<[number, number]> = [
+    [4, -6.9],
+    [-5, 3],
+    [0, -12.9],
+    [-8, -13],
+    [10, 15],
+    [5, -4],
+    [15.1, 10.2],
+    [12, -13.1],
+  ];
+  for (const [ax, az] of floorCandidates) {
+    const check = attempt(ax, az);
+    if (check.valid && check.zone) {
+      return { x: check.snappedX, z: check.snappedZ, rotation: check.rotation, zone: check.zone, indoor: check.indoor };
+    }
+  }
+
+  const fallback = suggestCleanPlatformSlot(existing, deviceType !== "AC_DAK", roomVertices);
+  return fallback;
 }

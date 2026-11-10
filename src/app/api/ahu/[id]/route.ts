@@ -2,7 +2,7 @@ import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { getAhuDetail, getSeries } from "@/lib/queries";
 import { PARAM_KEYS, PARAM_MAP, type ParamKey } from "@/lib/domain";
 import { normalizeRotation } from "@/lib/facility-layout";
-import { resolveAhuPlacement, validatePlatformPlacement } from "@/lib/facility-placement";
+import { isAcDeviceType, resolveAhuPlacement, resolveAcDevicePlacement, validatePlatformPlacement } from "@/lib/facility-placement";
 import { getActiveFloorplan } from "@/lib/floorplan-store";
 import { maybePulseWorkers } from "@/lib/workers";
 import { patchRtdbAhu, setRtdbThreshold, readRtdbAhu, readRtdbAhus, type RtdbAhuRecord, type RtdbThresholdRecord } from "@/lib/rtdb/registry";
@@ -109,14 +109,21 @@ export async function PATCH(req: Request, ctx: Ctx) {
         typeof body.mapRotation === "number" && Number.isFinite(body.mapRotation)
           ? normalizeRotation(body.mapRotation)
           : undefined;
-      const check = validatePlatformPlacement(
-        rawMapX,
-        rawMapZ,
-        existingPlacements,
-        id,
-        requestedRot,
-        floorplan.vertices,
-      );
+      const movingType = typeof before.deviceType === "string" ? before.deviceType : "AHU";
+      const check = isAcDeviceType(movingType)
+        ? resolveAcDevicePlacement(movingType, rawMapX, rawMapZ, existingPlacements, {
+            excludeId: id,
+            rotation: requestedRot,
+            roomVertices: floorplan.vertices,
+          })
+        : validatePlatformPlacement(
+            rawMapX,
+            rawMapZ,
+            existingPlacements,
+            id,
+            requestedRot,
+            floorplan.vertices,
+          );
       if (!check.valid || !check.zone) {
         return Response.json(
           { error: check.reason ?? "Invalid 3D floor platform position." },
