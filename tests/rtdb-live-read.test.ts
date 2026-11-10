@@ -8,7 +8,7 @@ import {
   toLatestRow,
   tryGetAhuRtdb,
 } from "../src/lib/rtdb/live-read";
-import { writeTelemetryMirror, type RtdbTelemetryRecord } from "../src/lib/rtdb/telemetry";
+import { writeDeviceSnapshot, type RtdbTelemetryRecord } from "../src/lib/rtdb/telemetry";
 
 const emptyEnv = { ...process.env } as NodeJS.ProcessEnv;
 for (const k of Object.keys(emptyEnv))
@@ -68,22 +68,22 @@ test("tryGetAhuRtdb returns null (never throws) when Firebase env is missing", a
 
 test("readLatestTelemetry collects hits and skips misses", async () => {
   const db = new InMemoryRtdb();
-  await writeTelemetryMirror(db, sample({ ahuId: "AHU-01" }));
-  await writeTelemetryMirror(db, sample({ ahuId: "AHU-02", messageId: "m2" }));
+  await writeDeviceSnapshot(db, "AHU-01", { power: true, fan: 2, room_temp: 24.1, timestamp: Date.UTC(2026, 10, 9, 3, 0, 0) });
+  await writeDeviceSnapshot(db, "AHU-02", { power: false, fan: 0, room_temp: 21, timestamp: Date.UTC(2026, 10, 9, 3, 5, 0) });
 
   const hits = await readLatestTelemetry(db, ["AHU-01", "AHU-02", "AHU-03"]);
   equal(hits.size, 2);
-  equal(hits.get("AHU-01")?.messageId, "m1");
-  equal(hits.get("AHU-02")?.messageId, "m2");
+  equal(hits.get("AHU-01")?.roomTemp, 24.1);
+  equal(hits.get("AHU-02")?.runState, "STOP");
   equal(hits.has("AHU-03"), false);
 });
 
 test("readLatestTelemetry skips units whose read fails (allSettled semantics)", async () => {
   const db = new InMemoryRtdb();
-  await writeTelemetryMirror(db, sample({ ahuId: "AHU-01" }));
+  await writeDeviceSnapshot(db, "AHU-01", { power: true, fan: 2, timestamp: Date.UTC(2026, 10, 9, 3, 0, 0) });
   const flaky: RtdbAdapter = {
     get: async <T,>(path: string) => {
-      if (path.startsWith("telemetryLatest/AHU-02")) throw new Error("simulated RTDB hiccup");
+      if (path.startsWith("devices/AHU-02")) throw new Error("simulated RTDB hiccup");
       return db.get<T>(path);
     },
     set: (path, value) => db.set(path, value),
@@ -100,7 +100,7 @@ test("readLatestTelemetry skips units whose read fails (allSettled semantics)", 
 });
 
 test("toLatestRow maps the mirror record onto the dashboard row shape", () => {
-  const row = toLatestRow(sample({ faultCode: "E-LO", roomTemp: null }));
+  const row = toLatestRow(sample({ messageId: "s21-AHU-01-x", faultCode: "E-LO", roomTemp: null }));
   deepStrictEqual(row.timestamp, new Date(Date.UTC(2026, 10, 9, 3, 0, 0)));
   equal(row.source, "SIMULATION");
   equal(row.faultCode, "E-LO");

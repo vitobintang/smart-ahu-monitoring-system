@@ -20,11 +20,10 @@ import {
   writeRtdbBreachTimer,
   type RtdbAlarmRecord,
 } from "./alarms";
-import { getLatestTelemetry, writeTelemetryMirror, telemetryNode, telemetryDateKey, type RtdbTelemetryRecord } from "./telemetry";
+import { getLatestTelemetry, writeDeviceSnapshot, type RtdbTelemetryRecord } from "./telemetry";
 import { removeRtdbBreachTimersForAhu } from "./alarms";
 import { writeRtdbAuditLog, type RtdbAuditRecord } from "./audit";
-import { patchRtdbAhu, readRtdbAhu, readRtdbDeviceByToken, readRtdbEnabledSourceTypes, readRtdbThresholds, type RtdbAhuRecord, type RtdbThresholdRecord } from "./registry";
-import { findDeviceIdByToken } from "./daikin";
+import { defaultAhuRecord, patchRtdbAhu, readRtdbAhu, writeRtdbAhu, readRtdbEnabledSourceTypes, readRtdbThresholds, type RtdbAhuRecord, type RtdbThresholdRecord } from "./registry";
 
 /**
  * Phase 5b slice 3: RTDB-native command/alarm/ingest lifecycle.
@@ -560,241 +559,113 @@ export async function createCommandRtdb(rtdb: RtdbAdapter, req: RtdbCommandReque
 /* Telemetry ingest (FR-04/12/13) — RTDB-native                        */
 /* ------------------------------------------------------------------ */
 
-export interface RtdbIngestPayload {
-  ahuId?: string;
-  messageId?: string;
-  timestamp?: string;
-  parameters?: Record<string, number | null>;
-  quality?: { current?: "measured" | "fallback"; voltage?: "measured" | "fallback" };
-  runState?: string;
-  faultCode?: string | null;
-  setpoint?: number | null;
-  controlMode?: string | null;
-}
-
 export type RtdbIngestResult =
   | { ok: true; status: number; body: Record<string, unknown> }
   | { ok: false; status: number; body: { error: string; details?: string[] } };
 
-const NUMERIC_PARAMS: ParamKey[] = [
-  "roomTemp", "supplyTemp", "returnTemp", "humidity", "filterDiffPressure",
-  "fanSpeed", "coilTemp", "damperPosition", "current", "voltage", "runHours", "heaterOutput",
-];
-
 /**
- * RTDB-native telemetry ingest — a faithful port of the SQL pipeline in
- * src/lib/ingest.ts: token auth, source-conflict guards, FR-23 duplicate
- * rejection (messageId, or a deterministic `t-{ts}` key when absent),
- * physical-validity + installed-sensor validation, history append with
- * transactional latest advance, threshold/fault/communication alarms with
- * debounce, FAULT command failing, simulation feedback confirmation and
- * registry patches.
+ * Device snapshot processing — the single data path.
+ *
+ * The sampler reads the OWNER project's verbatim devices/{id} node and hands
+ * it here; the simulator fabricates the same shape. Storage is the mirrored
+ * Daikin layout (deviceHistory/{id}/{date}/{key} verbatim snapshot +
+ * devices/{id} live mirror update); everything downstream (threshold/fault/
+ * communication alarms, status compute, command failing, simulation feedback
+ * confirmation, registry patches) works off the synthesized view.
+ *
+ * Idempotent per device timestamp (FR-23): re-processing the same snapshot is
+ * a 200 no-op. A unit discovered on the tree without app metadata is
+ * auto-registered with defaults.
  */
-export async function ingestTelemetryRtdb(
+export async function processDaikinSnapshotRtdb(
   rtdb: RtdbAdapter,
-  token: string,
-  payload: RtdbIngestPayload,
+  ahuId: string,
+  snapshot: Record<string, unknown>,
   now = Date.now(),
-  owner?: RtdbAdapter,
 ): Promise<RtdbIngestResult> {
-  let device = await readRtdbDeviceByToken(rtdb, token);
-  if (!device) {
-    // Not an app gateway token — try the OWNER devices project's
-    // deviceOwners/{id} registry (the real AHU device's pre-shared token).
-    let deviceId: string | null = null;
-    try {
-      let ownerRtdb: RtdbAdapter | null = owner ?? null;
-      if (!ownerRtdb) {
-        const { tryGetOwnerRtdb } = await import("@/lib/firebase/admin");
-        ownerRtdb = await tryGetOwnerRtdb();
-      }
-      deviceId = ownerRtdb ? await findDeviceIdByToken(ownerRtdb, token) : null;
-    } catch (err) {
-      console.error("[ingest] owner token lookup failed:", err instanceof Error ? err.message : err);
-    }
-    if (deviceId) {
-      device = {
-        id: `owner-${deviceId}`,
-        ahuId: deviceId,
-        label: "Owner device (pre-shared token)",
-        token,
-        sourceType: "PHYSICAL",
-        enabled: true,
-        createdAt: 0,
-      };
-    }
-  }
-  if (!device) {
-    return { ok: false, status: 401, body: { error: "Invalid or disabled device bearer token" } };
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return { ok: false, status: 400, body: { error: "Invalid device snapshot" } };
   }
 
-  if (device.sourceType === "SIMULATION") {
-    const sources = await readRtdbEnabledSourceTypes(rtdb, device.ahuId);
-    if (sources.includes("PHYSICAL")) {
-      return { ok: false, status: 409, body: { error: "Simulation is disabled while a physical device is enabled for this AHU" } };
-    }
+  const prevLatest = await getLatestTelemetry(rtdb, ahuId);
+  const { written, record } = await writeDeviceSnapshot(rtdb, ahuId, snapshot);
+  if (!record) {
+    return { ok: false, status: 422, body: { error: "Device snapshot carries no valid timestamp field" } };
+  }
+  if (!written) {
+    return { ok: true, status: 200, body: { duplicated: true, message: "Snapshot already processed (FR-23)", ahuId } };
   }
 
-  if (payload.ahuId && payload.ahuId !== device.ahuId) {
-    return { ok: false, status: 400, body: { error: `AHU identity mismatch: token is provisioned for ${device.ahuId}` } };
+  // Auto-register: a device discovered on the mirror tree becomes a fleet unit.
+  // (readRtdbAhu synthesizes defaults for any mirror node, so existence is
+  // checked against the app-meta subtree directly.)
+  if ((await rtdb.get<unknown>(`devices/${ahuId}/app`)) === null) {
+    await writeRtdbAhu(rtdb, defaultAhuRecord(ahuId, now));
   }
-  const ahuId = payload.ahuId ?? device.ahuId;
-
   const ahu = await readRtdbAhu(rtdb, ahuId);
-  if (!ahu) return { ok: false, status: 404, body: { error: `Unregistered AHU identity "${ahuId}"` } };
-
-  // ── validation (mirrors the SQL path error-for-error) ──
-  const errors: string[] = [];
-  const tsMs = payload.timestamp ? new Date(payload.timestamp).getTime() : NaN;
-  if (!payload.timestamp || Number.isNaN(tsMs)) errors.push("timestamp: valid ISO-8601 measurement timestamp is required");
-  else if (tsMs > now + 300_000) errors.push("timestamp: measurement timestamp is too far in the future");
-
-  const messageId = payload.messageId ? String(payload.messageId).slice(0, 120) : null;
-  if (payload.messageId !== undefined && messageId === null) errors.push("messageId: must be a non-empty string");
-
-  const thresholds = await readRtdbThresholds(rtdb, ahuId);
-  const thMap = new Map(thresholds.map((t) => [t.parameter, t]));
-  const installed = new Set(ahu.installedSensors);
-  const values: Record<string, number | null> = {};
-  const ignored: string[] = [];
-  const raw = payload.parameters ?? {};
-
-  for (const [key, val] of Object.entries(raw)) {
-    if (!NUMERIC_PARAMS.includes(key as ParamKey)) {
-      errors.push(`parameters.${key}: unsupported parameter key`);
-      continue;
-    }
-    if (val === null || val === undefined) {
-      values[key] = null;
-      continue;
-    }
-    const num = Number(val);
-    if (!Number.isFinite(num)) {
-      errors.push(`parameters.${key}: value must be numeric or null`);
-      continue;
-    }
-    const th = thMap.get(key);
-    const meta = PARAM_MAP[key as ParamKey];
-    const lo = th?.validMin ?? meta.validMin;
-    const hi = th?.validMax ?? meta.validMax;
-    if (lo !== null && hi !== null && (num < lo || num > hi)) {
-      errors.push(`parameters.${key}: ${num} is outside the physical validity range [${lo}, ${hi}] ${meta.unit}`);
-      continue;
-    }
-    if (!installed.has(key)) {
-      ignored.push(key);
-      continue;
-    }
-    values[key] = num;
+  if (!ahu) return { ok: false, status: 500, body: { error: "Failed to register discovered device" } };
+  if (!ahu.enabled) {
+    return { ok: true, status: 201, body: { accepted: true, paused: true, ahuId, source: record.source } };
   }
 
-  const runState = payload.runState === "STOP" ? "STOP" : payload.runState === "RUN" ? "RUN" : null;
-  if (payload.runState !== undefined && runState === null) errors.push("runState: must be RUN or STOP");
-  const controlMode = payload.controlMode === "AUTO" || payload.controlMode === "MANUAL" ? payload.controlMode : null;
-  if (payload.controlMode !== undefined && payload.controlMode !== null && controlMode === null)
-    errors.push("controlMode: must be AUTO or MANUAL");
-
-  const faultProvided = payload.faultCode !== undefined;
-  const reportedFault =
-    !faultProvided || payload.faultCode === null || String(payload.faultCode).trim() === ""
-      ? null
-      : String(payload.faultCode).slice(0, 80);
-  const faultCode = faultProvided ? reportedFault : ahu.faultCode;
-
-  const quality = payload.quality ?? {};
-  if (
-    typeof quality !== "object" ||
-    (quality.current !== undefined && !["measured", "fallback"].includes(quality.current)) ||
-    (quality.voltage !== undefined && !["measured", "fallback"].includes(quality.voltage))
-  ) {
-    return { ok: false, status: 400, body: { error: "quality.current and quality.voltage must be measured or fallback" } };
-  }
-  const currentFallback =
-    quality.current === "fallback" ||
-    (quality.current !== "measured" && typeof values.current === "number" && Math.abs(values.current - 1) < 1e-6);
-  const voltageFallback =
-    quality.voltage === "fallback" ||
-    (quality.voltage !== "measured" && typeof values.voltage === "number" && Math.abs(values.voltage - 220) < 1e-6);
-
-  if (errors.length > 0) {
-    return { ok: false, status: 400, body: { error: "Telemetry validation failed", details: errors } };
-  }
-
-  // ── FR-23 duplicate rejection (messageId, else timestamp key) ──
-  const shardKey = messageId ?? `t-${tsMs}`;
-  const dup = await rtdb.get(telemetryNode(ahuId, telemetryDateKey(tsMs), shardKey));
-  if (dup) {
-    return { ok: true, status: 200, body: { duplicated: true, message: "Duplicate messageId rejected (FR-23)" } };
-  }
-
-  const latest = await getLatestTelemetry(rtdb, ahuId);
-  const historical = Boolean(latest && tsMs < latest.timestamp);
-  if (!historical && latest && tsMs - latest.timestamp > ahu.commTimeoutSec * 1000) {
+  // A comm-timeout gap resets every debounce timer (mirrors the SQL pipeline).
+  if (prevLatest && record.timestamp - prevLatest.timestamp > ahu.commTimeoutSec * 1000) {
     await removeRtdbBreachTimersForAhu(rtdb, ahuId);
   }
 
-  const record: RtdbTelemetryRecord = {
-    ahuId,
-    messageId: shardKey,
-    source: device.sourceType,
-    timestamp: tsMs,
-    receivedAt: now,
-    roomTemp: values.roomTemp ?? null,
-    supplyTemp: values.supplyTemp ?? null,
-    returnTemp: values.returnTemp ?? null,
-    humidity: values.humidity ?? null,
-    filterDiffPressure: values.filterDiffPressure ?? null,
-    fanSpeed: values.fanSpeed ?? null,
-    coilTemp: values.coilTemp ?? null,
-    damperPosition: values.damperPosition ?? null,
-    current: values.current ?? null,
-    isCurrentFallback: currentFallback,
-    voltage: values.voltage ?? null,
-    isVoltageFallback: voltageFallback,
-    runHours: values.runHours ?? null,
-    heaterOutput: values.heaterOutput ?? null,
-    runState,
-    faultCode,
+  const thresholds = await readRtdbThresholds(rtdb, ahuId);
+  const values: Record<string, number | null> = {
+    roomTemp: record.roomTemp,
+    supplyTemp: record.supplyTemp,
+    returnTemp: record.returnTemp,
+    humidity: record.humidity,
+    filterDiffPressure: record.filterDiffPressure,
+    fanSpeed: record.fanSpeed,
+    coilTemp: record.coilTemp,
+    damperPosition: record.damperPosition,
+    current: record.current,
+    voltage: record.voltage,
+    runHours: record.runHours,
+    heaterOutput: record.heaterOutput,
   };
-  await writeTelemetryMirror(rtdb, record);
 
-  if (historical) {
-    return { ok: true, status: 201, body: { accepted: true, historical: true, ahuId, source: device.sourceType } };
+  // Freshness: a snapshot older than the comm window is stored but treated as
+  // historical — alarm engines skip it (the COMMUNICATION alarm covers the gap).
+  const fresh = now - record.timestamp <= ahu.commTimeoutSec * 1000 + 60_000;
+  if (fresh) {
+    await evaluateThresholdAlarmsRtdb(rtdb, ahu, thresholds, values, now);
+    await evaluateFaultAlarmRtdb(rtdb, ahu, record.faultCode, now);
+    await resolveAlarmRtdb(rtdb, ahuId, "COMMUNICATION", null, now);
   }
-
-  // ── alarms (fallback currents never evaluate) ──
-  await evaluateThresholdAlarmsRtdb(rtdb, ahu, thresholds, values, now);
-  await evaluateFaultAlarmRtdb(rtdb, ahu, faultCode, now);
-  await resolveAlarmRtdb(rtdb, ahuId, "COMMUNICATION", null, now);
 
   const { computed } = await computeRtdbAhuStatus(rtdb, ahu, now);
   const newStatus = computed.status;
 
+  const snapSetpoint = typeof snapshot.setpoint === "number" && Number.isFinite(snapshot.setpoint) ? snapshot.setpoint : null;
   await patchRtdbAhu(rtdb, ahuId, {
-    lastSeenAt: tsMs,
-    faultCode,
-    controlMode: controlMode ?? ahu.controlMode,
-    setpoint: typeof payload.setpoint === "number" ? payload.setpoint : ahu.setpoint,
+    lastSeenAt: record.timestamp,
+    faultCode: record.faultCode,
+    setpoint: snapSetpoint ?? ahu.setpoint,
     currentStatus: newStatus,
   });
 
   if (newStatus === "FAULT") {
     await failActiveCommandsRtdb(rtdb, ahuId, {
       nonStopOnly: true,
-      reason: faultCode
-        ? `Aborted: controller entered FAULT (${faultCode}) during command execution (FR-27)`
+      reason: record.faultCode
+        ? `Aborted: controller entered FAULT (${record.faultCode}) during command execution (FR-27)`
         : "Aborted: critical alarm put unit into FAULT during command execution (FR-27)",
       now,
     });
   }
 
-  if (device.sourceType === "SIMULATION") {
+  if (record.source === "SIMULATION") {
     await confirmFromReadingRtdb(
       rtdb,
       ahuId,
-      { runState, fanSpeed: values.fanSpeed ?? null },
-      { setpoint: typeof payload.setpoint === "number" ? payload.setpoint : null, controlMode },
-      tsMs,
+      { runState: record.runState, fanSpeed: record.fanSpeed },
+      { setpoint: snapSetpoint, controlMode: null },
+      record.timestamp,
     );
   }
 
@@ -804,9 +675,8 @@ export async function ingestTelemetryRtdb(
     body: {
       accepted: true,
       ahuId,
-      source: device.sourceType,
+      source: record.source,
       status: newStatus,
-      ignored,
     },
   };
 }

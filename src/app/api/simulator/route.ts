@@ -1,10 +1,8 @@
-import { randomId } from "@/lib/ids";
 import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
-import { ingestTelemetry } from "@/lib/ingest";
 import { getOverride, setOverride, simulationTick, simOverrides } from "@/lib/workers";
 import { AHU_IDS } from "@/lib/domain";
 import { requireRtdb } from "@/lib/rtdb/live-read";
-import { ahuToRow, readRtdbAhu, readRtdbAhus, readRtdbDevices } from "@/lib/rtdb/registry";
+import { ahuToRow, readRtdbAhus } from "@/lib/rtdb/registry";
 
 export const dynamic = "force-dynamic";
 
@@ -45,100 +43,49 @@ export async function POST(req: Request) {
     const actor = await requireAuth("control", { mutating: true });
     const body = (await req.json()) as {
       ahuId?: string;
-      forcedFault?: string | null;
-      commLoss?: boolean;
-      rejectCommands?: boolean;
-      rapidFilterFouling?: boolean;
-      humiditySpike?: boolean;
-      currentOverload?: boolean;
-      action?: "TICK" | "RESET_ALL" | "INGEST";
       messageId?: string;
-      parameters?: Record<string, number | null>;
+      measuredAt?: string;
+      readings?: { roomTemp?: number | null; humidity?: number | null };
       runState?: string;
       faultCode?: string | null;
+      setpoint?: number | null;
     };
+    const ip = await getClientIp();
+    void actor;
 
-    if (body.action === "RESET_ALL") {
-      const allRows = [...(await readRtdbAhus(await requireRtdb())).keys()].sort();
-      const ids = allRows.length > 0 ? allRows : [...AHU_IDS];
-      for (const id of ids) {
-        setOverride(id, {
-          forcedFault: null,
-          commLoss: false,
-          rejectCommands: false,
-          rapidFilterFouling: false,
-          humiditySpike: false,
-          currentOverload: false,
-        });
-      }
-      await writeAudit({
-        userId: actor.user.id,
-        userEmail: actor.user.email,
-        action: "SIMULATOR_RESET",
-        entity: "simulator",
-        ipAddress: await getClientIp(),
-        details: { scope: "ALL" },
-      });
-      return Response.json({ ok: true, overrides: ids.map((id) => ({ ahuId: id, ...getOverride(id) })) });
-    }
+    // Manual tester: accept the classic payload shape but store it in the
+    // mirrored DAIKIN format (same path the sampler and simulator use).
+    const rtdb = await requireRtdb();
+    const { readRtdbAhus } = await import("@/lib/rtdb/registry");
+    const { processDaikinSnapshotRtdb } = await import("@/lib/rtdb/lifecycle");
+    const registry = await readRtdbAhus(rtdb);
+    const ahuId = body.ahuId && registry.has(body.ahuId) ? body.ahuId : [...registry.keys()][0];
+    if (!ahuId) return Response.json({ error: "No fleet units exist yet" }, { status: 404 });
+    const ahu = registry.get(ahuId)!;
 
-    if (body.action === "TICK") {
-      await simulationTick();
-      return Response.json({ ok: true, ranAt: new Date().toISOString() });
-    }
+    const node: Record<string, unknown> = {
+      power: body.runState ? body.runState === "RUN" : ahu.desiredRunState === "RUN",
+      setpoint: typeof body.setpoint === "number" ? body.setpoint : ahu.setpoint,
+      mode: "cool",
+      fan: 2,
+      state_valid: true,
+      simulated: true,
+      timestamp: body.measuredAt ? new Date(body.measuredAt).getTime() || Date.now() : Date.now(),
+    };
+    if (body.readings?.roomTemp != null) node.room_temp = body.readings.roomTemp;
+    if (body.readings?.humidity != null) node.humidity = body.readings.humidity;
+    if (body.faultCode) node.fault = body.faultCode;
 
-    // Manual ingestion tester — runs the exact FR-22/FR-23 pipeline used by
-    // POST /api/telemetry, authenticated with the unit's simulation device token.
-    if (body.action === "INGEST") {
-      const targetAhu = String(body.ahuId ?? "");
-      const device = (await readRtdbDevices(await requireRtdb(), targetAhu)).find(
-        (d) => d.sourceType === "SIMULATION" && d.enabled,
-      );
-      if (!device) return Response.json({ error: `No enabled SIMULATION device provisioned for ${targetAhu}` }, { status: 404 });
-      const result = await ingestTelemetry(device.token, {
-        ahuId: targetAhu,
-        messageId: body.messageId ? String(body.messageId) : randomId(),
-        timestamp: new Date().toISOString(),
-        parameters: (body.parameters ?? {}) as Record<string, number | null>,
-        runState: body.runState ? String(body.runState) : "RUN",
-        faultCode: body.faultCode ? String(body.faultCode) : null,
-        setpoint: undefined,
-        controlMode: null,
-      });
-      await writeAudit({
-        userId: actor.user.id,
-        userEmail: actor.user.email,
-        action: "SIMULATOR_INJECT",
-        entity: `telemetry:${targetAhu}`,
-        ipAddress: await getClientIp(),
-        details: { httpStatus: result.status, response: result.body, messageId: body.messageId ?? null },
-      });
-      return Response.json(result.body, { status: result.status });
-    }
-
-    const ahuId = body.ahuId;
-    if (!ahuId) return Response.json({ error: "A valid ahuId is required" }, { status: 400 });
-    if (!(await readRtdbAhu(await requireRtdb(), ahuId)))
-      return Response.json({ error: "A valid ahuId is required" }, { status: 400 });
-
-    const patch: Record<string, unknown> = {};
-    if (body.forcedFault !== undefined) patch.forcedFault = body.forcedFault ? String(body.forcedFault).slice(0, 60) : null;
-    if (body.commLoss !== undefined) patch.commLoss = Boolean(body.commLoss);
-    if (body.rejectCommands !== undefined) patch.rejectCommands = Boolean(body.rejectCommands);
-    if (body.rapidFilterFouling !== undefined) patch.rapidFilterFouling = Boolean(body.rapidFilterFouling);
-    if (body.humiditySpike !== undefined) patch.humiditySpike = Boolean(body.humiditySpike);
-    if (body.currentOverload !== undefined) patch.currentOverload = Boolean(body.currentOverload);
-
-    const next = setOverride(ahuId, patch);
+    const result = await processDaikinSnapshotRtdb(rtdb, ahuId, node);
     await writeAudit({
       userId: actor.user.id,
       userEmail: actor.user.email,
-      action: "SIMULATOR_OVERRIDE",
-      entity: `simulator:${ahuId}`,
-      ipAddress: await getClientIp(),
-      details: { patch, result: next },
+      action: "SIMULATION_INGESTED",
+      entity: `ahu:${ahuId}`,
+      ipAddress: ip,
+      details: { simulated: true, ok: result.ok },
     });
-    return Response.json({ ok: true, ahuId, override: next, all: [...simOverrides.entries()].map(([k, v]) => ({ ahuId: k, ...v })) });
+    return Response.json(result.body, { status: result.status });
   } catch (err) {
     return jsonError(err);
   }

@@ -1,14 +1,15 @@
 import type { RtdbAdapter } from "./store";
-import { TELEMETRY_NODE, type RtdbTelemetryRecord } from "./telemetry";
+import { DEVICE_HISTORY_NODE, snapshotToRecord, type RtdbTelemetryRecord } from "./telemetry";
 
 /**
- * Phase 3 Slice 1: RTDB range reads over the day-sharded telemetry history
- * (telemetry/{ahuId}/{YYYY-MM-DD}/{messageId}).
+ * RTDB range reads over the day-sharded device history
+ * (deviceHistory/{id}/{YYYY-MM-DD}/{s21-{id}-{ts}} — verbatim owner-format
+ * snapshots). Every stored snapshot is synthesized into the stable
+ * RtdbTelemetryRecord view before filtering/returning.
  *
  * A report range spans at most MAX_REPORT_RANGE_DAYS (31) UTC days, so a
  * range read is at most ~32 shard gets issued in parallel. Any failed shard
- * REJECTS the whole read rather than
- * presenting a silently incomplete report.
+ * REJECTS the whole read rather than presenting a silently incomplete report.
  */
 
 /** Inclusive UTC calendar-day keys covering [fromMs, toMs], capped for safety. */
@@ -23,10 +24,21 @@ export function listUtcDays(fromMs: number, toMs: number, maxDays = 40): string[
   return days;
 }
 
+function shardToRecords(ahuId: string, shard: Record<string, unknown> | null): RtdbTelemetryRecord[] {
+  if (!shard) return [];
+  const out: RtdbTelemetryRecord[] = [];
+  for (const value of Object.values(shard)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const record = snapshotToRecord(ahuId, value as Record<string, unknown>);
+    if (record) out.push(record);
+  }
+  return out;
+}
+
 /**
- * Reads every mirrored observation for one AHU within [fromMs, toMs],
- * optionally filtered by source, ascending by measurement timestamp.
- * Rejects if any day shard cannot be read (no partial results).
+ * Reads every stored snapshot for one device within [fromMs, toMs], optionally
+ * filtered by source, ascending by measurement timestamp. Rejects if any day
+ * shard cannot be read (no partial results).
  */
 export async function readTelemetryRange(
   rtdb: RtdbAdapter,
@@ -36,11 +48,10 @@ export async function readTelemetryRange(
   source?: "ALL" | "PHYSICAL" | "SIMULATION",
 ): Promise<RtdbTelemetryRecord[]> {
   const days = listUtcDays(fromMs, toMs);
-  const shards = await Promise.all(days.map((day) => rtdb.get<Record<string, RtdbTelemetryRecord>>(`${TELEMETRY_NODE}/${ahuId}/${day}`)));
+  const shards = await Promise.all(days.map((day) => rtdb.get<Record<string, unknown>>(`${DEVICE_HISTORY_NODE}/${ahuId}/${day}`)));
   const out: RtdbTelemetryRecord[] = [];
   for (const shard of shards) {
-    if (!shard) continue;
-    for (const record of Object.values(shard)) {
+    for (const record of shardToRecords(ahuId, shard)) {
       if (record.timestamp < fromMs || record.timestamp > toMs) continue;
       if (source && source !== "ALL" && record.source !== source) continue;
       out.push(record);
@@ -53,9 +64,8 @@ export async function readTelemetryRange(
 /**
  * Descending chunked iteration for the CSV exporter: reads one UTC day shard
  * at a time (RAM bounded per shard), newest day first, records within a day
- * newest first. Unlike readTelemetryRange (all-or-nothing BEFORE the stream
- * starts), a shard failure mid-stream throws — the caller's stream errors and
- * the client sees a truncated download, which the CSV contract already
+ * newest first. A shard failure mid-stream throws — the caller's stream errors
+ * and the client sees a truncated download, which the CSV contract already
  * accepts for transient storage failures.
  */
 export async function* streamTelemetryRangeDescending(
@@ -68,9 +78,9 @@ export async function* streamTelemetryRangeDescending(
 ): AsyncGenerator<RtdbTelemetryRecord[]> {
   const days = listUtcDays(fromMs, toMs).reverse();
   for (const day of days) {
-    const shard = await rtdb.get<Record<string, RtdbTelemetryRecord>>(`${TELEMETRY_NODE}/${ahuId}/${day}`);
+    const shard = await rtdb.get<Record<string, unknown>>(`${DEVICE_HISTORY_NODE}/${ahuId}/${day}`);
     if (!shard) continue;
-    const dayRecords = Object.values(shard)
+    const dayRecords = shardToRecords(ahuId, shard)
       .filter(
         (r) =>
           r.timestamp >= fromMs &&

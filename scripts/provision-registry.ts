@@ -1,12 +1,9 @@
 /**
- * provision-registry.ts — one-shot: create the AHU registry (units, thresholds,
- * simulation gateway devices) directly in Firebase RTDB.
- *
- * Writes to YOUR app project only. The fleet seeds the single real unit
- * `GTM-DAIKIN-001` (the collaborator's Daikin S21 monitor); the device's
- * pre-shared token lives on the OWNER project's deviceOwners/{id} — register
- * further units via Admin → Add-unit "Device token". Idempotent: existing
- * AHUs/thresholds/devices are left untouched.
+ * provision-registry.ts — one-shot: seed the fleet registry on YOUR app
+ * database: devices/{id}/app metadata + thresholds for the single real unit
+ * `GTM-DAIKIN-001` (the collaborator's Daikin S21 monitor). Live data is NOT
+ * seeded here — the running app mirrors the owner tree's devices/ verbatim.
+ * Idempotent: existing records are left untouched.
  *
  * Reads .env.local values from the environment (never reads the file itself):
  *   FIREBASE_SERVICE_ACCOUNT_PATH  the APP project's service-account JSON
@@ -17,73 +14,23 @@
  *   node --env-file=.env.local --import tsx scripts/provision-registry.ts
  *   # or set the env vars manually and drop --env-file
  *
- * The script prints created records and the SIMULATION bearer tokens once —
- * store them somewhere safe (they are the gateway credentials).
+ * The script prints created records before writing anything.
  */
-
-import { readFileSync } from "node:fs";
-
-import { PARAMETERS, type ParamKey } from "../src/lib/domain";
-import { DEFAULT_AHU_PLACEMENTS } from "../src/lib/facility-layout";
-import { randomHex, randomId } from "../src/lib/ids";
-import { createAdminRtdbAdapter, resolveRtdbPathPrefix, type RtdbAdapter } from "../src/lib/rtdb/store";
-import {
-  writeRtdbAhu,
-  setRtdbDevice,
-  setRtdbThreshold,
-  readRtdbAhus,
-  readRtdbDevices,
-  readRtdbThresholds,
-} from "../src/lib/rtdb/registry";
-
-/* ── seed data (verbatim port of the former src/db/seed.ts) ─────────────── */
-
-interface AhuSeed {
-  id: string;
-  name: string;
-  location: string;
-  hasHeater: boolean;
-  commTimeoutSec: number;
-  sensors: ParamKey[];
-  setpoint: number;
-  desiredRunState: "RUN" | "STOP";
-}
-
-const ALL: ParamKey[] = PARAMETERS.map((p) => p.key);
-
-/**
- * The single real unit on the adopted project. All 12 parameters are installed
- * so the full app (thresholds, trends, reports) works out of the box; trim the
- * per-sensor toggles in Admin → Config when a sensor is not physically present.
- *
- * physicalControlEnabled is TRUE for GTM-DAIKIN-001 (its token is already in
- * the owner's deviceOwners/): accepted START/STOP/SETPOINT commands write
- * power/setpoint into the owner's devices/{id} node, and the worker sampler
- * syncs its live state back through the ingest pipeline.
- */
-const AHU_SEEDS: AhuSeed[] = [
-  {
-    id: "GTM-DAIKIN-001",
-    name: "GTM-DAIKIN-001 · Daikin S21 AC",
-    location: "GTM — Daikin S21 monitored unit",
-    hasHeater: false,
-    commTimeoutSec: 30,
-    sensors: ALL,
-    setpoint: 24.0,
-    desiredRunState: "RUN",
-  },
-];
 
 /* ── bootstrap ───────────────────────────────────────────────────────────── */
+
+import { readFileSync } from "node:fs";
 
 function die(message: string): never {
   console.error(`✗ ${message}`);
   process.exit(1);
 }
 
+const FLEET_ID = "GTM-DAIKIN-001";
+
 function loadServiceAccount() {
   const path = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  if (!path) die("Set FIREBASE_SERVICE_ACCOUNT_PATH to the service-account .json file.");
+  if (!path) die("Set FIREBASE_SERVICE_ACCOUNT_PATH to the APP database service-account .json file.");
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
@@ -94,109 +41,87 @@ const databaseUrl = (
 ).trim();
 if (!databaseUrl) die("Set FIREBASE_DATABASE_URL (or NEXT_PUBLIC_FIREBASE_DATABASE_URL).");
 
+const apply = process.argv.includes("--apply");
+
 const { initializeApp, cert } = await import("firebase-admin/app");
 const { getDatabase } = await import("firebase-admin/database");
+const { createAdminRtdbAdapter } = await import("../src/lib/rtdb/store");
+const { resolveRtdbPathPrefix } = await import("../src/lib/rtdb/store");
+const { defaultAhuRecord, THRESHOLDS_NODE } = await import("../src/lib/rtdb/registry");
 
 const app = initializeApp(
   { credential: cert(loadServiceAccount()), databaseURL: databaseUrl.replace(/\/+$/, "") },
-  `provision-registry-${Date.now()}`,
+  `provision-fleet-${Date.now()}`,
 );
-const rtdb: RtdbAdapter = createAdminRtdbAdapter(getDatabase(app));
+const rtdb = createAdminRtdbAdapter(getDatabase(app));
 const prefix = resolveRtdbPathPrefix();
+const n = (name: string): string => (prefix ? `${prefix}/${name}` : name);
+
+const maskEmail = (email: string) => {
+  const [local, domain] = email.split("@");
+  return `${local.slice(0, 2)}***@${domain}`;
+};
 
 console.log(`database : ${databaseUrl}`);
-console.log(`namespace: ${prefix || "(root — set RTDB_PATH_PREFIX to isolate a shared database)"}`);
+console.log(`namespace: ${prefix || "(root)"}`);
+console.log(`mode     : ${apply ? "APPLY — registry will be created" : "DRY RUN (pass --apply to write)"}`);
 console.log("");
 
-/* ── provision ───────────────────────────────────────────────────────────── */
+/* ── plan ────────────────────────────────────────────────────────────────── */
 
-const now = Date.now();
-let createdAhus = 0;
-let createdThresholds = 0;
-let createdDevices = 0;
-const simTokens: string[] = [];
+const existingMeta = await rtdb.get<Record<string, unknown>>(n(`devices/${FLEET_ID}/app`));
+const existingThresholds = (await rtdb.get<Record<string, unknown>>(n(`${THRESHOLDS_NODE}/${FLEET_ID}`))) ?? {};
+const thresholdCount = Object.keys(existingThresholds).length;
 
-const existingAhus = await readRtdbAhus(rtdb);
-const existingThresholds = await readRtdbThresholds(rtdb);
-const existingThresholdKeys = new Set(existingThresholds.map((t) => t.id));
-const existingDevices = await readRtdbDevices(rtdb);
-const existingSimAhuIds = new Set(existingDevices.filter((d) => d.sourceType === "SIMULATION").map((d) => d.ahuId));
+const fleetMeta = defaultAhuRecord(FLEET_ID);
+// The unit's pre-shared token is already in the owner's deviceOwners/ tree:
+// the app IS the commissioned controller for it.
+fleetMeta.physicalControlEnabled = true;
+fleetMeta.location = "Daikin S21 bridge unit";
 
-for (const seed of AHU_SEEDS) {
-  if (!existingAhus.has(seed.id)) {
-    // The 3D facility catalog keeps its original placement keys; the real unit
-    // reuses the primary spot.
-    const mapPos = DEFAULT_AHU_PLACEMENTS[seed.id] ?? DEFAULT_AHU_PLACEMENTS["AHU-01"];
-    await writeRtdbAhu(rtdb, {
-      id: seed.id,
-      name: seed.name,
-      location: seed.location,
-      commTimeoutSec: seed.commTimeoutSec,
-      hasHeater: seed.hasHeater,
-      installedSensors: [...seed.sensors],
-      currentStatus: "OFFLINE",
-      lastSeenAt: null,
-      controlMode: "AUTO",
-      desiredRunState: seed.desiredRunState,
-      setpoint: seed.setpoint,
-      faultCode: null,
-      physicalControlEnabled: true,
-      mapX: mapPos?.x ?? null,
-      mapZ: mapPos?.z ?? null,
-      mapRotation: mapPos?.rotation ?? 0,
-      mapZone: mapPos?.zone ?? null,
-      updatedAt: now,
-    });
-    createdAhus += 1;
-    console.log(`+ ahus/${seed.id} — ${seed.name}`);
-  } else {
-    console.log(`= ahus/${seed.id} already exists — left untouched`);
-  }
+const thresholdSeed: Array<Record<string, unknown>> = (fleetMeta.installedSensors ?? []).map((parameter: string) => ({
+  ahuId: FLEET_ID,
+  parameter,
+  enabled: true,
+  lowLimit: parameter === "roomTemp" ? 18 : parameter === "fanSpeed" ? 0 : null,
+  highLimit: parameter === "roomTemp" ? 30 : parameter === "fanSpeed" ? 5 : null,
+  delaySec: 60,
+  priority: "MEDIUM",
+  validMin: null,
+  validMax: null,
+  unit: parameter === "roomTemp" ? "°C" : parameter === "fanSpeed" ? "speed" : null,
+  label: parameter,
+  trendEnabled: false,
+  updatedAt: Date.now(),
+}));
 
-  for (const p of PARAMETERS) {
-    const installed = seed.sensors.includes(p.key);
-    const record = {
-      id: `${seed.id}:${p.key}`,
-      ahuId: seed.id,
-      parameter: p.key,
-      enabled: installed && (p.defaultLow !== null || p.defaultHigh !== null),
-      lowLimit: p.defaultLow,
-      highLimit: p.defaultHigh,
-      delaySec: p.key === "current" ? 10 : 5,
-      priority: p.defaultPriority,
-      validMin: p.validMin,
-      validMax: p.validMax,
-      unit: p.unit,
-      label: p.label,
-      trendEnabled: installed && p.trendByDefault,
-      updatedAt: now,
-    };
-    if (!existingThresholdKeys.has(record.id)) {
-      await setRtdbThreshold(rtdb, record);
-      createdThresholds += 1;
-    }
-  }
-
-  if (!existingSimAhuIds.has(seed.id)) {
-    const token = `sim_${seed.id.toLowerCase().replace(/-/g, "")}_${randomHex(8)}`;
-    await setRtdbDevice(rtdb, {
-      id: randomId(),
-      ahuId: seed.id,
-      label: `${seed.id} Simulation Controller`,
-      token,
-      sourceType: "SIMULATION",
-      enabled: true,
-      createdAt: now,
-    });
-    createdDevices += 1;
-    simTokens.push(`${seed.id} (simulation): ${token}`);
+console.log(`fleet unit ${FLEET_ID}:`);
+console.log(`  devices/${FLEET_ID}/app — ${existingMeta ? "exists (kept)" : "will be created"}`);
+console.log(`  ${THRESHOLDS_NODE}/${FLEET_ID} — ${thresholdCount} existing; ${thresholdSeed.length - thresholdCount} to add`);
+for (const t of thresholdSeed) {
+  if (!(t.parameter as string in existingThresholds)) {
+    console.log(`    + ${(t.parameter as string).padEnd(12)} [${t.lowLimit ?? "–"} … ${t.highLimit ?? "–"}] ${t.unit ?? ""}`);
   }
 }
-
 console.log("");
-console.log(`Done — created ${createdAhus} AHU(s), ${createdThresholds} threshold(s), ${createdDevices} simulation device(s).`);
-if (simTokens.length > 0) {
+console.log("Note: the device's live data appears automatically once the app runs —");
+console.log("the sampler mirrors the owner tree's devices/ into this database.");
+
+if (!apply) {
   console.log("");
-  console.log("SIMULATION gateway bearer tokens (shown once — keep private):");
-  for (const line of simTokens) console.log(`  ${line}`);
+  console.log("Dry run complete. Re-run with --apply to write.");
+  process.exit(0);
 }
+
+if (!existingMeta) {
+  await rtdb.set(n(`devices/${FLEET_ID}/app`), { ...fleetMeta, id: undefined });
+  console.log(`✓ created devices/${FLEET_ID}/app`);
+}
+for (const t of thresholdSeed) {
+  const key = t.parameter as string;
+  if (key in existingThresholds) continue;
+  await rtdb.set(n(`${THRESHOLDS_NODE}/${FLEET_ID}/${key}`), t);
+  console.log(`✓ threshold ${key}`);
+}
+console.log("");
+console.log("Done — start the app; live data syncs within ~5 s.");

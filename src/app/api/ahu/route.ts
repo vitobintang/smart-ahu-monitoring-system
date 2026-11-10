@@ -161,7 +161,7 @@ export async function POST(req: Request) {
       if (!rtdb) throw new Error("Firebase RTDB is not configured");
       return rtdb;
     })();
-    const { writeRtdbAhu, setRtdbThreshold, setRtdbDevice } = await import("@/lib/rtdb/registry");
+    const { writeRtdbAhu, setRtdbThreshold } = await import("@/lib/rtdb/registry");
     const { tryGetOwnerRtdb } = await import("@/lib/firebase/admin");
     const ownerRtdb = await tryGetOwnerRtdb();
     const nowMs = Date.now();
@@ -204,26 +204,6 @@ export async function POST(req: Request) {
         trendEnabled: isInstalled && p.trendByDefault,
         updatedAt: nowMs,
       });
-    }
-    if (provisionSimulator) {
-      await setRtdbDevice(rtdb, {
-        id: randomId(),
-        ahuId: rawId,
-        label: `${rawId} Simulation Controller`,
-        token: `sim_${rawId.toLowerCase().replace(/[^a-z0-9]/g, "")}_${randomHex(8)}`,
-        sourceType: "SIMULATION",
-        enabled: true,
-        createdAt: nowMs,
-      });
-    }
-    if (deviceToken && ownerRtdb) {
-      // Owner devices tree: register the pre-shared token and create the
-      // device record — the S21 bridge owns the node from here on.
-      const { writeDeviceOwnerToken, initialDaikinDeviceRecord } = await import("@/lib/rtdb/daikin");
-      await writeDeviceOwnerToken(ownerRtdb, rawId, deviceToken);
-      if ((await ownerRtdb.get(`devices/${rawId}`)) === null) {
-        await ownerRtdb.set(`devices/${rawId}`, initialDaikinDeviceRecord(nowMs));
-      }
     }
     await writeAudit({
       userId: actor.user.id,

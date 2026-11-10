@@ -17,14 +17,25 @@
 
 import { readFileSync } from "node:fs";
 
-const path = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || process.env.GOOGLE_APPLICATION_CREDENTIALS;
+// Targets the OWNER (device) project — OWNER_DEVICES_* vars, falling back to
+// the app vars so older .env files keep working.
+const path =
+  process.env.OWNER_DEVICES_SERVICE_ACCOUNT_PATH ||
+  process.env.OWNER_DEVICES_SERVICE_ACCOUNT_JSON ||
+  process.env.FIREBASE_SERVICE_ACCOUNT_PATH ||
+  process.env.GOOGLE_APPLICATION_CREDENTIALS;
 if (!path) {
-  console.error("Set FIREBASE_SERVICE_ACCOUNT_PATH to the service-account .json file.");
+  console.error("Set OWNER_DEVICES_SERVICE_ACCOUNT_PATH to the DAIKIN project's service-account .json file.");
   process.exit(1);
 }
-const databaseUrl = (process.env.FIREBASE_DATABASE_URL ?? process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL ?? "").trim();
+const databaseUrl = (
+  process.env.OWNER_DEVICES_DATABASE_URL ??
+  process.env.FIREBASE_DATABASE_URL ??
+  process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL ??
+  ""
+).trim();
 if (!databaseUrl) {
-  console.error("Set FIREBASE_DATABASE_URL (or NEXT_PUBLIC_FIREBASE_DATABASE_URL).");
+  console.error("Set OWNER_DEVICES_DATABASE_URL (the daikinsmart database URL).");
   process.exit(1);
 }
 

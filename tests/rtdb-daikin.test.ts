@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { deepStrictEqual } from "node:assert/strict";
 import test from "node:test";
 import { equal } from "node:assert/strict";
 
@@ -14,8 +15,10 @@ import {
   writeDaikinControl,
   writeDeviceOwnerToken,
 } from "../src/lib/rtdb/daikin";
-import { ingestTelemetryRtdb } from "../src/lib/rtdb/lifecycle";
-import { setRtdbDevice, writeRtdbAhu } from "../src/lib/rtdb/registry";
+import { processDaikinSnapshotRtdb } from "../src/lib/rtdb/lifecycle";
+import { guardRtdbRoots } from "../src/lib/rtdb/store";
+import { rejects, ok } from "node:assert/strict";
+import { writeRtdbAhu } from "../src/lib/rtdb/registry";
 import { createCommandRtdb, acceptPendingRtdb } from "../src/lib/rtdb/lifecycle";
 
 const OWNER_NODE = "devices/GTM-DAIKIN-001";
@@ -61,29 +64,10 @@ function ahu(overrides: Record<string, unknown> = {}) {
 }
 
 async function seedIntegration(rtdb: RtdbAdapter, overrides: Record<string, unknown> = {}) {
+  // The owner's live bridge node FIRST (a full-node set mirrors what the owner
+  // tree holds), then the app registry metadata at devices/{id}/app.
+  await rtdb.set(OWNER_NODE, { ...OWNER_RECORD, power: true, room_temp: 27.4, timestamp: Date.now() });
   await writeRtdbAhu(rtdb, ahu(overrides));
-  await setRtdbDevice(rtdb, {
-    id: "bridge-1",
-    ahuId: "GTM-DAIKIN-001",
-    label: "Daikin S21 Bridge (system)",
-    token: "tok-s21",
-    sourceType: "PHYSICAL",
-    enabled: true,
-    createdAt: 1,
-  });
-  // The owner's live bridge node (control write-through target).
-  await rtdb.set(OWNER_NODE, { ...OWNER_RECORD, power: true });
-  // A fresh latest sample keeps the FR-27 OFFLINE gate open for control.
-  await rtdb.set("telemetryLatest/GTM-DAIKIN-001", {
-    ahuId: "GTM-DAIKIN-001",
-    messageId: "seed-latest",
-    source: "PHYSICAL",
-    timestamp: Date.now(),
-    receivedAt: Date.now(),
-    roomTemp: 27.4,
-    fanSpeed: null,
-    runState: "RUN",
-  });
 }
 
 test("isDaikinShape and readDaikinDevice recognize the owner's bridge record", async () => {
@@ -175,21 +159,24 @@ test("initialDaikinDeviceRecord is inert until the bridge reports (no phantom sa
   assert.equal(record.source, "web-registration");
 });
 
-test("ingest accepts the owner's pre-shared device token (PHYSICAL)", async () => {
+test("the sampler mirrors the owner node verbatim into the app database", async () => {
   const appDb: RtdbAdapter = new InMemoryRtdb();
-  await writeRtdbAhu(appDb, ahu());
-  const ownerDb: RtdbAdapter = new InMemoryRtdb();
-  await writeDeviceOwnerToken(ownerDb, "GTM-DAIKIN-001", "preshared-token-01");
-
-  const bad = await ingestTelemetryRtdb(appDb, "wrong-token", { messageId: "m-1", timestamp: new Date(1_760_000_000_000).toISOString(), parameters: { roomTemp: 25 } }, 1_760_000_000_000, ownerDb);
-  equal(bad.ok, false);
-  if (!bad.ok) equal(bad.status, 401);
-
-  const okResult = await ingestTelemetryRtdb(appDb, "preshared-token-01", { messageId: "m-1", timestamp: new Date(1_760_000_000_000).toISOString(), parameters: { roomTemp: 25 }, runState: "RUN" }, 1_760_000_000_000, ownerDb);
-  equal(okResult.ok, true);
-  const latest = await appDb.get<{ ahuId: string; source: string }>("telemetryLatest/GTM-DAIKIN-001");
-  equal(latest?.ahuId, "GTM-DAIKIN-001");
-  equal(latest?.source, "PHYSICAL");
+  const ts = 1_794_182_400_000; // 2026-11-09T00:00:00Z
+  const ownerNode = { ...OWNER_RECORD, room_temp: 25.5, power: true, timestamp: ts };
+  const result = await processDaikinSnapshotRtdb(appDb, "GTM-DAIKIN-001", ownerNode, ts);
+  equal(result.ok, true);
+  deepStrictEqual(
+    await appDb.get(`deviceHistory/GTM-DAIKIN-001/2026-11-09/s21-GTM-DAIKIN-001-${ts}`),
+    ownerNode,
+    "verbatim history snapshot",
+  );
+  const mirror = await appDb.get<Record<string, unknown>>("devices/GTM-DAIKIN-001");
+  for (const [k, v] of Object.entries(ownerNode)) {
+    deepStrictEqual(mirror?.[k], v, `mirror field ${k} verbatim`);
+  }
+  const meta = await appDb.get<{ name: string }>("devices/GTM-DAIKIN-001/app");
+  ok(meta, "auto-registered app meta");
+  equal(meta?.name, "GTM-DAIKIN-001");
 });
 
 test("a commissioned physical bridge (physicalControlEnabled) accepts and writes control through", async () => {
@@ -226,4 +213,57 @@ test("an uncommissioned physical unit still refuses control (default safety)", a
   });
   assert.ok("error" in outcome);
   assert.equal((outcome as { code?: string }).code, "PHYSICAL_LOCKED");
+});
+
+test("owner adapter guard: only devices/ + deviceOwners/ are reachable, ever", async () => {
+  const db: RtdbAdapter = new InMemoryRtdb();
+  const owner = guardRtdbRoots(db, ["devices", "deviceOwners"], "owner");
+
+  // the two agreed trees work in full
+  await owner.set("devices/GTM-DAIKIN-001", { power: false, setpoint: 24 });
+  await owner.set("deviceOwners/GTM-DAIKIN-001", "preshared-token-01");
+  await owner.update("devices/GTM-DAIKIN-001", { power: true });
+  equal(await owner.get<string>("deviceOwners/GTM-DAIKIN-001"), "preshared-token-01");
+  equal((await owner.get<{ power: boolean }>("devices/GTM-DAIKIN-001"))?.power, true);
+  const tx = await owner.transaction<{ power: boolean }>("devices/GTM-DAIKIN-001", (current) => ({
+    ...(current as { power: boolean }),
+    power: false,
+  }));
+  equal(tx.committed, true);
+
+  // every other top-level tree — including everything app-owned — is refused
+  const forbidden = [
+    "users/x",
+    "usernames/x",
+    "emails/x",
+    "telemetry/GTM-DAIKIN-001/2026-11-10/m1",
+    "telemetryLatest/GTM-DAIKIN-001",
+    "commands/c1",
+    "commandActive/c1",
+    "alarms/a1",
+    "alarmsActive/a1",
+    "alarmBreachTimers/a1",
+    "ahus/GTM-DAIKIN-001",
+    "gateways/GTM-DAIKIN-001/g1",
+    "thresholds/GTM-DAIKIN-001",
+    "trendAlerts/t1",
+    "auditLogs/l1",
+    "loginAttempts/k",
+    "facility/floorplan",
+    "ahu-app/anything",
+    "brandNewNode/whatever",
+    "",
+  ];
+  for (const path of forbidden) {
+    await rejects(() => owner.get(path), /outside the allowed trees/);
+    await rejects(() => owner.set(path, 1), /outside the allowed trees/);
+    await rejects(() => owner.update(path, { a: 1 }), /outside the allowed trees/);
+    await rejects(() => owner.remove(path), /outside the allowed trees/);
+    await rejects(() => owner.transaction(path, (current) => current), /outside the allowed trees/);
+  }
+
+  // the underlying database was never touched by the refused operations
+  for (const root of ["users", "telemetry", "telemetryLatest", "commands", "alarms", "ahus", "gateways", "thresholds", "auditLogs", "loginAttempts", "facility"]) {
+    equal(await db.get(root), null, `${root} must not exist on the owner database`);
+  }
 });

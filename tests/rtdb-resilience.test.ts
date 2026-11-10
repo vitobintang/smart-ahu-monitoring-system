@@ -3,7 +3,7 @@ import { deepStrictEqual, equal, rejects } from "node:assert/strict";
 
 import { InMemoryRtdb, type RtdbAdapter } from "../src/lib/rtdb/store";
 import { claimActiveCommand, activeSlotFor, clearActiveCommand, applyCommandStatusPatch, writeRtdbCommand } from "../src/lib/rtdb/commands";
-import { pruneTelemetryShards, writeTelemetryMirror } from "../src/lib/rtdb/telemetry";
+import { pruneTelemetryShards, writeDeviceSnapshot } from "../src/lib/rtdb/telemetry";
 import { mirrorToRtdb, firebaseEnvConfigured } from "../src/lib/rtdb/live-read";
 import { streamReportCsv } from "../src/lib/queries";
 
@@ -137,29 +137,7 @@ test("applyCommandStatusPatch partial failure is loud (rejects) and non-atomic-s
 
 test("pruneTelemetryShards failure rejects (worker-level catch handles it)", async () => {
   const db = new InMemoryRtdb();
-  await writeTelemetryMirror(db, {
-    ahuId: "AHU-01",
-    messageId: "m",
-    source: "SIMULATION",
-    timestamp: T0,
-    receivedAt: T0,
-    roomTemp: null,
-    supplyTemp: null,
-    returnTemp: null,
-    humidity: null,
-    filterDiffPressure: null,
-    fanSpeed: null,
-    coilTemp: null,
-    damperPosition: null,
-    current: null,
-    isCurrentFallback: false,
-    voltage: null,
-    isVoltageFallback: false,
-    runHours: null,
-    heaterOutput: null,
-    runState: null,
-    faultCode: null,
-  });
+  await writeDeviceSnapshot(db, "AHU-01", { power: true, fan: 2, timestamp: T0 });
   const flaky = new FlakyRtdb(db, (op, path) => op === "get" && path.includes("2026-11-07"));
   await rejects(() => pruneTelemetryShards(flaky, ["AHU-01"], 1, T0, "2026-11-07"));
 });

@@ -19,17 +19,20 @@ import type { RtdbAdapter } from "./store";
  * writes on every mutation path.
  */
 
-export const AHUS_NODE = "ahus";
+export const AHUS_NODE = "devices";
 /**
- * Bearer-token gateway registry (who may POST telemetry / which sources are
- * enabled). Deliberately named `gateways` — the ADOPTED daikinsmart project
- * already has a root `devices/` node (the owner's Daikin S21 live-state tree,
- * integrated via rtdb/daikin.ts), and gateway records must never collide with it.
+ * The APP database mirrors the OWNER project's layout: the fleet tree is
+ * `devices/{id}` — a verbatim copy of the owner's live device node — with all
+ * app-owned registry metadata (name, location, placement, control flags)
+ * nested under `devices/{id}/app`. Sync (workers.ts) only ever writes the
+ * snapshot's own fields, never the `app/` subtree; registry writers only ever
+ * touch `app/`.
  */
-export const DEVICES_NODE = "gateways";
+export const DEVICE_MIRROR_NODE = "devices";
+export const APP_META_CHILD = "app";
 export const THRESHOLDS_NODE = "thresholds";
 
-/** Epoch-ms flattened `ahus` row. */
+/** Epoch-ms flattened `ahus` row (stored at devices/{id}/app). */
 export interface RtdbAhuRecord {
   id: string;
   name: string;
@@ -47,6 +50,8 @@ export interface RtdbAhuRecord {
   setpoint: number;
   faultCode: string | null;
   physicalControlEnabled: boolean;
+  /** Pause switch: when false the sampler skips the unit entirely. */
+  enabled?: boolean;
   mapX: number | null;
   mapZ: number | null;
   mapRotation: number;
@@ -54,14 +59,55 @@ export interface RtdbAhuRecord {
   updatedAt: number;
 }
 
-/** Epoch-ms flattened `devices` row. */
+/** Sensible registry defaults for a device discovered on the mirror tree. */
+export function defaultAhuRecord(ahuId: string, now = Date.now()): RtdbAhuRecord {
+  return {
+    id: ahuId,
+    name: ahuId,
+    location: "",
+    commTimeoutSec: 90,
+    hasHeater: false,
+    installedSensors: ["roomTemp", "supplyTemp", "returnTemp", "fanSpeed"],
+    currentStatus: "OFFLINE",
+    lastSeenAt: null,
+    controlMode: "AUTO",
+    desiredRunState: "STOP",
+    setpoint: 24,
+    faultCode: null,
+    physicalControlEnabled: false,
+    enabled: true,
+    mapX: null,
+    mapZ: null,
+    mapRotation: 0,
+    mapZone: null,
+    updatedAt: now,
+  };
+}
+
+function appMetaOf(record: RtdbAhuRecord): Record<string, unknown> {
+  const { id: _id, ...meta } = record;
+  void _id;
+  return meta as Record<string, unknown>;
+}
+
+function recordFromNode(ahuId: string, node: unknown): RtdbAhuRecord {
+  const app = (node && typeof node === "object" ? (node as Record<string, unknown>).app : null) as
+    | Partial<Omit<RtdbAhuRecord, "id">>
+    | null;
+  return { ...defaultAhuRecord(ahuId), ...(app ?? {}), id: ahuId };
+}
+
+/**
+ * Bearer-token gateway registry — RETIRED. Device authentication now lives on
+ * the OWNER project's deviceOwners/{id} (pre-shared tokens), and data flows
+ * through the sampler/mirror, not push ingestion. The interface stays for the
+ * admin devices tab, synthesized from the fleet tree.
+ */
 export interface RtdbDeviceRecord {
   id: string;
   ahuId: string;
   label: string;
-  /** Bearer token used by telemetry ingest — server-only data. */
   token: string;
-  /** PHYSICAL | SIMULATION. */
   sourceType: string;
   enabled: boolean;
   createdAt: number;
@@ -90,22 +136,19 @@ export interface RtdbThresholdRecord {
 /* Writers                                                             */
 /* ------------------------------------------------------------------ */
 
-/** Full-record upsert (backfill + provisioning). */
+/** Full-record upsert (backfill + provisioning) — writes devices/{id}/app. */
 export async function writeRtdbAhu(rtdb: RtdbAdapter, record: RtdbAhuRecord): Promise<void> {
-  await rtdb.set(`${AHUS_NODE}/${record.id}`, record);
+  await rtdb.set(`${DEVICE_MIRROR_NODE}/${record.id}/${APP_META_CHILD}`, appMetaOf(record));
 }
 
 /** Merge-patch a single AHU (status changes, control updates, config edits). */
 export async function patchRtdbAhu(rtdb: RtdbAdapter, ahuId: string, patch: Partial<Omit<RtdbAhuRecord, "id">>): Promise<void> {
-  await rtdb.update(`${AHUS_NODE}/${ahuId}`, { ...patch, updatedAt: patch.updatedAt ?? Date.now() });
+  await rtdb.update(`${DEVICE_MIRROR_NODE}/${ahuId}/${APP_META_CHILD}`, { ...patch, updatedAt: patch.updatedAt ?? Date.now() });
 }
 
-export async function setRtdbDevice(rtdb: RtdbAdapter, record: RtdbDeviceRecord): Promise<void> {
-  await rtdb.set(`${DEVICES_NODE}/${record.ahuId}/${record.id}`, record);
-}
-
-export async function removeRtdbDevice(rtdb: RtdbAdapter, ahuId: string, deviceId: string): Promise<void> {
-  await rtdb.remove(`${DEVICES_NODE}/${ahuId}/${deviceId}`);
+/** Remove a unit's app-owned registry metadata (the mirrored fields remain). */
+export async function removeRtdbAhuMeta(rtdb: RtdbAdapter, ahuId: string): Promise<void> {
+  await rtdb.remove(`${DEVICE_MIRROR_NODE}/${ahuId}/${APP_META_CHILD}`);
 }
 
 export async function setRtdbThreshold(rtdb: RtdbAdapter, record: RtdbThresholdRecord): Promise<void> {
@@ -120,36 +163,46 @@ export async function removeRtdbThreshold(rtdb: RtdbAdapter, ahuId: string, para
 /* Readers                                                             */
 /* ------------------------------------------------------------------ */
 
-/** All AHU registry records keyed by id. */
+/** All fleet units keyed by id — every device node on the mirror tree. */
 export async function readRtdbAhus(rtdb: RtdbAdapter): Promise<Map<string, RtdbAhuRecord>> {
-  const tree = (await rtdb.get<Record<string, RtdbAhuRecord>>(AHUS_NODE)) ?? {};
-  return new Map(Object.entries(tree));
+  const tree = (await rtdb.get<Record<string, unknown>>(DEVICE_MIRROR_NODE)) ?? {};
+  const out = new Map<string, RtdbAhuRecord>();
+  for (const [id, node] of Object.entries(tree)) {
+    if (node && typeof node === "object") out.set(id, recordFromNode(id, node));
+  }
+  return out;
 }
 
 export async function readRtdbAhu(rtdb: RtdbAdapter, ahuId: string): Promise<RtdbAhuRecord | null> {
-  return rtdb.get<RtdbAhuRecord>(`${AHUS_NODE}/${ahuId}`);
+  const node = await rtdb.get<unknown>(`${DEVICE_MIRROR_NODE}/${ahuId}`);
+  if (!node || typeof node !== "object") return null;
+  return recordFromNode(ahuId, node);
 }
 
-/** Device records, optionally narrowed to one AHU. */
+/** Fleet rows for the admin devices tab (gateway registry is retired). */
 export async function readRtdbDevices(rtdb: RtdbAdapter, ahuId?: string): Promise<RtdbDeviceRecord[]> {
-  if (ahuId) {
-    const tree = (await rtdb.get<Record<string, RtdbDeviceRecord>>(`${DEVICES_NODE}/${ahuId}`)) ?? {};
-    return Object.values(tree);
+  const ahus = await readRtdbAhus(rtdb);
+  const rows: RtdbDeviceRecord[] = [];
+  for (const [id, record] of ahus) {
+    if (ahuId && id !== ahuId) continue;
+    rows.push({
+      id: `owner-${id}`,
+      ahuId: id,
+      label: "Daikin S21 device (owner tree)",
+      token: "(pre-shared token — owner project)",
+      sourceType: "PHYSICAL",
+      enabled: record.enabled !== false,
+      createdAt: record.updatedAt,
+    });
   }
-  const tree = (await rtdb.get<Record<string, Record<string, RtdbDeviceRecord>>>(DEVICES_NODE)) ?? {};
-  return Object.values(tree).flatMap((perAhu) => Object.values(perAhu));
+  return rows;
 }
 
-/** Ingest authentication: the device record owning this bearer token, if any. */
-export async function readRtdbDeviceByToken(rtdb: RtdbAdapter, token: string): Promise<RtdbDeviceRecord | null> {
-  const all = await readRtdbDevices(rtdb);
-  return all.find((d) => d.token === token && d.enabled) ?? null;
-}
-
-/** sourceType values of the AHU's enabled devices (engine/commands gate). */
+/** Source gates for commands: the unit exists and is enabled. */
 export async function readRtdbEnabledSourceTypes(rtdb: RtdbAdapter, ahuId: string): Promise<string[]> {
-  const devices = await readRtdbDevices(rtdb, ahuId);
-  return devices.filter((d) => d.enabled).map((d) => d.sourceType);
+  const ahu = await readRtdbAhu(rtdb, ahuId);
+  if (!ahu || !ahu.enabled) return [];
+  return ["PHYSICAL", "SIMULATION"];
 }
 
 /** Threshold records, optionally narrowed to one AHU. */
@@ -193,7 +246,7 @@ export function deviceToRow(record: RtdbDeviceRecord): Record<string, unknown> {
     id: record.id,
     ahuId: record.ahuId,
     label: record.label,
-    token: record.token,
+    token: "(pre-shared token — owner project)",
     sourceType: record.sourceType,
     enabled: record.enabled,
     createdAt: new Date(record.createdAt),

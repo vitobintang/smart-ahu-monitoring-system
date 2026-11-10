@@ -192,7 +192,18 @@ if (emulatorAvailable) {
 
   t("emulator: telemetry mirror, latest pointer, range read across day shards", async () => {
     await wipe();
-    const { writeTelemetryMirror } = await import("../src/lib/rtdb/telemetry");
+    const { writeDeviceSnapshot } = await import("../src/lib/rtdb/telemetry");
+    const seedMirror = (r: { ahuId: string; timestamp: number; roomTemp: number | null; fanSpeed: number | null; supplyTemp: number | null; returnTemp: number | null; humidity: number | null; runState: string | null }) =>
+      writeDeviceSnapshot(admin!.db, r.ahuId, {
+        power: r.runState === "RUN" ? true : false,
+        fan: r.fanSpeed ?? 0,
+        room_temp: r.roomTemp,
+        supply_temp: r.supplyTemp,
+        return_temp: r.returnTemp,
+        humidity: r.humidity,
+        simulated: true,
+        timestamp: r.timestamp,
+      });
     const { readTelemetryRange } = await import("../src/lib/rtdb/history");
     const DAY = 86_400_000;
     const base = Date.UTC(2026, 10, 9, 0, 0, 0);
@@ -220,9 +231,9 @@ if (emulatorAvailable) {
       faultCode: null,
     });
 
-    await writeTelemetryMirror(admin!.db, record("emu-m1", base + 1_000));
-    await writeTelemetryMirror(admin!.db, record("emu-m2", base + DAY + 2_000));
-    await writeTelemetryMirror(admin!.db, record("emu-m3", base - 500)); // late/historical
+    await seedMirror(record("emu-m1", base + 1_000));
+    await seedMirror(record("emu-m2", base + DAY + 2_000));
+    await seedMirror(record("emu-m3", base - 500)); // late/historical
 
     const latest = await admin!.db.get<Record<string, unknown>>("telemetryLatest/AHU-01");
     equal(latest?.messageId, "emu-m2", "latest never regresses on historical writes");
@@ -309,7 +320,9 @@ if (emulatorAvailable) {
 
   t("emulator: prune removes only expired day shards", async () => {
     await wipe();
-    const { writeTelemetryMirror, pruneTelemetryShards } = await import("../src/lib/rtdb/telemetry");
+    const { pruneTelemetryShards, writeDeviceSnapshot } = await import("../src/lib/rtdb/telemetry");
+    const seedMirror = (r: { ahuId: string; timestamp: number }) =>
+      writeDeviceSnapshot(admin!.db, r.ahuId, { power: false, fan: 0, simulated: true, timestamp: r.timestamp });
     const base = Date.UTC(2026, 10, 7, 5, 0, 0);
     const record = (messageId: string, timestamp: number) => ({
       ahuId: "AHU-01",
@@ -334,11 +347,11 @@ if (emulatorAvailable) {
       runState: null,
       faultCode: null,
     });
-    await writeTelemetryMirror(admin!.db, record("prune-old", base));
-    await writeTelemetryMirror(admin!.db, record("prune-new", base + 3 * 86_400_000));
+    await seedMirror(record("prune-old", base));
+    await seedMirror(record("prune-new", base + 3 * 86_400_000));
     const removed = await pruneTelemetryShards(admin!.db, ["AHU-01"], 1, base + 3 * 86_400_000 + 3600_000, "2026-11-07");
     equal(removed, 1);
-    equal(await admin!.db.get("telemetry/AHU-01/2026-11-07"), null);
-    notEqual(await admin!.db.get("telemetry/AHU-01/2026-11-10"), null);
+    equal(await admin!.db.get("deviceHistory/AHU-01/2026-11-07"), null);
+    notEqual(await admin!.db.get("deviceHistory/AHU-01/2026-11-10"), null);
   });
 }
