@@ -97,35 +97,49 @@ function str(value: unknown): string | null {
 }
 
 /**
+ * VERIFIED owner layout: live fields sit at devices/{id}/status. Accept either
+ * the wrapped device node or a bare status payload.
+ */
+export function unwrapStatus(snapshot: Record<string, unknown>): Record<string, unknown> {
+  const status = snapshot["status"];
+  if (status && typeof status === "object" && !Array.isArray(status)) {
+    return status as Record<string, unknown>;
+  }
+  return snapshot;
+}
+
+/**
  * Synthesizes the stable telemetry view from a verbatim device snapshot.
  * Returns null when the snapshot carries no usable timestamp.
  */
 export function snapshotToRecord(ahuId: string, snapshot: Record<string, unknown>): RtdbTelemetryRecord | null {
-  const ts = toMs(snapshot.timestamp);
+  const node = unwrapStatus(snapshot);
+  const ts = toMs(node.timestamp);
   if (ts === null) return null;
-  const power = snapshot.power;
+  const power = node.power;
   return {
     ahuId,
     messageId: snapshotMessageId(ahuId, ts),
-    source: snapshot.simulated === true ? "SIMULATION" : "PHYSICAL",
+    // source "mock" or simulated flag → SIMULATION (per the verified bridge shape)
+    source: node.simulated === true || node.source === "mock" ? "SIMULATION" : "PHYSICAL",
     timestamp: ts,
     receivedAt: ts,
-    roomTemp: num(snapshot.room_temp, snapshot.roomTemp),
-    supplyTemp: num(snapshot.supply_temp, snapshot.supplyTemp),
-    returnTemp: num(snapshot.return_temp, snapshot.returnTemp),
-    humidity: num(snapshot.humidity),
-    filterDiffPressure: num(snapshot.filter_diff_pressure, snapshot.filterDiffPressure),
-    fanSpeed: num(snapshot.fan),
-    coilTemp: num(snapshot.coil_temp, snapshot.coilTemp),
-    damperPosition: num(snapshot.damper_position, snapshot.damperPosition),
-    current: num(snapshot.current),
+    roomTemp: num(node.room_temp, node.roomTemp),
+    supplyTemp: num(node.supply_temp, node.supplyTemp),
+    returnTemp: num(node.return_temp, node.returnTemp),
+    humidity: num(node.humidity),
+    filterDiffPressure: num(node.filter_diff_pressure, node.filterDiffPressure),
+    fanSpeed: num(node.fan), // "auto" (string) → null; numeric strings map
+    coilTemp: num(node.coil_temp, node.coilTemp),
+    damperPosition: num(node.damper_position, node.damperPosition),
+    current: num(node.current),
     isCurrentFallback: false,
-    voltage: num(snapshot.voltage),
+    voltage: num(node.voltage),
     isVoltageFallback: false,
-    runHours: num(snapshot.run_hours, snapshot.runHours),
-    heaterOutput: num(snapshot.heater_output, snapshot.heaterOutput),
+    runHours: num(node.run_hours, node.runHours),
+    heaterOutput: num(node.heater_output, node.heaterOutput),
     runState: power === true ? "RUN" : power === false ? "STOP" : null,
-    faultCode: snapshot.state_valid === false ? str(snapshot.state_reason) : str(snapshot.fault),
+    faultCode: node.state_valid === false ? "INVALID" : str(node.fault),
   };
 }
 
@@ -145,8 +159,8 @@ export async function writeDeviceSnapshot(
   if (!record) return { written: false, record: null };
   const path = telemetryNode(ahuId, telemetryDateKey(record.timestamp), record.messageId);
   // The live mirror never regresses: a late/historical snapshot lands in
-  // history only — devices/{id} keeps the newest reported state.
-  const mirrorNow = await rtdb.get<{ timestamp?: unknown }>(`${DEVICE_MIRROR_NODE}/${ahuId}`);
+  // history only — devices/{id}/status keeps the newest reported state.
+  const mirrorNow = await rtdb.get<{ timestamp?: unknown }>(`${DEVICE_MIRROR_NODE}/${ahuId}/status`);
   const mirrorTs = typeof mirrorNow?.timestamp === "number" ? mirrorNow.timestamp : null;
   const mirrorIsNewer = mirrorTs !== null && record.timestamp < mirrorTs;
   const existing = await rtdb.get<unknown>(path);

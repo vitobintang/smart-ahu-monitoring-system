@@ -641,7 +641,8 @@ export async function processDaikinSnapshotRtdb(
   const { computed } = await computeRtdbAhuStatus(rtdb, ahu, now);
   const newStatus = computed.status;
 
-  const snapSetpoint = typeof snapshot.setpoint === "number" && Number.isFinite(snapshot.setpoint) ? snapshot.setpoint : null;
+  const statusPayload = snapshot["status"] && typeof snapshot["status"] === "object" ? (snapshot["status"] as Record<string, unknown>) : snapshot;
+  const snapSetpoint = typeof statusPayload.setpoint === "number" && Number.isFinite(statusPayload.setpoint) ? statusPayload.setpoint : null;
   await patchRtdbAhu(rtdb, ahuId, {
     lastSeenAt: record.timestamp,
     faultCode: record.faultCode,

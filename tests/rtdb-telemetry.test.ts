@@ -14,18 +14,20 @@ import {
   writeDeviceSnapshot,
 } from "../src/lib/rtdb/telemetry";
 
-/** Verbatim device snapshot in the OWNER project's format (Daikin S21 bridge). */
+/** Verbatim device node in the OWNER project's VERIFIED format (status/ child). */
 function snap(overrides: Record<string, unknown> = {}, ts = Date.UTC(2026, 10, 9, 2, 0, 0)): Record<string, unknown> {
   return {
-    power: true,
-    setpoint: 24,
-    mode: "cool",
-    fan: "2",
-    room_temp: 24.5,
-    state_valid: true,
-    simulated: false,
-    timestamp: ts,
-    ...overrides,
+    status: {
+      power: true,
+      setpoint: 24,
+      mode: "cool",
+      fan: "2",
+      room_temp: 24.5,
+      state_valid: true,
+      simulated: false,
+      timestamp: ts,
+      ...overrides,
+    },
   };
 }
 
@@ -53,6 +55,30 @@ test("snapshotToRecord maps the owner field format onto the stable view", () => 
   // no valid timestamp → null (engine skips it)
   equal(snapshotToRecord("AHU-9", snap({ timestamp: "not-a-date" })), null);
   equal(snapshotToRecord("AHU-9", snap({ timestamp: 0 })), null);
+
+  // VERIFIED bridge quirks: fan "auto" → null; source "mock" → SIMULATION;
+  // rssi/capabilities/online ignored by the view
+  const real = snapshotToRecord("AHU-9", {
+    status: {
+      capabilities: { auto: "unsupported", heat: "unsupported", room_temp: "supported" },
+      fan: "auto",
+      mode: "cool",
+      online: true,
+      power: false,
+      room_temp: 26.5,
+      rssi: -40,
+      s21_connected: false,
+      setpoint: 24,
+      simulated: true,
+      source: "mock",
+      state_valid: true,
+      timestamp: 1_794_242_683_818,
+    },
+  });
+  equal(real?.fanSpeed, null, "fan auto → null");
+  equal(real?.runState, "STOP");
+  equal(real?.roomTemp, 26.5);
+  equal(real?.source, "SIMULATION");
 });
 
 test("writeDeviceSnapshot stores the snapshot VERBATIM + updates the live mirror", async () => {
@@ -120,7 +146,8 @@ test("latest view is namespaced per device", async () => {
   await writeDeviceSnapshot(db, "GTM-DAIKIN-001", snap({}, Date.UTC(2026, 10, 9, 2, 0, 0)));
   await writeDeviceSnapshot(db, "GTM-DAIKIN-001", snap({ room_temp: 26 }, Date.UTC(2026, 10, 9, 2, 1, 0)));
 
-  equal((await db.get(telemetryLatestNode("GTM-DAIKIN-001")) as Record<string, unknown>).room_temp, 26);
+  const status = (await db.get<{ status: { room_temp: number } }>(telemetryLatestNode("GTM-DAIKIN-001")) as { status?: { room_temp: number } })?.status;
+  equal(status?.room_temp, 26);
 });
 
 test("snapshot with no valid timestamp is rejected (written:false, record:null)", async () => {

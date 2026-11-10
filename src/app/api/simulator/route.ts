@@ -63,18 +63,21 @@ export async function POST(req: Request) {
     if (!ahuId) return Response.json({ error: "No fleet units exist yet" }, { status: 404 });
     const ahu = registry.get(ahuId)!;
 
-    const node: Record<string, unknown> = {
+    const status: Record<string, unknown> = {
       power: body.runState ? body.runState === "RUN" : ahu.desiredRunState === "RUN",
       setpoint: typeof body.setpoint === "number" ? body.setpoint : ahu.setpoint,
       mode: "cool",
       fan: 2,
+      online: true,
+      s21_connected: true,
       state_valid: true,
       simulated: true,
       timestamp: body.measuredAt ? new Date(body.measuredAt).getTime() || Date.now() : Date.now(),
     };
-    if (body.readings?.roomTemp != null) node.room_temp = body.readings.roomTemp;
-    if (body.readings?.humidity != null) node.humidity = body.readings.humidity;
-    if (body.faultCode) node.fault = body.faultCode;
+    if (body.readings?.roomTemp != null) status.room_temp = body.readings.roomTemp;
+    if (body.readings?.humidity != null) status.humidity = body.readings.humidity;
+    if (body.faultCode) status.fault = body.faultCode;
+    const node: Record<string, unknown> = { status };
 
     const result = await processDaikinSnapshotRtdb(rtdb, ahuId, node);
     await writeAudit({

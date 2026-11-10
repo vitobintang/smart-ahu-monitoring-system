@@ -205,6 +205,16 @@ export async function POST(req: Request) {
         updatedAt: nowMs,
       });
     }
+    if (deviceToken && ownerRtdb) {
+      // Owner devices tree: register the pre-shared token and create the
+      // device node in the VERIFIED bridge shape (devices/{id}/status) —
+      // the bridge owns the node from here on.
+      const { writeDeviceOwnerToken, initialDaikinDeviceStatus } = await import("@/lib/rtdb/daikin");
+      await writeDeviceOwnerToken(ownerRtdb, rawId, deviceToken);
+      if ((await ownerRtdb.get(`devices/${rawId}`)) === null) {
+        await ownerRtdb.set(`devices/${rawId}/status`, initialDaikinDeviceStatus(nowMs));
+      }
+    }
     await writeAudit({
       userId: actor.user.id,
       userEmail: actor.user.email,
