@@ -193,7 +193,7 @@ export default function TrendsPage() {
             <thead className="bg-ink-900/60 text-[10px] uppercase tracking-wider text-slate-500">
               <tr>
                 <th className="px-3 py-2.5">Raised</th>
-                <th className="px-3 py-2.5">AHU</th>
+                <th className="px-3 py-2.5">Device</th>
                 <th className="px-3 py-2.5">Parameter</th>
                 <th className="px-3 py-2.5">Direction</th>
                 <th className="px-3 py-2.5">Horizon</th>

@@ -411,7 +411,7 @@ export default function AppShell({
               <Search size={15} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 className="w-full rounded-full border border-[#e6ecf5] bg-[#f1f5fb]/90 py-2 pl-10 pr-16 text-[12.5px] text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-[#bfdbfe] focus:bg-white focus:ring-4 focus:ring-[#2563eb]/10"
-                placeholder="Search AHU units, alarms, reports…"
+                placeholder="Search devices, alarms, reports…"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     const q = e.currentTarget.value.trim().toUpperCase();

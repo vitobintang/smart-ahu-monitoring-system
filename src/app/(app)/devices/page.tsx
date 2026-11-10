@@ -270,7 +270,7 @@ export default function AhuIndexPage() {
   async function submitCreateAhu(e: React.FormEvent) {
     e.preventDefault();
     if (!placement) {
-      setCreateErr("Click inside any indoor wing or anywhere outdoors to place the new AHU.");
+      setCreateErr("Click inside any indoor wing to place the new device.");
       return;
     }
     setCreating(true);
@@ -298,7 +298,7 @@ export default function AhuIndexPage() {
       await reload();
       setSelected3dId(res.ahu.id);
     } catch (err) {
-      setCreateErr(err instanceof Error ? err.message : "Failed to create AHU unit");
+      setCreateErr(err instanceof Error ? err.message : "Failed to create device");
     } finally {
       setCreating(false);
     }
@@ -319,7 +319,7 @@ export default function AhuIndexPage() {
               3D Digital Twin Commissioning
             </p>
             <h2 className="mt-0.5 text-[18px] font-bold tracking-tight text-[#12294d] sm:text-[20px]">
-              Add New AHU &amp; Place 3D Model
+              Add New Device &amp; Place 3D Model
             </h2>
             <p className="text-[11.5px] text-slate-500">
               Drag or click inside any indoor room wing or anywhere outdoors. Solid walls snap flush &amp; block clipping.
@@ -329,7 +329,7 @@ export default function AhuIndexPage() {
             type="button"
             disabled={creating}
             onClick={() => setAddOpen(false)}
-            aria-label="Close Add AHU modal"
+            aria-label="Close Add Device modal"
             className="grid h-9 w-9 flex-none place-items-center rounded-xl border border-slate-200 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
           >
             <X size={16} />
@@ -520,7 +520,7 @@ export default function AhuIndexPage() {
   if (loading && !data) {
     return (
       <div className={cx("flex h-full w-full items-center justify-center", !listOpen && "bg-[#eaf1fb]")}>
-        <Spinner label="Loading AHU fleet…" />
+        <Spinner label="Loading devices…" />
       </div>
     );
   }
@@ -618,10 +618,10 @@ export default function AhuIndexPage() {
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 className="text-[20px] font-bold tracking-[-0.02em] text-[#12294d] sm:text-[22px]">
-                AHU Units · Fleet List
+                Devices · Fleet List
               </h2>
               <p className="text-[12px] text-slate-500">
-                All provisioned air handling units · live status, sensors, and control (FR-05)
+                All provisioned devices · live status, sensors, and control (FR-05)
               </p>
             </div>
 
@@ -640,7 +640,7 @@ export default function AhuIndexPage() {
                   onClick={openAddModal}
                   className="inline-flex items-center gap-1.5 rounded-xl bg-linear-to-r from-[#2563eb] to-[#1d6ef2] px-3.5 py-2 text-[12px] font-bold text-white shadow-[0_10px_22px_-8px_rgba(37,99,235,0.85)] transition hover:brightness-105"
                 >
-                  <Plus size={15} /> Add New AHU
+                  <Plus size={15} /> Add New Device
                 </button>
               ) : null}
             </div>
@@ -807,7 +807,7 @@ export default function AhuIndexPage() {
             ))}
           </div>
 
-          {cards.length === 0 ? <Empty>No AHU units registered.</Empty> : null}
+          {cards.length === 0 ? <Empty>No devices registered.</Empty> : null}
 
           <footer className="flex flex-col items-start justify-between gap-2 pt-3 text-[11px] text-slate-500 sm:flex-row sm:items-center">
             <span>© 2026 Smart Monitoring AHU. All rights reserved.</span>

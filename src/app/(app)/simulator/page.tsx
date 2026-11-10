@@ -226,7 +226,7 @@ export default function SimulatorPage() {
         </p>
 
         <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <Field label="AHU">
+          <Field label="Device">
             <select className={inputClass} value={unitIds.includes(ahuId) ? ahuId : unitIds[0]} onChange={(e) => setAhuId(e.target.value)}>
               {unitIds.map((id) => (
                 <option key={id} value={id}>

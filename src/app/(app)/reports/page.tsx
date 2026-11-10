@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   FileSpreadsheet,
   Maximize2,
@@ -9,7 +9,7 @@ import {
   RefreshCw,
   SlidersHorizontal,
 } from "lucide-react";
-import { api } from "@/lib/client";
+import { api, usePoll } from "@/lib/client";
 import { useSessionUser } from "@/components/AppShell";
 import { AHU_IDS, MAX_REPORT_RANGE_DAYS } from "@/lib/domain";
 import { Btn, Empty, ErrorNote, Field, Spinner, cx, inputClass } from "@/components/ui";
@@ -71,6 +71,10 @@ const toLocalInput = (d: Date) => {
 export default function ReportsPage() {
   const sessionUser = useSessionUser();
   const [ahuId, setAhuId] = useState<string>(AHU_IDS[0]);
+  // Unit list follows the ACTIVE device fleet (Daikin DB ⇄ My DB switch).
+  const { data: fleetList } = usePoll<{ ahus: Array<{ id: string }> }>("/api/ahu", 60000);
+  const unitIds = fleetList?.ahus?.length ? fleetList.ahus.map((a) => a.id) : [...AHU_IDS];
+  const activeAhuId = unitIds.includes(ahuId) ? ahuId : unitIds[0];
   const [from, setFrom] = useState(() => toLocalInput(new Date(Date.now() - 6 * 3600 * 1000)));
   const [to, setTo] = useState(() => toLocalInput(new Date()));
   const [source, setSource] = useState<"ALL" | "PHYSICAL" | "SIMULATION">("ALL");
@@ -98,8 +102,8 @@ export default function ReportsPage() {
   const query = useMemo(() => {
     const fIso = Number.isNaN(new Date(from).getTime()) ? new Date().toISOString() : new Date(from).toISOString();
     const tIso = Number.isNaN(new Date(to).getTime()) ? new Date().toISOString() : new Date(to).toISOString();
-    return `ahuId=${ahuId}&from=${encodeURIComponent(fIso)}&to=${encodeURIComponent(tIso)}&source=${source}`;
-  }, [ahuId, from, to, source]);
+    return `ahuId=${activeAhuId}&from=${encodeURIComponent(fIso)}&to=${encodeURIComponent(tIso)}&source=${source}`;
+  }, [activeAhuId, from, to, source]);
 
   async function generate() {
     if (rangeInvalid) return;
@@ -117,11 +121,15 @@ export default function ReportsPage() {
     }
   }
 
-  // Automatically load initial report on first visit
+  // Automatically load initial report on first visit (and when the active
+  // fleet resolves the default unit after the /api/ahu list arrives).
+  const initialUnitRef = useRef<string | null>(null);
   useEffect(() => {
+    if (initialUnitRef.current === activeAhuId) return;
+    initialUnitRef.current = activeAhuId;
     void generate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeAhuId]);
 
   function applyPresetHours(hours: number) {
     const now = new Date();
@@ -167,8 +175,8 @@ export default function ReportsPage() {
 
   const docRef = useMemo(() => {
     const stamp = (generatedAt ?? new Date()).toISOString().slice(0, 10).replaceAll("-", "");
-    return `SMA-RPT-${stamp}-${report?.ahuId ?? ahuId}`;
-  }, [generatedAt, report?.ahuId, ahuId]);
+    return `SMA-RPT-${stamp}-${report?.ahuId ?? activeAhuId}`;
+  }, [generatedAt, report?.ahuId, activeAhuId]);
 
   const preparedByName =
     sessionUser?.fullName?.trim() ||
@@ -251,9 +259,9 @@ export default function ReportsPage() {
       {/* Screen-only Query + Page Layout Control Panel */}
       <div className="panel no-print space-y-4 rounded-2xl p-4 sm:p-5">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <Field label="AHU Unit">
-            <select value={ahuId} onChange={(e) => setAhuId(e.target.value)} className={inputClass}>
-              {AHU_IDS.map((id) => (
+          <Field label="Device">
+            <select value={activeAhuId} onChange={(e) => setAhuId(e.target.value)} className={inputClass}>
+              {unitIds.map((id) => (
                 <option key={id} value={id}>
                   {id}
                 </option>
@@ -415,7 +423,7 @@ export default function ReportsPage() {
       {loading && !report ? <Spinner label="Compiling formal engineering report…" /> : null}
 
       {!report && !loading && !error ? (
-        <Empty>Select an AHU unit and time window, then click Generate Report.</Empty>
+        <Empty>Select a device and time window, then click Generate Report.</Empty>
       ) : null}
 
       {report ? (

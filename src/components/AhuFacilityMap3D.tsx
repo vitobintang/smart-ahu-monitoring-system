@@ -2297,9 +2297,9 @@ export default function AhuFacilityMap3D({
               type="button"
               onClick={onOpenList}
               className="inline-flex items-center gap-1.5 rounded-xl border border-[#9ec2fb] bg-[#eaf2ff] px-3 py-1.5 text-[11.5px] font-bold text-[#1456c7] shadow-[0_1px_2px_rgba(29,110,242,0.08)] transition-all hover:border-[#60a5fa] hover:bg-[#dceaff]"
-              title="Open AHU Units Fleet List"
+              title="Open Devices Fleet List"
             >
-              <LayoutGrid size={13} /> AHU List ({items.length})
+              <LayoutGrid size={13} /> Device List ({items.length})
             </button>
           ) : null}
 

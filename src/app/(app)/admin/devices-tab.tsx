@@ -51,7 +51,7 @@ export default function DevicesTab() {
         body: JSON.stringify({ ahuId: devAhu, label: devLabel || undefined, sourceType: devSource }),
       });
       setIssuedToken(res.device.token);
-      setNotice(`AHU monitoring module provisioned for ${devAhu}. Copy the bearer token below (FR-21).`);
+      setNotice(`Device monitoring module provisioned for ${devAhu}. Copy the bearer token below (FR-21).`);
       setDevLabel("");
       await devices.reload();
     } catch (err) {
@@ -105,14 +105,14 @@ Its bearer token will be permanently revoked.`,
         </div>
       ) : null}
         <div className="grid gap-5 xl:grid-cols-[1fr_22rem]">
-          {/* Provisioned AHU Monitoring Modules */}
+          {/* Provisioned Device Monitoring Modules */}
           <div className="panel overflow-hidden rounded-2xl">
             <div className="border-b border-[#e4eaf3] bg-[#f8fafd] px-4 py-3">
               <h2 className="text-xs font-bold uppercase tracking-wider text-[#12294d]">
-                Provisioned AHU Monitoring Modules ({devices.data?.devices.length ?? 0})
+                Provisioned Device Monitoring Modules ({devices.data?.devices.length ?? 0})
               </h2>
               <p className="text-[11px] text-[#475569]">
-                Bearer tokens are dedicated exclusively to AHU telemetry ingestion gateways (FR-21)
+                Bearer tokens are dedicated exclusively to device telemetry ingestion gateways (FR-21)
               </p>
             </div>
 
@@ -160,7 +160,7 @@ Its bearer token will be permanently revoked.`,
               ))}
               {devices.data?.devices.length === 0 ? (
                 <div className="p-6">
-                  <Empty>No AHU monitoring modules provisioned yet.</Empty>
+                  <Empty>No device monitoring modules provisioned yet.</Empty>
                 </div>
               ) : null}
             </div>
@@ -170,7 +170,7 @@ Its bearer token will be permanently revoked.`,
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-[#e4eaf3] bg-[#f8fafd] text-[10px] font-bold uppercase tracking-wider text-[#475569]">
                   <tr>
-                    <th className="px-4 py-2.5">AHU</th>
+                    <th className="px-4 py-2.5">Device</th>
                     <th className="px-4 py-2.5">Module Label</th>
                     <th className="px-4 py-2.5">Source (FR-09)</th>
                     <th className="px-4 py-2.5">Token</th>
@@ -224,7 +224,7 @@ Its bearer token will be permanently revoked.`,
               </table>
               {devices.data?.devices.length === 0 ? (
                 <div className="p-6">
-                  <Empty>No AHU monitoring modules provisioned yet.</Empty>
+                  <Empty>No device monitoring modules provisioned yet.</Empty>
                 </div>
               ) : null}
             </div>
@@ -233,13 +233,13 @@ Its bearer token will be permanently revoked.`,
           <div className="space-y-4">
             <form onSubmit={provisionDevice} className="panel h-max rounded-2xl p-4">
               <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#12294d]">
-                <KeyRound size={14} className="text-[#1d6ef2]" /> Register AHU Module
+                <KeyRound size={14} className="text-[#1d6ef2]" /> Register Device Module
               </h2>
               <p className="mt-1 text-[11px] leading-relaxed text-[#475569]">
-                Issues a dedicated bearer token for an AHU monitoring module to push live telemetry.
+                Issues a dedicated bearer token for a device monitoring module to push live telemetry.
               </p>
               <div className="mt-3 space-y-3">
-                <Field label="AHU identity">
+                <Field label="Device identity">
                   <select
                     className={inputClass}
                     value={registeredAhuIds.includes(devAhu) ? devAhu : registeredAhuIds[0]}
@@ -280,7 +280,7 @@ Its bearer token will be permanently revoked.`,
               <div className="panel rounded-2xl border-emerald-200 bg-emerald-50/70 p-4">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
-                    Issued AHU Module Token
+                    Issued Device Module Token
                   </p>
                   <Btn size="sm" variant="default" onClick={() => void copyTokenToClipboard(issuedToken)}>
                     {copiedToken ? <Check size={12} /> : <Copy size={12} />}

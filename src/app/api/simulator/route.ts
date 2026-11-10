@@ -2,7 +2,7 @@ import { getClientIp, jsonError, requireAuth, writeAudit } from "@/lib/auth";
 import { getOverride, setOverride, simulationTick, simOverrides } from "@/lib/workers";
 import { AHU_IDS } from "@/lib/domain";
 import { requireRtdb } from "@/lib/rtdb/live-read";
-import { ahuToRow, readRtdbAhus } from "@/lib/rtdb/registry";
+import { ahuToRow } from "@/lib/rtdb/registry";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,9 @@ export async function GET() {
   try {
     await requireAuth("control");
     const rtdb = await requireRtdb();
-    const registry = await readRtdbAhus(rtdb);
+    // Console lists the ACTIVE fleet only (Daikin DB ⇄ My DB switch).
+    const { readActiveFleetRecords } = await import("@/lib/rtdb/local-fleet");
+    const registry = await readActiveFleetRecords(rtdb);
     const rows = [...registry.values()]
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((record) => {
@@ -56,9 +58,9 @@ export async function POST(req: Request) {
     // Manual tester: accept the classic payload shape but store it in the
     // mirrored DAIKIN format (same path the sampler and simulator use).
     const rtdb = await requireRtdb();
-    const { readRtdbAhus } = await import("@/lib/rtdb/registry");
+    const { readActiveFleetRecords } = await import("@/lib/rtdb/local-fleet");
     const { processDaikinSnapshotRtdb } = await import("@/lib/rtdb/lifecycle");
-    const registry = await readRtdbAhus(rtdb);
+    const registry = await readActiveFleetRecords(rtdb);
     const ahuId = body.ahuId && registry.has(body.ahuId) ? body.ahuId : [...registry.keys()][0];
     if (!ahuId) return Response.json({ error: "No fleet units exist yet" }, { status: 404 });
     const ahu = registry.get(ahuId)!;
