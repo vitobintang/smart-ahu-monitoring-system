@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
+import DeviceModelThumb from "@/components/DeviceModelThumb";
 import type { ReactNode } from "react";
 import {
   ArrowRight,
@@ -20,7 +20,7 @@ import { timeAgo } from "@/lib/client";
 import { cx } from "@/components/ui";
 
 export interface Card {
-  ahu: { id: string; name: string; location: string; commTimeoutSec: number; hasHeater: boolean; installedSensors: string[]; controlMode: string; setpoint: number; desiredRunState: string };
+  ahu: { id: string; name: string; location: string; commTimeoutSec: number; hasHeater: boolean; installedSensors: string[]; controlMode: string; setpoint: number; desiredRunState: string; deviceType?: string | null };
   status: AhuStatus;
   ageSec: number | null;
   stale: boolean;
@@ -280,13 +280,11 @@ export function UnitCard({ card }: { card: Card }) {
         </p>
 
         <div className="mt-3 flex items-center gap-3">
-          <div className="relative h-[84px] w-32 flex-none">
-            <Image
-              src="/ahu/unit-iso2.png"
-              alt={`${card.ahu.id} unit`}
-              fill
-              sizes="128px"
-              className={cx("object-contain", off && "opacity-40 grayscale")}
+          <div className="relative h-[84px] w-32 flex-none overflow-hidden rounded-xl bg-linear-to-b from-[#eef4fb] to-[#dfe9f6] ring-1 ring-[#dbe5f2]">
+            <DeviceModelThumb
+              deviceType={card.ahu.deviceType}
+              status={card.status}
+              className={cx("h-full w-full", off && "opacity-40 grayscale")}
             />
           </div>
           <div className="grid flex-1 gap-1.5">
