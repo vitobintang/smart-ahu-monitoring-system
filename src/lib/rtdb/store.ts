@@ -35,6 +35,52 @@ export function assertRtdbPath(path: string): void {
   }
 }
 
+/**
+ * Wraps an adapter so every operation is confined to the given TOP-LEVEL tree
+ * names. Any other path throws. Used for the OWNER devices project so the
+ * collaborator database can never gain new top-level nodes — only the agreed
+ * devices/ + deviceOwners/ trees are reachable, at runtime, by construction.
+ */
+export function guardRtdbRoots(
+  adapter: RtdbAdapter,
+  allowedRoots: readonly string[],
+  label: string,
+): RtdbAdapter {
+  const assertAllowed = (path: string): void => {
+    const first = path.split("/")[0];
+    if (!allowedRoots.includes(first)) {
+      throw new Error(
+        `[${label}-rtdb] path "${path}" is outside the allowed trees (${allowedRoots.map((r) => `${r}/`).join(", ")}) — this database must never gain new top-level nodes`,
+      );
+    }
+  };
+  return {
+    async get<T = unknown>(path: string): Promise<T | null> {
+      assertAllowed(path);
+      return adapter.get<T>(path);
+    },
+    async set(path: string, value: unknown): Promise<void> {
+      assertAllowed(path);
+      return adapter.set(path, value);
+    },
+    async update(path: string, values: Record<string, unknown>): Promise<void> {
+      assertAllowed(path);
+      return adapter.update(path, values);
+    },
+    async remove(path: string): Promise<void> {
+      assertAllowed(path);
+      return adapter.remove(path);
+    },
+    async transaction<T>(
+      path: string,
+      compute: (current: T | null) => T | null | undefined,
+    ): Promise<{ committed: boolean; value: T | null }> {
+      assertAllowed(path);
+      return adapter.transaction<T>(path, compute);
+    },
+  };
+}
+
 /** Production adapter over firebase-admin's Database. */
 export function createAdminRtdbAdapter(db: Database, prefixOverride?: string): RtdbAdapter {
   const prefix = prefixOverride ?? resolveRtdbPathPrefix();

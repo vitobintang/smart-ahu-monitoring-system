@@ -212,11 +212,16 @@ async function getOwnerApp_(env: NodeJS.ProcessEnv): Promise<App> {
  * RTDB adapter for the OWNER devices project (root layout, never prefixed —
  * the device tree shape is the integrator's contract). Falls back to the main
  * project when OWNER_DEVICES_* is unset.
+ *
+ * HARD GUARANTEE: the adapter is root-allowlisted to the two existing trees —
+ * devices/ + deviceOwners/. Any code path that ever tries to read or write any
+ * other node on the collaborator project throws at runtime.
  */
 export async function getOwnerRtdb(env: NodeJS.ProcessEnv = process.env): Promise<RtdbAdapter> {
   const { getDatabase } = await import("firebase-admin/database");
-  const { createAdminRtdbAdapter } = await import("@/lib/rtdb/store");
-  return createAdminRtdbAdapter(getDatabase(await getOwnerApp_(env)), "");
+  const { createAdminRtdbAdapter, guardRtdbRoots } = await import("@/lib/rtdb/store");
+  const { DAIKIN_DEVICES_NODE, DAIKIN_OWNERS_NODE } = await import("@/lib/rtdb/daikin");
+  return guardRtdbRoots(createAdminRtdbAdapter(getDatabase(await getOwnerApp_(env)), ""), [DAIKIN_DEVICES_NODE, DAIKIN_OWNERS_NODE], "owner");
 }
 
 /** Like getOwnerRtdb but null-safe for optional integration paths. */

@@ -15,6 +15,8 @@ import {
   writeDeviceOwnerToken,
 } from "../src/lib/rtdb/daikin";
 import { ingestTelemetryRtdb } from "../src/lib/rtdb/lifecycle";
+import { guardRtdbRoots } from "../src/lib/rtdb/store";
+import { rejects } from "node:assert/strict";
 import { setRtdbDevice, writeRtdbAhu } from "../src/lib/rtdb/registry";
 import { createCommandRtdb, acceptPendingRtdb } from "../src/lib/rtdb/lifecycle";
 
@@ -226,4 +228,57 @@ test("an uncommissioned physical unit still refuses control (default safety)", a
   });
   assert.ok("error" in outcome);
   assert.equal((outcome as { code?: string }).code, "PHYSICAL_LOCKED");
+});
+
+test("owner adapter guard: only devices/ + deviceOwners/ are reachable, ever", async () => {
+  const db: RtdbAdapter = new InMemoryRtdb();
+  const owner = guardRtdbRoots(db, ["devices", "deviceOwners"], "owner");
+
+  // the two agreed trees work in full
+  await owner.set("devices/GTM-DAIKIN-001", { power: false, setpoint: 24 });
+  await owner.set("deviceOwners/GTM-DAIKIN-001", "preshared-token-01");
+  await owner.update("devices/GTM-DAIKIN-001", { power: true });
+  equal(await owner.get<string>("deviceOwners/GTM-DAIKIN-001"), "preshared-token-01");
+  equal((await owner.get<{ power: boolean }>("devices/GTM-DAIKIN-001"))?.power, true);
+  const tx = await owner.transaction<{ power: boolean }>("devices/GTM-DAIKIN-001", (current) => ({
+    ...(current as { power: boolean }),
+    power: false,
+  }));
+  equal(tx.committed, true);
+
+  // every other top-level tree — including everything app-owned — is refused
+  const forbidden = [
+    "users/x",
+    "usernames/x",
+    "emails/x",
+    "telemetry/GTM-DAIKIN-001/2026-11-10/m1",
+    "telemetryLatest/GTM-DAIKIN-001",
+    "commands/c1",
+    "commandActive/c1",
+    "alarms/a1",
+    "alarmsActive/a1",
+    "alarmBreachTimers/a1",
+    "ahus/GTM-DAIKIN-001",
+    "gateways/GTM-DAIKIN-001/g1",
+    "thresholds/GTM-DAIKIN-001",
+    "trendAlerts/t1",
+    "auditLogs/l1",
+    "loginAttempts/k",
+    "facility/floorplan",
+    "ahu-app/anything",
+    "brandNewNode/whatever",
+    "",
+  ];
+  for (const path of forbidden) {
+    await rejects(() => owner.get(path), /outside the allowed trees/);
+    await rejects(() => owner.set(path, 1), /outside the allowed trees/);
+    await rejects(() => owner.update(path, { a: 1 }), /outside the allowed trees/);
+    await rejects(() => owner.remove(path), /outside the allowed trees/);
+    await rejects(() => owner.transaction(path, (current) => current), /outside the allowed trees/);
+  }
+
+  // the underlying database was never touched by the refused operations
+  for (const root of ["users", "telemetry", "telemetryLatest", "commands", "alarms", "ahus", "gateways", "thresholds", "auditLogs", "loginAttempts", "facility"]) {
+    equal(await db.get(root), null, `${root} must not exist on the owner database`);
+  }
 });
