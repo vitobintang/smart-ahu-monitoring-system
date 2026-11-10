@@ -232,7 +232,7 @@ export default function LoginPage() {
                     autoComplete="username"
                     spellCheck={false}
                     disabled={busy}
-                    placeholder="e.g. vizobintang or vizobintang@gmail.com"
+                    placeholder="e.g. budi.santoso or budi.santoso@example.com"
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value)}
                     required

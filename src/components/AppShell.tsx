@@ -686,7 +686,7 @@ export default function AppShell({
                       maxLength={120}
                       value={editFullName}
                       onChange={(e) => setEditFullName(e.target.value)}
-                      placeholder="e.g. Vito Bintang"
+                      placeholder="e.g. Budi Santoso"
                     />
                   </Field>
 
@@ -699,7 +699,7 @@ export default function AppShell({
                       maxLength={32}
                       value={editUsername}
                       onChange={(e) => setEditUsername(e.target.value)}
-                      placeholder="e.g. vizobintang"
+                      placeholder="e.g. budi.santoso"
                       required
                     />
                   </Field>
