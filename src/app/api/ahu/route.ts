@@ -66,6 +66,8 @@ export async function POST(req: Request) {
       provisionSimulator?: boolean;
       /** Pre-shared AHU device token — written to the OWNER tree (deviceOwners/{id} + devices/{id}). */
       deviceToken?: string;
+      /** AHU | AC_DAK | AC_SPLIT_WALL | AC_STANDING (defaults AHU). */
+      deviceType?: string;
       mapX?: number;
       mapZ?: number;
       mapRotation?: number;
@@ -145,6 +147,8 @@ export async function POST(req: Request) {
       typeof body.deviceToken === "string" && body.deviceToken.trim().length >= 8 && body.deviceToken.trim().length <= 128
         ? body.deviceToken.trim()
         : null;
+    const { isDeviceType } = await import("@/lib/facility-rooms");
+    const deviceType = isDeviceType(body.deviceType) ? body.deviceType : "AHU";
 
     let sensors: ParamKey[] = Array.isArray(body.installedSensors)
       ? body.installedSensors.filter((s): s is ParamKey => PARAM_KEYS.includes(s as ParamKey))
@@ -180,6 +184,7 @@ export async function POST(req: Request) {
       faultCode: null,
       // A registered device token means the app IS the commissioned controller.
       physicalControlEnabled: deviceToken !== null,
+      deviceType,
       mapX: placement.snappedX,
       mapZ: placement.snappedZ,
       mapRotation: rotation,

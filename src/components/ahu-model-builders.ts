@@ -1,3 +1,4 @@
+import type { DeviceType } from "@/lib/facility-rooms";
 import * as THREE from "three";
 import type { AhuStatus } from "@/lib/types";
 import type { OutdoorTreeCandidate } from "@/lib/facility-placement";
@@ -100,11 +101,148 @@ export function disposeGroupDeep(group: THREE.Group) {
 
 
 /** Builds a detailed daylight-lit industrial 3D Air Handling Unit on a raised mounting plinth. */
+
+/**
+ * Compact models for the stored AC kinds. Distinct silhouettes:
+ *   AC_DAK         — ceiling cassette (flat square plate near the ceiling + fan disc)
+ *   AC_SPLIT_WALL  — slim wall-mounted split unit at head height
+ *   AC_STANDING    — floor-standing vertical tower
+ * All expose the same { group, rotor, halo, beaconMat } contract as the AHU
+ * model so selection halos, RUN rotation and fault beacons keep working.
+ */
+function buildAcModel3D(opts: {
+  id: string;
+  status: AhuStatus;
+  deviceType: DeviceType;
+  dimmed: boolean;
+  isGhost: boolean;
+  isValidGhost: boolean;
+}): {
+  group: THREE.Group;
+  rotor: THREE.Group;
+  halo: THREE.Mesh;
+  beaconMat: THREE.MeshStandardMaterial;
+} {
+  const { id, status, deviceType, dimmed, isGhost, isValidGhost } = opts;
+  const group = new THREE.Group();
+  group.userData = { ahuId: id, isAhuRoot: !isGhost };
+
+  const transparent = isGhost || dimmed;
+  const baseOpacity = isGhost ? 0.68 : dimmed ? 0.3 : 1;
+  const ghostTint = !isGhost ? null : isValidGhost ? 0x10b981 : 0xef4444;
+  const bodyColor = ghostTint ?? (status === "RUN" ? 0xe2e8f0 : 0xcbd5e1);
+
+  const mat = new THREE.MeshStandardMaterial({
+    color: bodyColor,
+    roughness: 0.55,
+    metalness: 0.15,
+    transparent,
+    opacity: baseOpacity,
+  });
+  const accentMat = new THREE.MeshStandardMaterial({
+    color: ghostTint ?? 0x1d6ef2,
+    roughness: 0.4,
+    transparent,
+    opacity: baseOpacity,
+  });
+
+  const rotor = new THREE.Group();
+  let body: THREE.Mesh;
+
+  if (deviceType === "AC_DAK") {
+    // ceiling cassette: 0.95 m square plate at ceiling height + swirl fan beneath
+    body = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.09, 0.95), mat);
+    body.position.set(0, 2.68, 0);
+    const skirt = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.07, 0.62), accentMat);
+    skirt.position.set(0, 2.6, 0);
+    skirt.userData = { ahuId: id };
+    group.add(skirt);
+    rotor.position.set(0, 2.5, 0);
+    rotor.rotation.x = Math.PI / 2;
+  } else if (deviceType === "AC_SPLIT_WALL") {
+    // split wall unit: slim 1.1 m slab at 2.1 m with a louver strip
+    body = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.32, 0.22), mat);
+    body.position.set(0, 2.1, 0);
+    const louver = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.05, 0.24), accentMat);
+    louver.position.set(0, 2.0, 0);
+    louver.userData = { ahuId: id };
+    group.add(louver);
+    rotor.position.set(0.42, 2.1, 0.12);
+    rotor.rotation.y = Math.PI / 2;
+  } else {
+    // AC_STANDING: 0.55 × 1.8 × 0.55 floor tower with grill lines
+    body = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.8, 0.55), mat);
+    body.position.set(0, 0.9, 0);
+    for (let g = 0; g < 4; g += 1) {
+      const grill = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.03, 0.06), accentMat);
+      grill.position.set(0, 0.45 + g * 0.22, 0.29);
+      grill.userData = { ahuId: id };
+      group.add(grill);
+    }
+    rotor.position.set(0, 1.62, 0.29);
+  }
+
+  body.castShadow = !transparent;
+  body.receiveShadow = true;
+  body.userData = { ahuId: id };
+  group.add(body);
+
+  const fanMat = new THREE.MeshStandardMaterial({
+    color: status === "RUN" ? 0x38bdf8 : 0x94a3b8,
+    emissive: status === "RUN" ? 0x0ea5e9 : 0x000000,
+    emissiveIntensity: status === "RUN" ? 0.35 : 0,
+    metalness: 0.45,
+    roughness: 0.3,
+    transparent,
+    opacity: baseOpacity,
+  });
+  for (let b = 0; b < 5; b += 1) {
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.05, 0.02), fanMat);
+    const angle = (b * Math.PI * 2) / 5;
+    blade.position.set(Math.cos(angle) * 0.1, Math.sin(angle) * 0.1, 0);
+    blade.rotation.z = angle + 0.4;
+    rotor.add(blade);
+  }
+  group.add(rotor);
+
+  const statusColor = ghostTint ?? STATUS_HEX[status];
+  const beaconMat = new THREE.MeshStandardMaterial({
+    color: statusColor,
+    emissive: statusColor,
+    emissiveIntensity: status === "RUN" || status === "FAULT" ? 0.75 : 0.25,
+    roughness: 0.2,
+    transparent,
+    opacity: baseOpacity,
+  });
+  const beaconY = deviceType === "AC_STANDING" ? 1.86 : deviceType === "AC_SPLIT_WALL" ? 2.3 : 2.78;
+  const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, 0.12, 14), beaconMat);
+  beacon.position.set(deviceType === "AC_SPLIT_WALL" ? -0.48 : 0.2, beaconY, 0);
+  beacon.userData = { ahuId: id };
+  group.add(beacon);
+
+  const haloGeo = new THREE.RingGeometry(0.7, 0.92, 36);
+  haloGeo.rotateX(-Math.PI / 2);
+  const halo = new THREE.Mesh(
+    haloGeo,
+    new THREE.MeshBasicMaterial({
+      color: 0x1d6ef2,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0,
+    }),
+  );
+  halo.position.set(0, 0.03, 0);
+  group.add(halo);
+
+  return { group, rotor, halo, beaconMat };
+}
+
 export function buildAhuModel3D(opts: {
   id: string;
   status: AhuStatus;
   hasHeater: boolean;
   outdoor: boolean;
+  deviceType?: string | null;
   dimmed?: boolean;
   isGhost?: boolean;
   isValidGhost?: boolean;
@@ -119,6 +257,7 @@ export function buildAhuModel3D(opts: {
     status,
     hasHeater,
     outdoor,
+    deviceType,
     dimmed = false,
     isGhost = false,
     isValidGhost = true,
@@ -129,6 +268,11 @@ export function buildAhuModel3D(opts: {
   const transparent = isGhost || dimmed;
   const baseOpacity = isGhost ? 0.68 : dimmed ? 0.3 : 1;
   const ghostTint = !isGhost ? null : isValidGhost ? 0x10b981 : 0xef4444;
+
+  // ── non-AHU device kinds: compact AC models (stored until such tokens exist) ──
+  if (deviceType === "AC_DAK" || deviceType === "AC_SPLIT_WALL" || deviceType === "AC_STANDING") {
+    return buildAcModel3D({ id, status, deviceType, dimmed, isGhost, isValidGhost });
+  }
 
   const plinthGeo = new THREE.BoxGeometry(3.1, 0.22, 1.85);
   const plinthMat = new THREE.MeshStandardMaterial({

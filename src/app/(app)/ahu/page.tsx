@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import Image from "next/image";
@@ -20,6 +20,7 @@ import { api, LOCAL_POLL_MS, timeAgo, usePoll } from "@/lib/client";
 import { useSessionUser } from "@/components/AppShell";
 import ControlPanel from "@/components/ControlPanel";
 import type { FacilityAhuItem, PendingPlacement } from "@/components/AhuFacilityMap3D";
+import { DEVICE_TYPES, DEVICE_TYPE_LABELS, type RoomRecord } from "@/lib/facility-rooms";
 import { can } from "@/lib/domain";
 import { DEFAULT_ROOM_VERTICES, normalizeRotation, type FloorVertex } from "@/lib/facility-layout";
 import { resolveAhuPlacement, resolveWallPhysicsAndSnap, suggestCleanPlatformSlot } from "@/lib/facility-placement";
@@ -72,6 +73,52 @@ export default function AhuIndexPage() {
   const [selected3dId, setSelected3dId] = useState<string | null>(null);
   const [roomVertices, setRoomVertices] = useState<FloorVertex[]>(DEFAULT_ROOM_VERTICES);
   const [isCustomRoom, setIsCustomRoom] = useState(false);
+  const [rooms, setRooms] = useState<RoomRecord[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    void api<{ rooms: RoomRecord[] }>("/api/rooms")
+      .then((res) => {
+        if (alive && Array.isArray(res.rooms)) setRooms(res.rooms);
+      })
+      .catch(() => {
+        /* rooms layer optional until seeded */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /** Diff-saves the rooms layer: PUT changed/new rooms, DELETE removed ones. */
+  const handleSaveRooms = useCallback(
+    async (draft: RoomRecord[]) => {
+      const prev = new Map(rooms.map((r) => [r.id, r]));
+      const nextIds = new Set(draft.map((r) => r.id));
+      for (const room of draft) {
+        const before = prev.get(room.id);
+        if (
+          before &&
+          before.name === room.name &&
+          before.color === room.color &&
+          before.x1 === room.x1 &&
+          before.z1 === room.z1 &&
+          before.x2 === room.x2 &&
+          before.z2 === room.z2
+        ) {
+          continue;
+        }
+        await api("/api/rooms", { method: "PUT", body: JSON.stringify(room) });
+      }
+      for (const id of prev.keys()) {
+        if (!nextIds.has(id)) {
+          await api(`/api/rooms?roomId=${encodeURIComponent(id)}`, { method: "DELETE" });
+        }
+      }
+      const res = await api<{ rooms: RoomRecord[] }>("/api/rooms");
+      setRooms(Array.isArray(res.rooms) ? res.rooms : []);
+    },
+    [rooms],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -98,6 +145,7 @@ export default function AhuIndexPage() {
   const [newHasHeater, setNewHasHeater] = useState(true);
   const [newSimEnabled, setNewSimEnabled] = useState(true);
   const [newDeviceToken, setNewDeviceToken] = useState("");
+  const [newDeviceType, setNewDeviceType] = useState<string>("AHU");
   const [placement, setPlacement] = useState<PendingPlacement | null>(null);
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
@@ -197,6 +245,7 @@ export default function AhuIndexPage() {
           hasHeater: newHasHeater,
           provisionSimulator: newSimEnabled,
           deviceToken: newDeviceToken.trim() || undefined,
+          deviceType: newDeviceType,
           mapX: placement.x,
           mapZ: placement.z,
           mapRotation: placement.rotation,
@@ -204,6 +253,7 @@ export default function AhuIndexPage() {
       });
       setAddOpen(false);
       setNewDeviceToken("");
+      setNewDeviceType("AHU");
       await reload();
       setSelected3dId(res.ahu.id);
     } catch (err) {
@@ -310,6 +360,23 @@ export default function AhuIndexPage() {
               </label>
             </div>
 
+            <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Device type
+              <select
+                value={newDeviceType}
+                onChange={(e) => setNewDeviceType(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[12.5px] font-semibold normal-case tracking-normal text-[#12294d] focus:border-[#1d6ef2] focus:outline-none"
+              >
+                {DEVICE_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {DEVICE_TYPE_LABELS[t]}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block font-normal normal-case tracking-normal text-slate-400">
+                Picks the 3D model. AC models are ready — they appear once that device&apos;s token is registered.
+              </span>
+            </label>
             <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
               Device token (pre-shared by the AHU device side)
               <input
@@ -444,6 +511,8 @@ export default function AhuIndexPage() {
           canEditRoom={canControl || canConfigure}
           onSaveRoomVertices={handleSaveRoomVertices}
           onResetRoomVertices={handleResetRoomVertices}
+          rooms={rooms}
+          onSaveRooms={handleSaveRooms}
         />
       </div>
 
