@@ -310,9 +310,9 @@ export default function LoginPage() {
               <p className="flex items-start gap-2">
                 <Cpu size={14} className="mt-0.5 flex-none text-[#1d6ef2]" />
                 <span>
-                  <strong className="font-semibold text-[#12294d]">AHU Monitoring Modules:</strong> Bearer tokens are
-                  used exclusively to connect AHU telemetry gateways in{" "}
-                  <span className="font-mono font-semibold text-[#1d6ef2]">/admin?tab=devices</span>.
+                  <strong className="font-semibold text-[#12294d]">Device Modules:</strong> Bearer tokens are
+                  used exclusively to connect device telemetry gateways in{" "}
+                  <span className="font-mono font-semibold text-[#1d6ef2]">/admin/modules</span>.
                 </span>
               </p>
             </div>

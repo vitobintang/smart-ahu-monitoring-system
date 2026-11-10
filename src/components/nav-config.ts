@@ -32,8 +32,8 @@ export const NAV: NavItem[] = [
   { href: "/reports", label: "Reports & Data Logger", icon: FileText, activity: "view" },
   { href: "/energy", label: "Energy Management", icon: Zap, activity: "view" },
   { href: "/maintenance", label: "Maintenance", icon: Wrench, activity: "view" },
-  { href: "/admin?tab=devices", label: "Modules", icon: Database, activity: "manageUsers" },
-  { href: "/admin?tab=users", label: "Users", icon: Users, activity: "manageUsers" },
+  { href: "/admin/modules", label: "Modules", icon: Database, activity: "manageUsers" },
+  { href: "/admin/users", label: "Users", icon: Users, activity: "manageUsers" },
   { href: "/config", label: "Configurations", icon: Settings, activity: "configure" },
   { href: "/audit", label: "Audit Logs", icon: ClipboardList, activity: "viewAudit" },
 ];
@@ -53,7 +53,6 @@ export function isActive(item: NavItem, pathname: string | null, search: URLSear
     if ((search?.get(k) ?? (k === "tab" && path === "/reports" ? "summary" : k === "tab" ? "users" : null)) !== v) return false;
   }
   if (path === "/reports" && !want.has("tab") && search?.get("tab") === "logger") return false;
-  if (path === "/admin" && !want.has("tab") && (search?.get("tab") ?? "users") !== "users") return false;
   return true;
 }
 

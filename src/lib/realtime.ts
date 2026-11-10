@@ -54,8 +54,8 @@ export async function getSyncStatus(): Promise<SyncStatusSnapshot> {
     try {
       const rtdb = await requireRtdb();
       const { getLatestTelemetry } = await import("@/lib/rtdb/telemetry");
-      const { readRtdbAhus } = await import("@/lib/rtdb/registry");
-      const registry = await readRtdbAhus(rtdb);
+      const { readActiveFleetRecords } = await import("@/lib/rtdb/local-fleet");
+      const registry = await readActiveFleetRecords(rtdb);
       let latestAt: Date | null = null;
       for (const id of registry.keys()) {
         const latest = await getLatestTelemetry(rtdb, id);

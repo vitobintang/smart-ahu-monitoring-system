@@ -4,7 +4,6 @@ import { getSyncStatus } from "@/lib/realtime";
 import { maybePulseWorkers } from "@/lib/workers";
 import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
 import { readTelemetryRange } from "@/lib/rtdb/history";
-import { readRtdbAhus } from "@/lib/rtdb/registry";
 import { readActiveAlarmRecords, alarmToRow } from "@/lib/rtdb/alarms";
 import { readRtdbUnackedTrends, trendToRow } from "@/lib/rtdb/trends";
 
@@ -17,8 +16,9 @@ async function fleetSeries(windowMin: number) {
   try {
     const rtdb = await tryGetAhuRtdb();
     if (rtdb) {
-      const registry = await readRtdbAhus(rtdb);
-      const ids = [...registry.keys()].sort();
+      // Series cover the ACTIVE fleet only (Daikin DB ⇄ My DB switch).
+      const { readActiveFleetRecords } = await import("@/lib/rtdb/local-fleet");
+      const ids = [...(await readActiveFleetRecords(rtdb)).keys()].sort();
       const ranges = await Promise.all(ids.map((id) => readTelemetryRange(rtdb, id, since.getTime(), Date.now())));
       const rows = ranges.flatMap((samples, i) =>
         samples
@@ -86,13 +86,18 @@ async function loadOverview(windowMin: number, lite: boolean): Promise<Record<st
     if (!lite) {
       const rtdb = await tryGetAhuRtdb();
       if (rtdb) {
+        // Panels cover the ACTIVE fleet only — the idle source stays silent.
+        const { readActiveFleetRecords } = await import("@/lib/rtdb/local-fleet");
+        const fleetIds = new Set((await readActiveFleetRecords(rtdb)).keys());
         const rank = { CRITICAL: 0, HIGH: 1, MEDIUM: 2 } as Record<string, number>;
-        const records = await readActiveAlarmRecords(rtdb);
+        const records = (await readActiveAlarmRecords(rtdb)).filter((r) => fleetIds.has(r.ahuId));
         recentAlarms = records
           .sort((a, b) => (rank[a.priority] ?? 3) - (rank[b.priority] ?? 3) || b.triggeredAt - a.triggeredAt)
           .slice(0, 12)
           .map(alarmToRow);
-        recentTrends = (await readRtdbUnackedTrends(rtdb, 8)).map(trendToRow);
+        recentTrends = (await readRtdbUnackedTrends(rtdb, 8))
+          .filter((r) => fleetIds.has(r.ahuId))
+          .map(trendToRow);
       } else {
         recentAlarms = [];
         recentTrends = [];
