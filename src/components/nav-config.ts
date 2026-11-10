@@ -26,7 +26,7 @@ export interface NavItem {
 
 export const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: Home, activity: "view" },
-  { href: "/ahu", label: "AHU Units", icon: Building2, activity: "view" },
+  { href: "/devices", label: "Devices", icon: Building2, activity: "view" },
   { href: "/alarms", label: "Alarms", icon: Bell, activity: "view", badge: "alarms" },
   { href: "/trends", label: "Trend Analysis", icon: TrendingUp, activity: "view" },
   { href: "/reports", label: "Reports & Data Logger", icon: FileText, activity: "view" },
@@ -46,7 +46,7 @@ export interface Feed {
 
 export function isActive(item: NavItem, pathname: string | null, search: URLSearchParams | null): boolean {
   const [path, query] = item.href.split("?");
-  if (path === "/ahu") return Boolean(pathname?.startsWith("/ahu"));
+  if (path === "/devices") return Boolean(pathname?.startsWith("/devices"));
   if (pathname !== path) return false;
   const want = new URLSearchParams(query ?? "");
   for (const [k, v] of want.entries()) {

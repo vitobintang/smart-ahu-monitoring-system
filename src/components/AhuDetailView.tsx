@@ -106,7 +106,7 @@ export default function AhuDetailView({
   const fromParam = useSearchParams().get("from");
   const backHref = fromParam && /^\/(?!\/)/.test(fromParam) ? fromParam : "/dashboard";
   const backLabel =
-    backHref === "/dashboard" ? "Dashboard" : backHref === "/ahu" ? "3D Facility Map" : "Back";
+    backHref === "/dashboard" ? "Dashboard" : backHref === "/devices" ? "Devices Map" : "Back";
   const [win, setWin] = useState(15);
   const { data, error, loading, reload, paused, setPaused, lastSync } = usePoll<Detail>(
     `/api/ahu/${ahuId}?window=${win}`,
@@ -175,10 +175,13 @@ export default function AhuDetailView({
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <Link
                 href={backHref}
-                className="inline-flex items-center gap-1 font-mono text-[11px] uppercase tracking-wider text-slate-500 transition hover:text-cyan-300"
+                className="group inline-flex items-center gap-2 rounded-full border border-[#c8dbf8] bg-white/95 py-1 pl-1 pr-3.5 text-[11.5px] font-bold text-[#12294d] shadow-[0_4px_14px_-4px_rgba(18,41,77,0.45)] backdrop-blur transition hover:border-[#60a5fa] hover:bg-[#f0f6ff]"
                 title={`Back to ${backLabel}`}
               >
-                <ArrowLeft size={12} /> {backLabel}
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-[#1d6ef2] text-white shadow transition-transform duration-200 group-hover:-translate-x-0.5">
+                  <ArrowLeft size={13} />
+                </span>
+                {backLabel}
               </Link>
               <h1 className="font-mono text-lg font-bold tracking-wide text-cyan-300 text-glow-cyan">{ahu.id}</h1>
               <StatusBadge status={computed.status} />

@@ -93,7 +93,7 @@ export default function MaintenancePage() {
                 return (
                   <tr key={c.ahu.id} className="border-t border-[#eef2f7] transition hover:bg-[#f8fafc]">
                     <td className="px-5 py-3.5">
-                      <Link href={`/ahu/${c.ahu.id}`} className="font-mono text-[12.5px] font-bold text-[#12294d] hover:text-[#2563eb]">
+                      <Link href={`/devices/${c.ahu.id}`} className="font-mono text-[12.5px] font-bold text-[#12294d] hover:text-[#2563eb]">
                         {c.ahu.id}
                       </Link>
                       <p className="mt-0.5 truncate text-[10.5px] text-slate-400">{c.ahu.location}</p>

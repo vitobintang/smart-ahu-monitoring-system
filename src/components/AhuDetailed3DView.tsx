@@ -8,28 +8,26 @@ import { disposeGroupDeep } from "@/components/ahu-model-builders";
 
 /**
  * AhuDetailed3DView — the detailed 3D "inside of the machine" viewer
- * (2026-11-10). Replaces the flat side-elevation schematic with a rotatable
- * 3D cut-away per device type:
+ * (2026-11-11 refresh). Replaces the flat side-elevation schematic with a
+ * rotatable, auto-framed 3D cut-away per device type:
  *
- *   AHU            intake grille → panel filter → (bag filter) → cooling coil
- *                  → heating coil (if fitted) → fan → supply duct
- *   AC_SPLIT_WALL  top intake + filter → angled evaporator coil → cross-flow
- *                  fan → oscillating front louver
- *   AC_DAK         bottom intake → scroll fan → circular coil ring → 4-way
- *                  oscillating louvers (flush with the ceiling)
- *   AC_STANDING    front slats + filter → vertical coil → top discharge fan
+ *   AHU            intake grille → panel filter → bag filters → cooling coil
+ *                  (+ condensate tray) → heating coil (if fitted) → axial fan
+ *                  → supply duct
+ *   AC_SPLIT_WALL  top intake + filter → V evaporator → cross-flow fan →
+ *                  oscillating discharge louver
+ *   AC_DAK         ceiling cassette: center intake → scroll fan → coil ring →
+ *                  4-way oscillating louvers
+ *   AC_STANDING    front louvered intake → filter → vertical coil stack →
+ *                  top discharge fan
  *
- * RUN spins the fans and drives colored airflow particles through the
- * components (blue after the cooling coil, warm after the heater); STOP
- * spools everything down. Drag to rotate, scroll to zoom.
+ * Every component carries a floating label, RUN spins the fans along their
+ * true airflow axis and drives dense colored airflow particles through the
+ * machine (gray intake → blue after cooling → warm after heating), and the
+ * camera auto-frames the model so even the slim wall unit fills the view.
+ * Drag to rotate, scroll to zoom. There is deliberately NO status lamp: the
+ * animation IS the run indicator.
  */
-
-const STATUS_COLOR: Record<AhuStatus, number> = {
-  RUN: 0x10b981,
-  STOP: 0x94a3b8,
-  FAULT: 0xef4444,
-  OFFLINE: 0xf43f5e,
-};
 
 const COLOR_INTAKE = new THREE.Color(0x8fa3ba);
 const COLOR_FILTERED = new THREE.Color(0xcbd5e1);
@@ -46,6 +44,8 @@ interface Props {
   className?: string;
 }
 
+const tmpVec = new THREE.Vector3();
+
 interface Particle {
   t: number;
   lane: number;
@@ -53,26 +53,85 @@ interface Particle {
   speed: number;
 }
 
-function buildComponentMeshes(deviceType: string, hasHeater: boolean): {
+interface RotorSpec {
+  obj: THREE.Group;
+  axis: "x" | "y";
+}
+
+/** Canvas-texture billboard label so every internal component is identifiable. */
+function makeLabel(text: string, scale = 1): THREE.Sprite {
+  const canvas = document.createElement("canvas");
+  const measure = canvas.getContext("2d");
+  const font = "600 30px ui-sans-serif, system-ui, -apple-system, sans-serif";
+  if (measure) measure.font = font;
+  const textW = measure ? measure.measureText(text).width : text.length * 16;
+  const w = Math.ceil(textW) + 40;
+  const h = 52;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const r = 14;
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(w - r, 0);
+    ctx.quadraticCurveTo(w, 0, w, r);
+    ctx.lineTo(w, h - r);
+    ctx.quadraticCurveTo(w, h, w - r, h);
+    ctx.lineTo(r, h);
+    ctx.quadraticCurveTo(0, h, 0, h - r);
+    ctx.lineTo(0, r);
+    ctx.quadraticCurveTo(0, 0, r, 0);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(8,15,30,0.88)";
+    ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = "rgba(125,211,252,0.55)";
+    ctx.stroke();
+    ctx.font = font;
+    ctx.fillStyle = "#e2e8f0";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, w / 2, h / 2 + 1);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0.95 }),
+  );
+  sprite.scale.set(((w / h) * 0.115) * scale, 0.115 * scale, 1);
+  sprite.renderOrder = 10;
+  return sprite;
+}
+
+/** Exported for the geometry regression test (coplanar-face / NaN audit). */
+export function buildComponentMeshes(
+  deviceType: string,
+  hasHeater: boolean,
+): {
   group: THREE.Group;
-  rotors: THREE.Group[];
+  rotors: RotorSpec[];
   flaps: THREE.Object3D[];
   pathZones: Array<{ at: number; color: THREE.Color }>;
+  labels: Array<{ text: string; pos: [number, number, number]; scale?: number }>;
 } {
   const group = new THREE.Group();
-  const rotors: THREE.Group[] = [];
+  const rotors: RotorSpec[] = [];
   const flaps: THREE.Object3D[] = [];
   const pathZones: Array<{ at: number; color: THREE.Color }> = [];
+  const labels: Array<{ text: string; pos: [number, number, number]; scale?: number }> = [];
 
   const std = (color: number, extra?: Partial<THREE.MeshStandardMaterialParameters>) =>
     new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.2, ...extra });
   const frameMat = std(0x334155, { roughness: 0.6 });
+  const steelMat = std(0x94a3b8, { roughness: 0.35, metalness: 0.6 });
   const whiteMat = std(0xe2e8f0, { roughness: 0.45 });
-  const filterMat = std(0xf1f5f9, { roughness: 0.9 });
+  const filterMat = std(0xf8fafc, { roughness: 0.9, transparent: true, opacity: 0.85 });
   const coolMat = std(0x0ea5e9, { roughness: 0.35, metalness: 0.45 });
   const heatMat = std(0xf97316, { roughness: 0.4, metalness: 0.5 });
-  const fanMat = std(0x64748b, { roughness: 0.35, metalness: 0.55 });
+  const fanMat = std(0x64748b, { roughness: 0.3, metalness: 0.6 });
   const darkMat = std(0x1e293b, { roughness: 0.7 });
+  const copperMat = std(0xb87333, { roughness: 0.35, metalness: 0.7 });
 
   const mesh = (geo: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0) => {
     const m = new THREE.Mesh(geo, mat);
@@ -82,116 +141,237 @@ function buildComponentMeshes(deviceType: string, hasHeater: boolean): {
   };
 
   if (deviceType === "AC_SPLIT_WALL") {
-    // 1.1 × 0.32 × 0.2 slab; x = along, z+ = room side (air outlet).
-    mesh(new THREE.BoxGeometry(1.04, 0.3, 0.025), whiteMat, 0, 0, -0.09); // back plate
+    // ── Wall split, x = along, z+ = room side. Real internals, real proportions. ──
+    mesh(new THREE.BoxGeometry(1.06, 0.3, 0.022), darkMat, 0, 0, -0.143); // wall back plate
     pathZones.push({ at: 0, color: COLOR_INTAKE });
-    mesh(new THREE.BoxGeometry(1.0, 0.05, 0.18), filterMat, 0, 0.115, 0); // top intake filter
-    pathZones.push({ at: 0.22, color: COLOR_FILTERED });
-    // angled evaporator coil: two fin stacks in a shallow V
-    const fin = new THREE.BoxGeometry(0.96, 0.2, 0.028);
-    const coilA = mesh(fin, coolMat, 0, 0.02, -0.02);
-    coilA.rotation.x = 0.5;
-    const coilB = mesh(fin, coolMat, 0, 0.02, 0.02);
-    coilB.rotation.x = -0.5;
-    pathZones.push({ at: 0.45, color: COLOR_COOLED });
-    // cross-flow fan: long rotor with curved blades along x
+    const shell = mesh(new THREE.BoxGeometry(1.02, 0.29, 0.2), whiteMat, 0, 0, -0.03); // main shell
+    shell.material = std(0xe2e8f0, { roughness: 0.45, transparent: true, opacity: 0.35 });
+    const curve = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 1.02, 20, 1, false, 0, Math.PI), whiteMat);
+    curve.rotation.z = Math.PI / 2;
+    curve.rotation.y = Math.PI / 2;
+    curve.position.set(0, 0.145, -0.03);
+    group.add(curve);
+    // top intake grille — proud slats floating clear of the shell top
+    for (let i = 0; i < 4; i += 1) {
+      mesh(new THREE.BoxGeometry(0.98, 0.012, 0.014), darkMat, 0, 0.1575, -0.025 + i * 0.02);
+    }
+    labels.push({ text: "AIR INTAKE", pos: [0, 0.23, -0.03], scale: 0.72 });
+    mesh(new THREE.BoxGeometry(0.98, 0.012, 0.16), filterMat, 0, 0.115, -0.03); // filter
+    pathZones.push({ at: 0.18, color: COLOR_FILTERED });
+    labels.push({ text: "AIR FILTER", pos: [-0.62, 0.17, -0.03], scale: 0.72 });
+    // V evaporator: two fin stacks meeting at the bottom (real split layout)
+    const finA = mesh(new THREE.BoxGeometry(0.96, 0.15, 0.02), coolMat, 0, 0.07, -0.065);
+    finA.rotation.x = 0.5;
+    const finB = mesh(new THREE.BoxGeometry(0.96, 0.15, 0.02), coolMat, 0, 0.07, -0.005);
+    finB.rotation.x = -0.5;
+    mesh(new THREE.CylinderGeometry(0.013, 0.013, 0.92, 10), copperMat, 0, -0.005, -0.095).rotation.z = Math.PI / 2;
+    mesh(new THREE.CylinderGeometry(0.013, 0.013, 0.92, 10), copperMat, 0, -0.02, -0.075).rotation.z = Math.PI / 2;
+    const accum = mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.12, 14), copperMat, 0.42, -0.03, -0.095);
+    accum.rotation.x = 0.12;
+    pathZones.push({ at: 0.42, color: COLOR_COOLED });
+    labels.push({ text: "EVAPORATOR COIL", pos: [-0.66, 0.1, -0.04], scale: 0.78 });
+    // cross-flow fan: long rotor with pitched blades along x
     const rotor = new THREE.Group();
-    rotor.position.set(0, -0.06, 0.02);
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.92, 12), fanMat);
+    rotor.position.set(0, -0.065, -0.02);
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.98, 10), steelMat);
     shaft.rotation.z = Math.PI / 2;
     rotor.add(shaft);
-    for (let b = 0; b < 18; b += 1) {
-      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.012, 0.07), fanMat);
-      blade.rotation.x = (b / 18) * Math.PI * 2;
-      blade.position.applyAxisAngle(new THREE.Vector3(1, 0, 0), (b / 18) * Math.PI * 2);
-      blade.position.set(0, Math.sin((b / 18) * Math.PI * 2) * 0.075, 0.02 + Math.cos((b / 18) * Math.PI * 2) * 0.075);
+    for (let b = 0; b < 16; b += 1) {
+      const a = (b / 16) * Math.PI * 2;
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.006, 0.06), fanMat);
+      blade.position.set(0, Math.sin(a) * 0.045, Math.cos(a) * 0.045);
+      blade.rotation.set(-a, 0.55, 0);
       rotor.add(blade);
     }
-    rotors.push(rotor);
+    rotors.push({ obj: rotor, axis: "x" });
     group.add(rotor);
-    // front louver flap (oscillates in RUN)
-    const flap = mesh(new THREE.BoxGeometry(0.98, 0.02, 0.1), whiteMat, 0, -0.13, 0.075);
-    flap.rotation.x = 0.7;
+    labels.push({ text: "CROSS-FLOW FAN", pos: [0.66, -0.08, -0.02], scale: 0.78 });
+    // discharge: dark outlet strip + oscillating louver flap
+    mesh(new THREE.BoxGeometry(0.98, 0.025, 0.018), darkMat, 0, -0.135, 0.064);
+    const flapGeo = new THREE.BoxGeometry(0.96, 0.008, 0.07);
+    flapGeo.translate(0, 0, 0.035); // hinge = rear edge
+    const flap = new THREE.Mesh(flapGeo, whiteMat);
+    flap.position.set(0, -0.138, 0.058);
+    flap.rotation.x = 0.6;
+    group.add(flap);
     flaps.push(flap);
-    pathZones.push({ at: 0.85, color: COLOR_OUT });
-    return { group, rotors, flaps, pathZones };
+    pathZones.push({ at: 0.8, color: COLOR_OUT });
+    labels.push({ text: "AIR LOUVER", pos: [0, -0.24, 0.08], scale: 0.72 });
+    return { group, rotors, flaps, pathZones, labels };
   }
 
   if (deviceType === "AC_DAK") {
-    // 0.95 square cassette, y = height (ceiling at +0.22).
-    mesh(new THREE.BoxGeometry(0.9, 0.1, 0.9), whiteMat, 0, 0.16, 0); // frame
-    mesh(new THREE.BoxGeometry(0.62, 0.025, 0.62), filterMat, 0, 0.0, 0); // bottom intake filter
-    pathZones.push({ at: 0, color: COLOR_INTAKE });
-    // circular coil ring: 12 fin segments around the center
-    for (let i = 0; i < 12; i += 1) {
-      const a = (i / 12) * Math.PI * 2;
-      const seg = mesh(new THREE.BoxGeometry(0.16, 0.18, 0.03), coolMat, Math.cos(a) * 0.24, 0.1, Math.sin(a) * 0.24);
-      seg.rotation.y = -a;
+    // ── 4-way ceiling cassette, y=0 at the fan/coil mid-plane, "ceiling" at +0.19. ──
+    mesh(new THREE.BoxGeometry(0.55, 0.02, 0.55), steelMat, 0, 0.185, 0); // ceiling mount plate
+    for (const [rx, rz] of [
+      [-0.21, -0.21],
+      [0.21, -0.21],
+      [-0.21, 0.21],
+      [0.21, 0.21],
+    ] as const) {
+      mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.05, 8), steelMat, rx, 0.155, rz); // drop rods
     }
-    pathZones.push({ at: 0.42, color: COLOR_COOLED });
-    // scroll fan: horizontal rotor spinning around Y
+    labels.push({ text: "CEILING MOUNT", pos: [0, 0.27, 0], scale: 0.7 });
+    // hollow chassis border (intake path stays open in the middle)
+    const chassis = (outer: number, thick: number, h: number, y: number, m: THREE.Material) => {
+      const half = outer / 2;
+      const ns = (outer - thick * 2) / 2;
+      for (const [w, d, ox, oz] of [
+        [outer, thick, 0, -half + thick / 2],
+        [outer, thick, 0, half - thick / 2],
+        [thick, ns, -half + thick / 2, 0],
+        [thick, ns, half - thick / 2, 0],
+      ] as const) {
+        mesh(new THREE.BoxGeometry(w, h, d), m, ox, y, oz);
+      }
+    };
+    chassis(0.84, 0.17, 0.08, 0.125, steelMat);
+    mesh(new THREE.BoxGeometry(0.42, 0.01, 0.42), filterMat, 0, 0.045, 0); // intake filter
+    pathZones.push({ at: 0, color: COLOR_INTAKE });
+    labels.push({ text: "INTAKE FILTER", pos: [-0.63, 0.06, 0.1], scale: 0.72 });
+    // radial intake guard over the fan
+    for (let i = 0; i < 10; i += 1) {
+      const a = (i / 10) * Math.PI * 2;
+      const slat = mesh(new THREE.BoxGeometry(0.16, 0.008, 0.03), darkMat, Math.cos(a) * 0.155, 0.01, Math.sin(a) * 0.155);
+      slat.rotation.y = -a + Math.PI / 2;
+    }
+    // scroll fan with backward-curved blades
     const rotor = new THREE.Group();
-    rotor.position.set(0, 0.2, 0);
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.08, 16), fanMat);
+    rotor.position.set(0, -0.02, 0);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.055, 0.06, 16), fanMat);
     rotor.add(hub);
-    for (let b = 0; b < 7; b += 1) {
-      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.02, 0.09), fanMat);
-      const a = (b / 7) * Math.PI * 2;
-      blade.position.set(Math.cos(a) * 0.17, 0, Math.sin(a) * 0.17);
-      blade.rotation.y = -a + 0.6;
+    for (let b = 0; b < 9; b += 1) {
+      const a = (b / 9) * Math.PI * 2;
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.012, 0.15), fanMat);
+      blade.position.set(Math.cos(a) * 0.13, 0, Math.sin(a) * 0.13);
+      blade.rotation.y = -a + 0.85;
       rotor.add(blade);
     }
-    rotors.push(rotor);
+    rotors.push({ obj: rotor, axis: "y" });
     group.add(rotor);
-    // four-way discharge louvers (oscillate)
-    for (const s of [-1, 1]) {
-      const fx = mesh(new THREE.BoxGeometry(0.5, 0.03, 0.06), whiteMat, 0, -0.02, s * 0.31);
-      flaps.push(fx);
-      const fz = mesh(new THREE.BoxGeometry(0.06, 0.03, 0.5), whiteMat, s * 0.31, -0.02, 0);
-      flaps.push(fz);
+    const volute = new THREE.Mesh(new THREE.TorusGeometry(0.245, 0.012, 8, 32), frameMat);
+    volute.rotation.x = Math.PI / 2;
+    volute.position.set(0, -0.02, 0);
+    group.add(volute);
+    pathZones.push({ at: 0.38, color: COLOR_COOLED });
+    labels.push({ text: "SCROLL FAN", pos: [-0.62, -0.05, 0], scale: 0.72 });
+    // coil ring (10 segments, clear of the fan circle)
+    for (let i = 0; i < 10; i += 1) {
+      const a = (i / 10) * Math.PI * 2;
+      const seg = mesh(new THREE.BoxGeometry(0.15, 0.085, 0.05), coolMat, Math.cos(a) * 0.305, -0.02, Math.sin(a) * 0.305);
+      seg.rotation.y = -a;
     }
-    pathZones.push({ at: 0.85, color: COLOR_OUT });
-    return { group, rotors, flaps, pathZones };
+    labels.push({ text: "COOLING COIL RING", pos: [0, -0.06, 0.68], scale: 0.78 });
+    // fascia + mid band + trim (hollow, non-coplanar stack)
+    chassis(0.92, 0.1, 0.1, -0.115, whiteMat);
+    chassis(0.95, 0.03, 0.12, 0, whiteMat);
+    chassis(0.98, 0.02, 0.03, 0.08, std(0xf1f5f9, { roughness: 0.3 }));
+    chassis(0.84, 0.05, 0.025, -0.21, std(0xf1f5f9, { roughness: 0.3 }));
+    // 4 discharge insets + oscillating vanes
+    for (const s of [-1, 1]) {
+      mesh(new THREE.BoxGeometry(0.07, 0.012, 0.72), darkMat, s * 0.4, -0.185, 0);
+      mesh(new THREE.BoxGeometry(0.72, 0.012, 0.07), darkMat, 0, -0.185, s * 0.4);
+
+    }
+
+    // one 4-way vane set (created ONCE — duplicates would z-fight)
+    const vaneGeoZ = new THREE.BoxGeometry(0.62, 0.008, 0.05);
+    vaneGeoZ.translate(0, 0, -0.025);
+    const vaneGeoX = new THREE.BoxGeometry(0.05, 0.008, 0.62);
+    vaneGeoX.translate(-0.025, 0, 0);
+    const vaneDefs: Array<{ mesh: THREE.Mesh; axis: "x" | "z"; base: number }> = [
+      { mesh: new THREE.Mesh(vaneGeoZ, whiteMat), axis: "x", base: -0.6 },
+      { mesh: new THREE.Mesh(vaneGeoZ, whiteMat), axis: "x", base: 0.6 },
+      { mesh: new THREE.Mesh(vaneGeoX, whiteMat), axis: "z", base: 0.6 },
+      { mesh: new THREE.Mesh(vaneGeoX, whiteMat), axis: "z", base: -0.6 },
+    ];
+    const vanePos: Array<[number, number, number]> = [
+      [0, -0.195, -0.365],
+      [0, -0.195, 0.365],
+      [-0.365, -0.195, 0],
+      [0.365, -0.195, 0],
+    ];
+    vaneDefs.forEach((v, i) => {
+      v.mesh.position.set(...vanePos[i]);
+      v.mesh.rotation[v.axis] = v.base;
+      group.add(v.mesh);
+      flaps.push(v.mesh);
+    });
+    pathZones.push({ at: 0.8, color: COLOR_OUT });
+    labels.push({ text: "4-WAY DISCHARGE LOUVERS", pos: [0, -0.31, 0.1], scale: 0.8 });
+    return { group, rotors, flaps, pathZones, labels };
   }
 
   if (deviceType === "AC_STANDING") {
-    // 0.55 × 1.8 tower; y up, z+ = front.
-    mesh(new THREE.BoxGeometry(0.5, 1.7, 0.45), whiteMat, 0, 0.9, 0); // body core
-    for (let g = 0; g < 9; g += 1) {
-      mesh(new THREE.BoxGeometry(0.42, 0.035, 0.02), darkMat, 0, 0.3 + g * 0.15, 0.235); // front slats
+    // ── Floor tower, y=0 at the floor, z+ = front. Translucent shell shows the guts. ──
+    for (const [fx, fz] of [
+      [-0.17, -0.17],
+      [0.17, -0.17],
+      [-0.17, 0.17],
+      [0.17, 0.17],
+    ] as const) {
+      mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.05, 12), darkMat, fx, 0.029, fz); // casters
     }
+    mesh(new THREE.BoxGeometry(0.5, 0.05, 0.5), darkMat, 0, 0.085, 0); // plinth
+    const shell = mesh(new THREE.BoxGeometry(0.48, 1.56, 0.44), std(0xe2e8f0, { roughness: 0.45, transparent: true, opacity: 0.16 }), 0, 0.885, 0);
+    group.add(shell);
+    const cap = mesh(new THREE.BoxGeometry(0.54, 0.05, 0.5), whiteMat, 0, 1.7, 0); // top cap
+    cap.material = whiteMat;
     pathZones.push({ at: 0, color: COLOR_INTAKE });
-    mesh(new THREE.BoxGeometry(0.4, 1.0, 0.03), filterMat, 0, 0.75, 0.2); // intake filter pad
-    pathZones.push({ at: 0.2, color: COLOR_FILTERED });
-    // vertical coil stack
-    for (let i = 0; i < 7; i += 1) {
-      mesh(new THREE.BoxGeometry(0.36, 0.1, 0.05), coolMat, 0, 0.45 + i * 0.14, 0.05);
+    // front louvered intake (angled slats) + filter pad behind them
+    for (let g = 0; g < 8; g += 1) {
+      const slat = mesh(new THREE.BoxGeometry(0.4, 0.03, 0.014), steelMat, 0, 0.38 + g * 0.15, 0.226);
+      slat.rotation.x = 0.28;
     }
+    labels.push({ text: "AIR INTAKE", pos: [0.6, 0.5, 0.2], scale: 0.72 });
+    mesh(new THREE.BoxGeometry(0.42, 1.1, 0.012), filterMat, 0, 0.9, 0.19); // filter
+    pathZones.push({ at: 0.22, color: COLOR_FILTERED });
+    labels.push({ text: "AIR FILTER", pos: [-0.62, 0.95, 0.16], scale: 0.7 });
+    // vertical evaporator coil stack + copper refrigerant lines
+    mesh(new THREE.BoxGeometry(0.38, 1.05, 0.04), coolMat, 0, 0.88, 0.02);
+    for (const px of [-0.14, 0.14]) {
+      mesh(new THREE.CylinderGeometry(0.013, 0.013, 1.05, 10), copperMat, px, 0.88, -0.03);
+    }
+    mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.2, 10), copperMat, 0, 1.48, -0.03);
     pathZones.push({ at: 0.5, color: COLOR_COOLED });
-    // top discharge fan (spins around Y)
+    labels.push({ text: "EVAPORATOR COIL", pos: [0.64, 1.0, 0], scale: 0.78 });
+    // top discharge fan + collar + guard
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.2, 0.09, 26, 1, true), whiteMat);
+    collar.position.set(0, 1.765, 0);
+    group.add(collar);
     const rotor = new THREE.Group();
-    rotor.position.set(0, 1.62, 0);
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.07, 14), fanMat);
+    rotor.position.set(0, 1.79, 0);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.06, 14), fanMat);
     rotor.add(hub);
-    for (let b = 0; b < 6; b += 1) {
-      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.015, 0.08), fanMat);
-      const a = (b / 6) * Math.PI * 2;
-      blade.position.set(Math.cos(a) * 0.14, 0, Math.sin(a) * 0.14);
-      blade.rotation.y = -a + 0.55;
+    for (let b = 0; b < 7; b += 1) {
+      const a = (b / 7) * Math.PI * 2;
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.012, 0.15), fanMat);
+      blade.position.set(Math.cos(a) * 0.13, 0, Math.sin(a) * 0.13);
+      blade.rotation.y = -a + 0.7;
       rotor.add(blade);
     }
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.21, 0.015, 10, 30), frameMat);
-    ring.rotation.x = Math.PI / 2;
-    rotor.add(ring);
-    rotors.push(rotor);
+    rotors.push({ obj: rotor, axis: "y" });
     group.add(rotor);
+    const guard = new THREE.Mesh(new THREE.TorusGeometry(0.185, 0.008, 8, 30), darkMat);
+    guard.rotation.x = Math.PI / 2;
+    guard.position.set(0, 1.85, 0);
+    group.add(guard);
+    for (let s = 0; s < 4; s += 1) {
+      const a = (s / 4) * Math.PI * 2;
+      const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.006, 0.01), darkMat);
+      spoke.position.set(Math.cos(a) * 0.093, 1.85, Math.sin(a) * 0.093);
+      spoke.rotation.y = -a;
+      group.add(spoke);
+    }
     pathZones.push({ at: 0.85, color: COLOR_OUT });
-    return { group, rotors, flaps, pathZones };
+    labels.push({ text: "DISCHARGE FAN", pos: [0, 2.05, 0], scale: 0.75 });
+    // control display
+    mesh(new THREE.BoxGeometry(0.16, 0.05, 0.012), std(0x38bdf8, { emissive: 0x0ea5e9, emissiveIntensity: 0.4 }), 0.1, 1.64, 0.226);
+    return { group, rotors, flaps, pathZones, labels };
   }
 
   // ── AHU: full processing chain along X (mirrors the 2D side elevation) ──
-  const CASING_LEN = 6.0;
-  const at = (x: number) => x - CASING_LEN / 2 + 0.45;
+  const at = (x: number) => x - 2.55;
 
   // intake grille
   for (let i = 0; i < 6; i += 1) {
@@ -199,58 +379,72 @@ function buildComponentMeshes(deviceType: string, hasHeater: boolean): {
     slat.rotation.z = 0.35;
   }
   pathZones.push({ at: 0, color: COLOR_INTAKE });
+  labels.push({ text: "INTAKE GRILLE", pos: [at(-0.05), 1.32, 0], scale: 1.0 });
   // panel filter (frame + pleats)
   mesh(new THREE.BoxGeometry(0.08, 1.35, 1.7), frameMat, at(0.55), 0.1, 0);
   for (let i = 0; i < 8; i += 1) {
     mesh(new THREE.BoxGeometry(0.05, 1.25, 0.09), filterMat, at(0.55), 0.1, -0.7 + i * 0.2);
   }
   pathZones.push({ at: 0.16, color: COLOR_FILTERED });
-  // bag filter pockets
+  labels.push({ text: "PANEL FILTER", pos: [at(0.55), 1.32, 0], scale: 1.0 });
+  // bag filter pockets (two rows)
   for (let i = 0; i < 4; i += 1) {
-    const pocket = mesh(new THREE.BoxGeometry(0.3, 0.5, 0.34), filterMat, at(1.05), 0.42, -0.62 + i * 0.42);
-    pocket.scale.set(1, 1, 1);
+    mesh(new THREE.BoxGeometry(0.3, 0.5, 0.34), filterMat, at(1.05), 0.42, -0.62 + i * 0.42);
+    mesh(new THREE.BoxGeometry(0.3, 0.4, 0.34), filterMat, at(1.05), -0.28, -0.62 + i * 0.42);
   }
   pathZones.push({ at: 0.3, color: COLOR_FILTERED });
-  // cooling coil (blue fins)
+  labels.push({ text: "BAG FILTERS", pos: [at(1.05), 1.32, 0], scale: 1.0 });
+  // cooling coil (blue fins + headers + condensate tray/drain)
   for (let i = 0; i < 10; i += 1) {
     mesh(new THREE.BoxGeometry(0.045, 1.45, 1.62), coolMat, at(1.75 + i * 0.045), 0.1, 0);
   }
-  mesh(new THREE.BoxGeometry(0.75, 0.12, 0.12), coolMat, at(1.8), -0.62, -0.6); // condensate drain pipe
+  mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.5, 12), coolMat, at(1.8), 0.92, 0).rotation.z = Math.PI / 2;
+  mesh(new THREE.BoxGeometry(1.0, 0.06, 1.7), steelMat, at(1.8), -0.74, 0); // drip tray
+  mesh(new THREE.BoxGeometry(0.75, 0.12, 0.12), steelMat, at(1.8), -0.84, -0.6); // condensate drain
   pathZones.push({ at: 0.44, color: COLOR_COOLED });
+  labels.push({ text: "COOLING COIL", pos: [at(1.8), 1.32, 0], scale: 1.0 });
   if (hasHeater) {
     for (let i = 0; i < 8; i += 1) {
       mesh(new THREE.BoxGeometry(0.05, 1.45, 1.62), heatMat, at(2.45 + i * 0.05), 0.1, 0);
     }
+    mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.5, 12), heatMat, at(2.5), 0.92, 0).rotation.z = Math.PI / 2;
     pathZones.push({ at: 0.58, color: COLOR_HEATED });
+    labels.push({ text: "HEATING COIL", pos: [at(2.5), 1.32, 0], scale: 1.0 });
   }
-  // fan section: axial rotor on a shaft
+  // fan section: pitched-blade axial rotor on a shaft, spinning around X
   const rotor = new THREE.Group();
   rotor.position.set(at(3.55), 0.1, 0);
   const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.18, 18), fanMat);
   hub.rotation.z = Math.PI / 2;
   rotor.add(hub);
   for (let b = 0; b < 8; b += 1) {
-    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.62, 0.18), fanMat);
     const a = (b / 8) * Math.PI * 2;
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.62, 0.2), fanMat);
     blade.position.set(0, Math.cos(a) * 0.36, Math.sin(a) * 0.36);
-    blade.rotation.x = -a + 0.5;
+    blade.rotation.set(-a, 0.5, 0); // pitch around the radial axis → real airfoil twist
     rotor.add(blade);
   }
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.68, 0.03, 10, 36), frameMat);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.68, 0.035, 10, 36), frameMat);
   ring.rotation.y = Math.PI / 2;
   rotor.add(ring);
-  rotors.push(rotor);
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.5, 12), steelMat);
+  shaft.rotation.z = Math.PI / 2;
+  shaft.position.set(0.3, 0, 0);
+  rotor.add(shaft);
+  rotors.push({ obj: rotor, axis: "x" });
   group.add(rotor);
   pathZones.push({ at: 0.78, color: COLOR_OUT });
-  // supply duct
-  const duct = mesh(new THREE.BoxGeometry(0.55, 0.9, 1.1), frameMat, at(4.55), 0.1, 0);
+  labels.push({ text: "SUPPLY FAN", pos: [at(3.55), 1.32, 0], scale: 1.0 });
+  // supply duct + flange
+  const duct = mesh(new THREE.BoxGeometry(0.55, 0.9, 1.1), whiteMat, at(4.55), 0.1, 0);
   duct.material = whiteMat;
   mesh(new THREE.BoxGeometry(0.06, 0.98, 1.18), darkMat, at(4.85), 0.1, 0);
   pathZones.push({ at: 1, color: COLOR_OUT });
+  labels.push({ text: "SUPPLY DUCT", pos: [at(4.55), 1.05, 0], scale: 1.0 });
   // floor rails
-  mesh(new THREE.BoxGeometry(CASING_LEN, 0.08, 2.0), darkMat, 0, -0.78, 0);
+  mesh(new THREE.BoxGeometry(6.0, 0.08, 2.0), darkMat, 0, -0.78, 0);
 
-  return { group, rotors, flaps, pathZones };
+  return { group, rotors, flaps, pathZones, labels };
 }
 
 function zoneColorAt(t: number, zones: Array<{ at: number; color: THREE.Color }>): THREE.Color {
@@ -261,48 +455,70 @@ function zoneColorAt(t: number, zones: Array<{ at: number; color: THREE.Color }>
   return best;
 }
 
-/** Per-device-type airflow path: t∈[0,1] → world position (in the model group). */
+/** Per-device-type airflow path: t∈[0,1] → position in the MODEL-GROUP frame. */
 function pathPoint(deviceType: string, t: number, lane: number, lift: number, out: THREE.Vector3): THREE.Vector3 {
   if (deviceType === "AC_SPLIT_WALL") {
-    // top intake (z-≈0.1,y+) → down through coil/fan → out the front (z+)
-    const s = Math.sin(t * Math.PI);
-    out.set(
-      lane * 0.42,
-      0.16 - 0.34 * Math.min(1, t / 0.55) + lift * 0.05 * s,
-      -0.06 + 0.28 * Math.max(0, (t - 0.45) / 0.55) + Math.sin(t * 9 + lane * 5) * 0.02,
-    );
+    // top intake → down through filter/coil → cross-flow fan → out the front-bottom louver
+    if (t < 0.72) {
+      const k = t / 0.72;
+      out.set(
+        lane * 0.4,
+        0.2 - 0.27 * k + lift * 0.04,
+        -0.02 + 0.015 * Math.sin(k * Math.PI) + Math.sin(t * 9 + lane * 5) * 0.012,
+      );
+    } else {
+      const k = (t - 0.72) / 0.28;
+      out.set(lane * 0.4 + Math.sin(k * 6 + lane * 8) * 0.02, -0.07 - 0.17 * k, -0.005 + 0.34 * k);
+    }
     return out;
   }
   if (deviceType === "AC_DAK") {
-    // bottom center (y-) → up into the fan → radially out under the louvers
-    if (t < 0.4) {
-      const k = t / 0.4;
-      out.set(lane * 0.08 * k, -0.14 + 0.3 * k + lift * 0.02, lift * 0.08 * k);
+    // bottom center → up through guard/fan → radially out through the coil → down out the slots
+    if (t < 0.3) {
+      const k = t / 0.3;
+      out.set(lane * 0.05 * k, -0.3 + 0.28 * k + lift * 0.02, lane * 0.05 * k);
+    } else if (t < 0.55) {
+      const k = (t - 0.3) / 0.25;
+      const angle = lane * 1.7 + 0.6;
+      out.set(Math.cos(angle) * 0.05, 0.01 + lift * 0.03, Math.sin(angle) * 0.05);
+      out.multiplyScalar(1 + k * 5); // spiral out through the coil ring
     } else {
-      const k = (t - 0.4) / 0.6;
-      const angle = lane * 1.7 + k * 2.4;
-      const radius = 0.05 + k * 0.42;
-      out.set(Math.cos(angle) * radius, 0.02 - k * 0.1 + lift * 0.02, Math.sin(angle) * radius);
+      const k = (t - 0.55) / 0.45;
+      const angle = lane * 1.7 + 0.6;
+      const radius = 0.3 + k * 0.28;
+      out.set(Math.cos(angle) * radius, -0.02 - k * 0.3 + lift * 0.03, Math.sin(angle) * radius);
     }
     return out;
   }
   if (deviceType === "AC_STANDING") {
-    // front slats (z+) → inward/up through the coil → top discharge (y+)
-    if (t < 0.55) {
-      const k = t / 0.55;
-      out.set(lane * 0.16, 0.35 + k * 0.75, 0.26 - 0.22 * k + lift * 0.03);
+    // front louvers → inward through filter → coil → up → top discharge
+    if (t < 0.5) {
+      const k = t / 0.5;
+      out.set(lane * 0.16, 0.42 + k * 0.75, 0.3 - 0.28 * k + lift * 0.03);
+    } else if (t < 0.75) {
+      const k = (t - 0.5) / 0.25;
+      out.set(lane * 0.1, 1.17 + k * 0.42, 0.02 - 0.0 + lift * 0.04);
     } else {
-      const k = (t - 0.55) / 0.45;
-      out.set(lane * 0.12 * (1 - k), 1.15 + k * 0.55, Math.sin(k * Math.PI) * 0.05 + lift * 0.03);
+      const k = (t - 0.75) / 0.25;
+      const angle = lane * 2.3;
+      out.set(Math.cos(angle) * 0.06 * (1 + k * 2.2), 1.66 + k * 0.5, Math.sin(angle) * 0.06 * (1 + k * 2.2) + lift * 0.04);
     }
     return out;
   }
   // AHU: -x → +x through the component chain
   const x = -2.85 + t * 5.7;
-  const bend = t > 0.35 && t < 0.6 ? Math.sin((t - 0.35) / 0.25 * Math.PI) * 0.08 : 0;
+  const bend = t > 0.35 && t < 0.6 ? Math.sin(((t - 0.35) / 0.25) * Math.PI) * 0.08 : 0;
   out.set(x, 0.02 + lift * 0.28 + bend, lane * 0.62 + Math.sin(t * 7 + lane * 4) * 0.03);
   return out;
 }
+
+/** Particle budget + sprite-label scale per device (standing needs a dense plume). */
+const FLOW_CONFIG: Record<string, { count: number; size: number }> = {
+  AHU: { count: 260, size: 0.075 },
+  AC_SPLIT_WALL: { count: 210, size: 0.032 },
+  AC_DAK: { count: 240, size: 0.035 },
+  AC_STANDING: { count: 320, size: 0.042 },
+};
 
 export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater, fanSpeed, className }: Props) {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -310,7 +526,8 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
-    const type = deviceType === "AC_DAK" || deviceType === "AC_SPLIT_WALL" || deviceType === "AC_STANDING" ? deviceType : "AHU";
+    const type =
+      deviceType === "AC_DAK" || deviceType === "AC_SPLIT_WALL" || deviceType === "AC_STANDING" ? deviceType : "AHU";
     let disposed = false;
 
     const width = Math.max(320, mount.clientWidth);
@@ -322,17 +539,7 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 100);
-    const isAhu = type === "AHU";
-    camera.position.set(isAhu ? 5.2 : 2.6, isAhu ? 2.6 : 1.9, isAhu ? 4.4 : 2.6);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
-    controls.enablePan = false;
-    controls.minDistance = isAhu ? 2.6 : 1.1;
-    controls.maxDistance = isAhu ? 12 : 5;
-    controls.target.set(0, isAhu ? 0.1 : type === "AC_STANDING" ? 0.85 : 0.05, 0);
+    const camera = new THREE.PerspectiveCamera(42, width / height, 0.05, 120);
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x334155, 1.15));
     const key = new THREE.DirectionalLight(0xffffff, 1.6);
@@ -344,12 +551,20 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
 
     // casing + internals
     const casingSize: [number, number, number] =
-      type === "AHU" ? [6.0, 1.9, 2.0] : type === "AC_SPLIT_WALL" ? [1.12, 0.36, 0.26] : type === "AC_DAK" ? [0.95, 0.26, 0.95] : [0.56, 1.86, 0.52];
+      type === "AHU"
+        ? [6.1, 2.0, 2.1]
+        : type === "AC_SPLIT_WALL"
+          ? [1.16, 0.38, 0.3]
+          : type === "AC_DAK"
+            ? [0.96, 0.46, 0.96]
+            : [0.56, 1.92, 0.52];
+    const casingPos: [number, number, number] =
+      type === "AHU" ? [0, 0.1, 0] : type === "AC_SPLIT_WALL" ? [0, 0, -0.035] : type === "AC_DAK" ? [0, -0.015, 0] : [0, 0.96, 0];
     const casing = new THREE.Mesh(
       new THREE.BoxGeometry(...casingSize),
-      new THREE.MeshStandardMaterial({ color: 0xe2e8f0, transparent: true, opacity: 0.13, roughness: 0.3, metalness: 0.1, depthWrite: false }),
+      new THREE.MeshStandardMaterial({ color: 0xe2e8f0, transparent: true, opacity: 0.1, roughness: 0.3, metalness: 0.1, depthWrite: false }),
     );
-    casing.position.set(0, type === "AC_DAK" ? 0.13 : type === "AC_STANDING" ? 0.95 : isAhu ? 0.1 : 0.02, 0);
+    casing.position.set(...casingPos);
     scene.add(casing);
     const edges = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.BoxGeometry(...casingSize)),
@@ -358,21 +573,40 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
     edges.position.copy(casing.position);
     scene.add(edges);
 
-    const { group: internals, rotors, flaps, pathZones } = buildComponentMeshes(type, hasHeater);
+    const { group: internals, rotors, flaps, pathZones, labels } = buildComponentMeshes(type, hasHeater);
     scene.add(internals);
+    for (const l of labels) {
+      const sprite = makeLabel(l.text, l.scale ?? 1);
+      sprite.position.set(...l.pos);
+      internals.add(sprite);
+    }
 
-    // status beacon
-    const beaconMat = new THREE.MeshStandardMaterial({
-      color: STATUS_COLOR[status],
-      emissive: STATUS_COLOR[status],
-      emissiveIntensity: status === "RUN" || status === "FAULT" ? 0.9 : 0.3,
-    });
-    const beacon = new THREE.Mesh(new THREE.SphereGeometry(type === "AHU" ? 0.1 : 0.04, 16, 12), beaconMat);
-    beacon.position.set(isAhu ? 2.6 : 0.5, casing.position.y + casingSize[1] / 2 + 0.12, 0);
-    scene.add(beacon);
+    // Auto-frame: fit the whole machine (even the slim wall unit) in view.
+    const bbox = new THREE.Box3().setFromObject(internals);
+    const sphere = bbox.getBoundingSphere(new THREE.Sphere());
+    const fitDist = (sphere.radius / Math.sin((camera.fov * Math.PI) / 360)) * 1.12;
+    const viewDir =
+      type === "AC_SPLIT_WALL"
+        ? new THREE.Vector3(0.55, 0.32, 1.35)
+        : type === "AC_DAK"
+          ? new THREE.Vector3(0.8, 0.75, 0.9)
+          : type === "AC_STANDING"
+            ? new THREE.Vector3(0.85, 0.35, 1.15)
+            : new THREE.Vector3(1, 0.5, 1);
+    camera.position.copy(sphere.center).addScaledVector(viewDir.normalize(), fitDist);
 
-    // airflow particles
-    const COUNT = 130;
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.enablePan = false;
+    controls.minDistance = sphere.radius * 0.7;
+    controls.maxDistance = fitDist * 3;
+    controls.target.copy(sphere.center);
+    controls.update();
+
+    // airflow particles (in the model frame — they ride with the internals group)
+    const COUNT = FLOW_CONFIG[type]?.count ?? 130;
+    const P_SIZE = FLOW_CONFIG[type]?.size ?? 0.05;
     const positions = new Float32Array(COUNT * 3);
     const colors = new Float32Array(COUNT * 3);
     const particles: Particle[] = [];
@@ -382,27 +616,31 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
     const pointsGeo = new THREE.BufferGeometry();
     pointsGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     pointsGeo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    const pointsMat = new THREE.PointsMaterial({ size: type === "AHU" ? 0.075 : 0.035, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false });
+    const pointsMat = new THREE.PointsMaterial({
+      size: P_SIZE,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+    });
     const points = new THREE.Points(pointsGeo, pointsMat);
-    scene.add(points);
-    const tmp = new THREE.Vector3();
+    points.frustumCulled = false;
+    internals.add(points);
 
-    // floor disc for spatial grounding
+    // grounding disc under the machine
     const floor = new THREE.Mesh(
-      new THREE.CircleGeometry(isAhu ? 4.6 : 1.4, 48),
-      new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.95, transparent: true, opacity: 0.55 }),
+      new THREE.CircleGeometry(sphere.radius * 1.35, 48),
+      new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.95, transparent: true, opacity: 0.5 }),
     );
     floor.rotation.x = -Math.PI / 2;
-    floor.position.y = isAhu ? -0.86 : type === "AC_STANDING" ? -0.02 : -0.35;
+    floor.position.y = bbox.min.y - Math.max(0.18, sphere.radius * 0.16);
     scene.add(floor);
-
-    const controls_listener = () => {};
-    controls.addEventListener("change", controls_listener);
 
     let raf = 0;
     let fanAngle = 0;
     let fanSpeedNow = 0;
     let flapPhase = 0;
+    const flapBase = flaps.map((f) => f.rotation.x);
     const clock = new THREE.Clock();
 
     const animate = () => {
@@ -410,31 +648,31 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
       raf = requestAnimationFrame(animate);
       const dt = Math.min(0.05, clock.getDelta());
       const running = status === "RUN";
-      const targetFan = running ? 6 + Math.min(1.2, Math.max(0.4, (fanSpeed ?? 3) / 4)) * 4 : 0;
+      const targetFan = running ? 5 + Math.min(1.2, Math.max(0.4, (fanSpeed ?? 3) / 4)) * 3.6 : 0;
       fanSpeedNow += (targetFan - fanSpeedNow) * Math.min(1, dt * 1.6);
       fanAngle += fanSpeedNow * dt;
-      for (const rotor of rotors) {
-        if (type === "AC_SPLIT_WALL") rotor.rotation.x = fanAngle;
-        else rotor.rotation.y = fanAngle;
+      for (const r of rotors) {
+        // spin around each fan's TRUE airflow axis (AHU/cross-flow → X, scroll/axial → Y)
+        r.obj.rotation[r.axis] = -fanAngle;
       }
       if (running) flapPhase += dt * 1.8;
       flaps.forEach((flap, i) => {
-        const base = i % 2 === 0 ? 0.7 : 0;
-        flap.rotation.x = base + (running ? Math.sin(flapPhase + i * 1.3) * 0.28 : base * 0.4);
+        const base = flapBase[i];
+        const target = running ? base + Math.sin(flapPhase + i * 1.3) * 0.26 : base * 0.5;
+        flap.rotation.x += (target - flap.rotation.x) * Math.min(1, dt * 6);
       });
-      beaconMat.emissiveIntensity = (status === "FAULT" ? 0.7 + Math.sin(clock.elapsedTime * 6) * 0.45 : running ? 0.9 : 0.3);
 
       const flow = running ? fanSpeedNow * 0.028 : 0.0;
       for (let i = 0; i < COUNT; i += 1) {
         const p = particles[i];
         p.t += flow * p.speed * dt * 3.2;
         if (p.t > 1) p.t -= 1;
-        pathPoint(type, p.t, p.lane, p.lift, tmp);
-        positions[i * 3] = tmp.x;
-        positions[i * 3 + 1] = tmp.y + casing.position.y - (type === "AHU" ? 0 : type === "AC_STANDING" ? 0.9 : 0.1);
-        positions[i * 3 + 2] = tmp.z;
+        pathPoint(type, p.t, p.lane, p.lift, tmpVec);
+        positions[i * 3] = tmpVec.x;
+        positions[i * 3 + 1] = tmpVec.y;
+        positions[i * 3 + 2] = tmpVec.z;
         const c = zoneColorAt(p.t, pathZones);
-        const dim = running ? 1 : 0.25;
+        const dim = running ? 1 : 0.22;
         colors[i * 3] = c.r * dim;
         colors[i * 3 + 1] = c.g * dim;
         colors[i * 3 + 2] = c.b * dim;
@@ -463,23 +701,26 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
       cancelAnimationFrame(raf);
       resizeObserver?.disconnect();
       controls.dispose();
+      // sprite materials/textures first (their geometry is engine-shared)
+      internals.traverse((obj) => {
+        const sprite = obj as THREE.Sprite;
+        if (sprite.isSprite) {
+          const mat = sprite.material as THREE.SpriteMaterial;
+          mat.map?.dispose();
+          mat.dispose();
+        }
+      });
       disposeGroupDeep(internals);
-      const pointsWrap = new THREE.Group();
-      pointsWrap.add(points);
-      disposeGroupDeep(pointsWrap);
       casing.geometry.dispose();
       (casing.material as THREE.Material).dispose();
       edges.geometry.dispose();
       (edges.material as THREE.Material).dispose();
       floor.geometry.dispose();
       (floor.material as THREE.Material).dispose();
-      beacon.geometry.dispose();
-      beaconMat.dispose();
       renderer.dispose();
       if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement);
     };
-    // Rebuild only when the machine's identity/look changes — status/fanSpeed
-    // are read through the closure each frame is regenerated by the effect deps.
+    // Rebuild only when the machine's identity/look changes.
   }, [ahuId, deviceType, status, hasHeater, fanSpeed]);
 
   return (

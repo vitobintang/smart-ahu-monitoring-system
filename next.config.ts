@@ -34,8 +34,15 @@ const nextConfig: NextConfig = {
     ];
   },
   async redirects() {
-    if (!enforceHttps) return [];
+    const routes = [
+      // /ahu UI routes renamed to /devices (fleet now includes AC devices).
+      // NOTE: single-segment ids only, so public asset paths like /ahu/logo.png stay untouched.
+      { source: "/ahu", destination: "/devices", permanent: false },
+      { source: "/ahu/:id((?!.*\\.).+)", destination: "/devices/:id", permanent: false },
+    ];
+    if (!enforceHttps) return routes;
     return [
+      ...routes,
       {
         source: "/:path*",
         has: [

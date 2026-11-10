@@ -13,7 +13,7 @@ export default function AhuDetailPage() {
   const id = typeof params?.id === "string" ? params.id : "";
 
   // Suspense boundary is required because AhuDetailView reads useSearchParams
-  // for context-aware back navigation (?from=/dashboard or ?from=/ahu).
+  // for context-aware back navigation (?from=/dashboard or ?from=/devices).
   return (
     <Suspense
       fallback={

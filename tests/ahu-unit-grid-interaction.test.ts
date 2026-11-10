@@ -65,7 +65,7 @@ test("search and clear filter the planned unit cards", async () => {
     });
 
     assert.match(container.textContent ?? "", /1 of 1 planned units/);
-    assert.ok(container.querySelector('a[href="/ahu/GTM-DAIKIN-001"]'));
+    assert.ok(container.querySelector('a[href="/devices/GTM-DAIKIN-001"]'));
 
     await act(async () => {
       setter.call(input, "AHU-99");
