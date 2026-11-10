@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import DeviceModelThumb from "@/components/DeviceModelThumb";
+import Image from "next/image";
 import type { ReactNode } from "react";
 import {
   ArrowRight,
@@ -34,6 +34,13 @@ export interface Card {
   trendAlerts: number;
   activeCommand: { id: string; commandType: string; status: string; expiresAt: string } | null;
 }
+
+/** Product-shot preview per device kind — same white studio style as the AHU shot. */
+const DEVICE_IMG: Record<string, string> = {
+  AC_SPLIT_WALL: "/ahu/unit-split.png",
+  AC_DAK: "/ahu/unit-dak.png",
+  AC_STANDING: "/ahu/unit-standing.png",
+};
 
 const PILL: Record<AhuStatus, { label: string; cls: string }> = {
   RUN: { label: "RUNNING", cls: "bg-[#22c55e] text-white shadow-[0_6px_14px_-6px_rgba(34,197,94,0.9)]" },
@@ -280,11 +287,13 @@ export function UnitCard({ card }: { card: Card }) {
         </p>
 
         <div className="mt-3 flex items-center gap-3">
-          <div className="relative h-[84px] w-32 flex-none overflow-hidden rounded-xl bg-linear-to-b from-[#eef4fb] to-[#dfe9f6] ring-1 ring-[#dbe5f2]">
-            <DeviceModelThumb
-              deviceType={card.ahu.deviceType}
-              status={card.status}
-              className={cx("h-full w-full", off && "opacity-40 grayscale")}
+          <div className="relative h-[84px] w-32 flex-none overflow-hidden">
+            <Image
+              src={DEVICE_IMG[card.ahu.deviceType ?? ""] ?? "/ahu/unit-iso2.png"}
+              alt={`${card.ahu.id} unit`}
+              fill
+              sizes="128px"
+              className={cx("scale-[1.22] object-contain", off && "opacity-40 grayscale")}
             />
           </div>
           <div className="grid flex-1 gap-1.5">
