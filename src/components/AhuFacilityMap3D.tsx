@@ -154,6 +154,36 @@ const STATUS_DOT_CLASS: Record<AhuStatus, string> = {
 };
 
 
+/** Horizontal pan range of the orbit target (ground plane is 190×190 — rooms can sit far out). */
+export const CAM_PAN_RANGE_X = 80;
+export const CAM_PAN_RANGE_Z = 78;
+/** Orbit radius limits: close inspection up to full-facility overview. */
+export const CAM_RADIUS_MIN = 9;
+export const CAM_RADIUS_MAX = 130;
+
+/**
+ * Pure keyboard-pan step: horizon-corrected move of the orbit target.
+ * W/Up = into the screen, S/Down = back, A/Left & D/Right = strafe.
+ * `keys` holds the ACTIVE lowercase keys ("w","a","s","d","arrowup",…).
+ */
+export function panDeltaFromKeys(
+  keys: ReadonlySet<string>,
+  theta: number,
+  step: number,
+): { dx: number; dz: number } {
+  const forward = keys.has("w") || keys.has("arrowup") ? 1 : keys.has("s") || keys.has("arrowdown") ? -1 : 0;
+  const strafe = keys.has("d") || keys.has("arrowright") ? 1 : keys.has("a") || keys.has("arrowleft") ? -1 : 0;
+  if (forward === 0 && strafe === 0) return { dx: 0, dz: 0 };
+  // Camera sits at target + radius·(sinθ·sinφ, cosφ, cosθ·sinφ): the horizontal
+  // view direction is -(sinθ, cosθ); screen-right is (cosθ, -sinθ).
+  const sinT = Math.sin(theta);
+  const cosT = Math.cos(theta);
+  return {
+    dx: (-sinT * forward + cosT * strafe) * step,
+    dz: (-cosT * forward - sinT * strafe) * step,
+  };
+}
+
 /** High-contrast architectural button styles for the Light-Mode 3D HUD toolbar. */
 const hudBtnBase =
   "inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-[11.5px] font-semibold transition-all duration-200 select-none";
@@ -539,6 +569,10 @@ export default function AhuFacilityMap3D({
     goalTargetZ: -1,
   });
 
+  // Held keyboard-pan keys (WASD / arrows) — mutated by window listeners,
+  // consumed once per animation frame for smooth gliding.
+  const panKeysRef = useRef<Set<string>>(new Set());
+
   const autoRotateRef = useRef(autoRotate);
   autoRotateRef.current = autoRotate;
 
@@ -632,7 +666,7 @@ export default function AhuFacilityMap3D({
 
   const zoomBy = useCallback((delta: number) => {
     const c = camStateRef.current;
-    c.goalRadius = Math.min(82, Math.max(15, c.goalRadius + delta));
+    c.goalRadius = Math.min(CAM_RADIUS_MAX, Math.max(CAM_RADIUS_MIN, c.goalRadius + delta));
   }, []);
 
   useEffect(() => {
@@ -747,9 +781,9 @@ export default function AhuFacilityMap3D({
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xeaf1fb);
-    scene.fog = new THREE.FogExp2(0xeaf1fb, 0.0033);
+    scene.fog = new THREE.FogExp2(0xeaf1fb, 0.0024);
 
-    const camera = new THREE.PerspectiveCamera(42, initW / initH, 0.5, 260);
+    const camera = new THREE.PerspectiveCamera(42, initW / initH, 0.5, 460);
 
     const hemi = new THREE.HemisphereLight(0xffffff, 0xcbd5e1, 1.25);
     hemi.position.set(0, 50, 0);
@@ -1334,12 +1368,12 @@ export default function AhuFacilityMap3D({
         }
 
         const c = camStateRef.current;
-        if (dragButton === 2 || e.shiftKey) {
+        if (dragButton === 2 || dragButton === 1 || e.shiftKey) {
           const panScale = c.goalRadius * 0.0016;
           const sinT = Math.sin(c.theta);
           const cosT = Math.cos(c.theta);
-          c.goalTargetX = Math.min(34, Math.max(-34, c.goalTargetX - (dx * cosT + dy * sinT) * panScale));
-          c.goalTargetZ = Math.min(32, Math.max(-32, c.goalTargetZ - (-dx * sinT + dy * cosT) * panScale));
+          c.goalTargetX = Math.min(CAM_PAN_RANGE_X, Math.max(-CAM_PAN_RANGE_X, c.goalTargetX - (dx * cosT + dy * sinT) * panScale));
+          c.goalTargetZ = Math.min(CAM_PAN_RANGE_Z, Math.max(-CAM_PAN_RANGE_Z, c.goalTargetZ - (-dx * sinT + dy * cosT) * panScale));
         } else {
           c.goalTheta -= dx * 0.0072;
           c.goalPhi = Math.min(1.36, Math.max(0.05, c.goalPhi - dy * 0.0065));
@@ -1659,7 +1693,7 @@ export default function AhuFacilityMap3D({
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
       const c = camStateRef.current;
-      c.goalRadius = Math.min(82, Math.max(15, c.goalRadius + e.deltaY * 0.028));
+      c.goalRadius = Math.min(CAM_RADIUS_MAX, Math.max(CAM_RADIUS_MIN, c.goalRadius + e.deltaY * 0.028));
     };
 
     const handleContextMenu = (e: MouseEvent) => e.preventDefault();
@@ -1703,6 +1737,18 @@ export default function AhuFacilityMap3D({
       const c = camStateRef.current;
       if (autoRotateRef.current && !isDragging) {
         c.goalTheta += dt * 0.16;
+      }
+
+      // Keyboard free-look panning (WASD / arrows): radius-proportional step
+      // so the glide feels identical at every zoom level.
+      if (panKeysRef.current.size > 0 && !isDragging) {
+        const step = c.goalRadius * dt * 0.85;
+        const pan = panDeltaFromKeys(panKeysRef.current, c.theta, step);
+        if (pan.dx !== 0 || pan.dz !== 0) {
+          autoRotateRef.current = false;
+          c.goalTargetX = Math.min(CAM_PAN_RANGE_X, Math.max(-CAM_PAN_RANGE_X, c.goalTargetX + pan.dx));
+          c.goalTargetZ = Math.min(CAM_PAN_RANGE_Z, Math.max(-CAM_PAN_RANGE_Z, c.goalTargetZ + pan.dz));
+        }
       }
 
       const speed = isDragging ? 15 : 4.2;
@@ -2230,6 +2276,35 @@ export default function AhuFacilityMap3D({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [mode, movingAhuId, rotateActiveDraft90]);
 
+  // Free-look keyboard panning: hold W/A/S/D or arrow keys to glide the view
+  // across the facility (see far rooms without dragging). Ignored while typing.
+  useEffect(() => {
+    const panKeys = panKeysRef.current; // stable Set instance for the component lifetime
+    const PAN_KEYS = new Set(["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"]);
+    const isTypingTarget = (t: EventTarget | null) =>
+      t instanceof HTMLElement &&
+      (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+    const onKeyDown = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if (!PAN_KEYS.has(key) || e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e.target)) return;
+      e.preventDefault();
+      panKeys.add(key);
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      panKeys.delete(e.key.toLowerCase());
+    };
+    const onBlur = () => panKeys.clear();
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+      panKeys.clear();
+    };
+  }, []);
+
   if (webglError) {
     return (
       <div className="rounded-2xl border border-[#dbe4f0] bg-white p-6 text-center text-xs text-slate-600">
@@ -2284,7 +2359,7 @@ export default function AhuFacilityMap3D({
                   ? "Place inside any indoor wing · snaps onto the 2m floor grid · R / Shift+R rotates 90°"
                   : pickToMove
                     ? "Click any 3D device model (or its name badge) to drag & move it to a new indoor spot"
-                    : "Drag to rotate 360° · scroll to zoom · click any 3D device to view live status & controls"}
+                    : "Drag to rotate · right/Shift/middle-drag or W A S D to pan far rooms · scroll to zoom · click a device for live controls"}
             </p>
           </div>
         </div>
@@ -2317,7 +2392,7 @@ export default function AhuFacilityMap3D({
             type="button"
             onClick={() => setCameraPreset("iso")}
             className={cx(hudBtnBase, !isTopView ? "border-[#bfd6fb] bg-[#f4f8ff] text-[#1d6ef2]" : hudBtnNeutral)}
-            title="Smoothly glide camera to 3D isometric angle"
+            title="Glide back to the 3D isometric view (also recenters the pan)"
           >
             <RotateCcw size={12} /> <span className="hidden sm:inline">3D View</span>
           </button>
