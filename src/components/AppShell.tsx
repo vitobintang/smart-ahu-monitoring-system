@@ -576,7 +576,7 @@ export default function AppShell({
 
                       {currentUser.role === "Admin" ? (
                         <Link
-                          href="/admin?tab=users"
+                          href="/admin/users"
                           role="menuitem"
                           onClick={() => setProfileOpen(false)}
                           className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[12.5px] font-semibold text-slate-700 transition hover:bg-[#f1f5fb] hover:text-[#1d6ef2]"
@@ -686,7 +686,7 @@ export default function AppShell({
                       maxLength={120}
                       value={editFullName}
                       onChange={(e) => setEditFullName(e.target.value)}
-                      placeholder="e.g. Vito Bintang"
+                      placeholder="e.g. Budi Santoso"
                     />
                   </Field>
 
@@ -699,7 +699,7 @@ export default function AppShell({
                       maxLength={32}
                       value={editUsername}
                       onChange={(e) => setEditUsername(e.target.value)}
-                      placeholder="e.g. vizobintang"
+                      placeholder="e.g. budi.santoso"
                       required
                     />
                   </Field>

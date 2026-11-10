@@ -14,7 +14,10 @@ export async function GET() {
   try {
     await requireAuth("view");
     const rtdb = await requireRtdb();
-    const devices = await readRtdbDevices(rtdb);
+    // Modules tab mirrors the ACTIVE device source only (Daikin DB ⇄ My DB).
+    const { readActiveFleetRecords } = await import("@/lib/rtdb/local-fleet");
+    const fleetIds = new Set((await readActiveFleetRecords(rtdb)).keys());
+    const devices = (await readRtdbDevices(rtdb)).filter((d) => fleetIds.has(d.ahuId));
     const physicalControlUnlocked = devices.some(() => true);
     return Response.json({ devices: devices.map(deviceToRow), physicalControlUnlocked });
   } catch (err) {

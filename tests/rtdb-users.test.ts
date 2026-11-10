@@ -20,14 +20,14 @@ test("createRtdbUser claims username + email mirrors transactionally and blocks 
     uid: "uid-1",
     email: "Vizo@Example.invalid",
     username: "vizo",
-    fullName: "Vizo Bintang",
+    fullName: "Budi Santoso",
     role: "Admin",
   });
 
   equal(created.id, "uid-1");
   equal(created.email, "vizo@example.invalid");
   equal(created.role, "Admin");
-  equal(created.fullName, "Vizo Bintang");
+  equal(created.fullName, "Budi Santoso");
 
   deepStrictEqual(await db.get("usernames/vizo"), "uid-1");
   deepStrictEqual(await db.get(`emails/${emailKey("vizo@example.invalid")}`), "uid-1");

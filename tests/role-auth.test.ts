@@ -23,34 +23,34 @@ test("role helpers recognize all three valid user roles and distinguish Admin", 
 });
 
 test("normalizeUsername and suggestUsernameFromEmail enforce clean 3-32 char handles", () => {
-  assert.deepEqual(normalizeUsername("  Vizo.Bintang_01  "), {
+  assert.deepEqual(normalizeUsername("  Budi.Santoso_01  "), {
     ok: true,
-    username: "vizo.bintang_01",
+    username: "budi.santoso_01",
   });
   assert.equal(normalizeUsername("ab").ok, false);
   assert.equal(normalizeUsername(".badstart").ok, false);
   assert.equal(normalizeUsername("has@at").ok, false);
-  assert.equal(suggestUsernameFromEmail("VizoBintang@gmail.com"), "vizobintang");
+  assert.equal(suggestUsernameFromEmail("BudiSantoso@example.com"), "budisantoso");
   assert.equal(suggestUsernameFromEmail("ab@ahu.local"), "abuser");
 });
 
 test("parseLoginPayload accepts email or username + password for all roles and rejects user tokens", () => {
   assert.deepEqual(
-    parseLoginPayload({ identifier: "  VizoBintang@Gmail.com ", password: "secret-password" }),
+    parseLoginPayload({ identifier: "  BudiSantoso@Example.com ", password: "secret-password" }),
     {
       ok: true,
       identifierType: "email",
-      identifier: "vizobintang@gmail.com",
+      identifier: "budisantoso@example.com",
       password: "secret-password",
     },
   );
 
   assert.deepEqual(
-    parseLoginPayload({ identifier: "  Vizo.Bintang ", password: "secret-password" }),
+    parseLoginPayload({ identifier: "  Budi.Santoso ", password: "secret-password" }),
     {
       ok: true,
       identifierType: "username",
-      identifier: "vizo.bintang",
+      identifier: "budi.santoso",
       password: "secret-password",
     },
   );
@@ -82,7 +82,7 @@ test("parseLoginPayload accepts email or username + password for all roles and r
   }
 
   assert.equal(parseLoginPayload({ identifier: "", password: "secret" }).ok, false);
-  assert.equal(parseLoginPayload({ identifier: "vizobintang", password: "" }).ok, false);
+  assert.equal(parseLoginPayload({ identifier: "budi.santoso", password: "" }).ok, false);
   assert.equal(parseLoginPayload({ identifier: "not@valid", password: "secret" }).ok, false);
   assert.equal(parseLoginPayload(null).ok, false);
 });

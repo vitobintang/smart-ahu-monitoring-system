@@ -399,7 +399,7 @@ export default function DashboardPage() {
                   <UnitCard key={c.ahu.id} card={c} />
                 ))}
                 <Link
-                  href="/admin?tab=devices"
+                  href="/admin/modules"
                   title="Provision a device for a new unit (FR-21)"
                   className="flex aspect-square flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed border-[#dbe4f0] bg-white/60 p-3 text-center transition hover:border-[#bfdbfe] hover:bg-[#f6faff] sm:aspect-auto sm:min-h-[248px] sm:gap-2 sm:p-5"
                 >
