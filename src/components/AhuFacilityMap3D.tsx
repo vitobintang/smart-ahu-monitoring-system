@@ -2494,9 +2494,9 @@ export default function AhuFacilityMap3D({
                   ? "border-amber-500 bg-amber-500 text-white shadow-[0_6px_16px_-6px_rgba(245,158,11,0.7)]"
                   : hudBtnNeutral,
               )}
-              title="Move a 3D AHU model indoors or anywhere outdoors"
+              title="Move a 3D device model to a new indoor spot"
             >
-              <Move size={13} /> {pickToMove ? "Cancel Pick" : selectedId ? `Move ${selectedId}` : "Move AHU"}
+              <Move size={13} /> {pickToMove ? "Cancel Pick" : selectedId ? `Move ${selectedId}` : "Move Device"}
             </button>
           ) : null}
 
