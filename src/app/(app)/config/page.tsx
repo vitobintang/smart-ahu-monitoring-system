@@ -9,7 +9,8 @@ import { AHU_IDS, PARAMETERS, type ParamKey } from "@/lib/domain";
 import { Btn, Empty, ErrorNote, Field, Spinner, cx, inputClass } from "@/components/ui";
 
 interface Threshold {
-  id: string;
+  id?: string;
+  ahuId?: string;
   parameter: string;
   enabled: boolean;
   lowLimit: number | null;
