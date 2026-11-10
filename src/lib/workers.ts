@@ -239,29 +239,32 @@ async function simulateAhu(ahu: AhuRow, device: DeviceRow, tickSec: number) {
 
   const roundedFan = Math.round(state.fanSpeed);
 
-  // Daikin-shaped fabricated node — identical format to the owner's
-  // devices/{id} tree (simulated:true marks it as simulator data).
-  const node: Record<string, unknown> = {
+  // Fabricated node in the VERIFIED owner format: devices/{id}/status with
+  // simulated:true marking it as simulator data.
+  const status: Record<string, unknown> = {
     power: ov.forcedFault ? false : roundedFan > 0,
     setpoint: ahu.setpoint,
     mode: ahu.controlMode === "MANUAL" ? "manual" : "cool",
     fan: parameters.fanSpeed ?? 0,
+    online: true,
+    s21_connected: true,
     state_valid: true,
     simulated: true,
     timestamp: Date.now(),
   };
-  if (parameters.roomTemp !== undefined) node.room_temp = parameters.roomTemp;
-  if (parameters.supplyTemp !== undefined) node.supply_temp = parameters.supplyTemp;
-  if (parameters.returnTemp !== undefined) node.return_temp = parameters.returnTemp;
-  if (parameters.humidity !== undefined) node.humidity = parameters.humidity;
-  if (parameters.filterDiffPressure !== undefined) node.filter_diff_pressure = parameters.filterDiffPressure;
-  if (parameters.coilTemp !== undefined) node.coil_temp = parameters.coilTemp;
-  if (parameters.damperPosition !== undefined) node.damper_position = parameters.damperPosition;
-  if (parameters.current !== undefined) node.current = parameters.current;
-  if (parameters.voltage !== undefined) node.voltage = parameters.voltage;
-  if (parameters.runHours !== undefined) node.run_hours = parameters.runHours;
-  if (parameters.heaterOutput !== undefined) node.heater_output = parameters.heaterOutput;
-  if (ov.forcedFault) node.fault = ov.forcedFault;
+  if (parameters.roomTemp !== undefined) status.room_temp = parameters.roomTemp;
+  if (parameters.supplyTemp !== undefined) status.supply_temp = parameters.supplyTemp;
+  if (parameters.returnTemp !== undefined) status.return_temp = parameters.returnTemp;
+  if (parameters.humidity !== undefined) status.humidity = parameters.humidity;
+  if (parameters.filterDiffPressure !== undefined) status.filter_diff_pressure = parameters.filterDiffPressure;
+  if (parameters.coilTemp !== undefined) status.coil_temp = parameters.coilTemp;
+  if (parameters.damperPosition !== undefined) status.damper_position = parameters.damperPosition;
+  if (parameters.current !== undefined) status.current = parameters.current;
+  if (parameters.voltage !== undefined) status.voltage = parameters.voltage;
+  if (parameters.runHours !== undefined) status.run_hours = parameters.runHours;
+  if (parameters.heaterOutput !== undefined) status.heater_output = parameters.heaterOutput;
+  if (ov.forcedFault) status.fault = ov.forcedFault;
+  const node: Record<string, unknown> = { status };
 
   const rtdb2 = await requireRtdb();
   const { processDaikinSnapshotRtdb } = await import("@/lib/rtdb/lifecycle");

@@ -66,16 +66,18 @@ function seedBase(db: InMemoryRtdb, ahuId = "AHU-01", latestTs = T0 - 2_000) {
   db.seed({
     devices: {
       [ahuId]: {
-        // verbatim owner-format live snapshot
-        power: false,
-        fan: 0,
-        room_temp: 24,
-        supply_temp: 20,
-        return_temp: 23,
-        humidity: 55,
-        state_valid: true,
-        simulated: false,
-        timestamp: latestTs,
+        // verbatim owner-format live node (VERIFIED layout: fields under status/)
+        status: {
+          power: false,
+          fan: 0,
+          room_temp: 24,
+          supply_temp: 20,
+          return_temp: 23,
+          humidity: 55,
+          state_valid: true,
+          simulated: false,
+          timestamp: latestTs,
+        },
         // app-owned registry metadata
         app: meta,
       },
@@ -84,9 +86,9 @@ function seedBase(db: InMemoryRtdb, ahuId = "AHU-01", latestTs = T0 - 2_000) {
   });
 }
 
-/** Builds a verbatim owner-format snapshot from classic fields. */
+/** Builds a verbatim owner-format device node (fields under status/). */
 function snapshot(overrides: Record<string, unknown> = {}, ts = T0): Record<string, unknown> {
-  return { power: true, fan: 2, setpoint: 22, state_valid: true, simulated: false, timestamp: ts, ...overrides };
+  return { status: { power: true, fan: 2, setpoint: 22, state_valid: true, simulated: false, timestamp: ts, ...overrides } };
 }
 
 const CMD_REQ = {
@@ -233,10 +235,10 @@ test("processDaikinSnapshotRtdb: happy path mirrors verbatim, appends history, p
   );
   equal(result.ok, true);
 
-  const mirror = await db.get<{ timestamp: number; power: boolean; room_temp: number }>("devices/AHU-01");
-  equal(mirror?.timestamp, T0);
-  equal(mirror?.power, true);
-  equal(mirror?.room_temp, 25.5);
+  const mirrorStatus = (await db.get<{ status: { timestamp: number; power: boolean; room_temp: number } }>("devices/AHU-01"))?.status;
+  equal(mirrorStatus?.timestamp, T0);
+  equal(mirrorStatus?.power, true);
+  equal(mirrorStatus?.room_temp, 25.5);
   ok(await db.get("deviceHistory/AHU-01/2026-11-09/s21-AHU-01-" + T0), "history snapshot written");
   const meta = await db.get<{ lastSeenAt: number; setpoint: number }>("devices/AHU-01/app");
   equal(meta?.lastSeenAt, T0);
@@ -259,7 +261,7 @@ test("processDaikinSnapshotRtdb: same device timestamp → 200 duplicated (FR-23
   const dup = await processDaikinSnapshotRtdb(db, "AHU-01", snapshot({ room_temp: 26 }, T0), T0 + 1_000);
   equal(dup.ok, true);
   if (dup.ok) equal((dup.body as { duplicated?: boolean }).duplicated, true);
-  const stored = await db.get<{ room_temp: number }>("deviceHistory/AHU-01/2026-11-09/s21-AHU-01-" + T0);
+  const stored = (await db.get<{ status: { room_temp: number } }>("deviceHistory/AHU-01/2026-11-09/s21-AHU-01-" + T0))?.status;
   equal(stored?.room_temp, 25, "first snapshot wins");
 });
 
@@ -310,8 +312,8 @@ test("processDaikinSnapshotRtdb: historical snapshot never regresses the live mi
     T0 + 1_000,
   );
   equal(historical.ok, true);
-  const mirror = await db.get<{ timestamp: number; room_temp: number }>("devices/AHU-01");
-  equal(mirror?.timestamp, T0 - 2_000, "mirror kept the newer reading");
+  const mirrorStatus = (await db.get<{ status: { timestamp: number; room_temp: number } }>("devices/AHU-01"))?.status;
+  equal(mirrorStatus?.timestamp, T0 - 2_000, "mirror kept the newer reading");
   ok(await db.get(`deviceHistory/AHU-01/2026-11-08/s21-AHU-01-${T0 - 90_000}`), "historical snapshot still stored");
 });
 

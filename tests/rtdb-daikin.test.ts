@@ -7,7 +7,7 @@ import { InMemoryRtdb, type RtdbAdapter } from "../src/lib/rtdb/store";
 import {
   commandsToControlPatch,
   findDeviceIdByToken,
-  initialDaikinDeviceRecord,
+  initialDaikinDeviceStatus,
   isDaikinShape,
   mapDaikinToSample,
   readDaikinDevice,
@@ -77,7 +77,7 @@ test("isDaikinShape and readDaikinDevice recognize the owner's bridge record", a
   assert.equal(isDaikinShape({ power: true }), true);
   assert.equal(isDaikinShape({ room_temp: 25.5 }), true);
 
-  await rtdb.set(OWNER_NODE, OWNER_RECORD);
+  await rtdb.set(OWNER_NODE, { status: OWNER_RECORD });
   const record = await readDaikinDevice(rtdb, "GTM-DAIKIN-001");
   assert.ok(record);
   assert.equal(record.power, true);
@@ -106,9 +106,9 @@ test("mapDaikinToSample maps the bridge fields onto ingest samples", () => {
   assert.equal(mapDaikinToSample({ power: true, timestamp: Number.NaN }, "GTM-DAIKIN-001"), null);
 });
 
-test("writeDaikinControl patches only control fields and refuses non-bridge nodes", async () => {
+test("writeDaikinControl patches only control fields (inside status/) and refuses non-bridge nodes", async () => {
   const rtdb: RtdbAdapter = new InMemoryRtdb();
-  await rtdb.set(OWNER_NODE, OWNER_RECORD);
+  await rtdb.set(OWNER_NODE, { status: OWNER_RECORD });
   await rtdb.set("gateways/GTM-DAIKIN-001/gw", { id: "gw" });
 
   assert.equal(await writeDaikinControl(rtdb, "AHU-99", { power: false }), false); // no bridge node
@@ -152,17 +152,21 @@ test("deviceOwners: token write/read and reverse lookup", async () => {
   assert.equal(await readDeviceOwnerToken(owner, "GTM-DAIKIN-001"), "rotated-token-02");
 });
 
-test("initialDaikinDeviceRecord is inert until the bridge reports (no phantom samples)", () => {
-  const record = initialDaikinDeviceRecord(1_760_000_000_000);
-  assert.equal(isDaikinShape(record), true);
-  assert.equal(mapDaikinToSample(record, "GTM-DAIKIN-001"), null); // state_valid:false, no room_temp
-  assert.equal(record.source, "web-registration");
+test("initialDaikinDeviceStatus matches the verified bridge shape and is inert", () => {
+  const status = initialDaikinDeviceStatus(1_794_182_400_000);
+  assert.equal(isDaikinShape(status), true);
+  assert.equal(mapDaikinToSample(status, "GTM-DAIKIN-001"), null); // state_valid:false, no room_temp
+  // fields seen in the real dump:
+  for (const key of ["fan", "mode", "online", "power", "s21_connected", "setpoint", "simulated", "state_valid", "timestamp"]) {
+    assert.equal(key in status, true, `${key} present`);
+  }
+  assert.equal("rssi" in status, false, "bridge-owned fields are not fabricated");
 });
 
 test("the sampler mirrors the owner node verbatim into the app database", async () => {
   const appDb: RtdbAdapter = new InMemoryRtdb();
   const ts = 1_794_182_400_000; // 2026-11-09T00:00:00Z
-  const ownerNode = { ...OWNER_RECORD, room_temp: 25.5, power: true, timestamp: ts };
+  const ownerNode = { status: { ...OWNER_RECORD, room_temp: 25.5, power: true, timestamp: ts } };
   const result = await processDaikinSnapshotRtdb(appDb, "GTM-DAIKIN-001", ownerNode, ts);
   equal(result.ok, true);
   deepStrictEqual(
@@ -171,9 +175,7 @@ test("the sampler mirrors the owner node verbatim into the app database", async 
     "verbatim history snapshot",
   );
   const mirror = await appDb.get<Record<string, unknown>>("devices/GTM-DAIKIN-001");
-  for (const [k, v] of Object.entries(ownerNode)) {
-    deepStrictEqual(mirror?.[k], v, `mirror field ${k} verbatim`);
-  }
+  deepStrictEqual(mirror?.status, ownerNode.status, "verbatim live mirror (status child)");
   const meta = await appDb.get<{ name: string }>("devices/GTM-DAIKIN-001/app");
   ok(meta, "auto-registered app meta");
   equal(meta?.name, "GTM-DAIKIN-001");

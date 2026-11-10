@@ -23,6 +23,25 @@ import type { RtdbAdapter } from "./store";
 export const DAIKIN_DEVICES_NODE = "devices";
 /** The OWNER's token registry — deviceOwners/{id} holds the pre-shared bearer token (scalar). */
 export const DAIKIN_OWNERS_NODE = "deviceOwners";
+/**
+ * VERIFIED against the real dump (2026-11-10): the live fields live one level
+ * down at devices/{id}/status — the device node itself holds only that child.
+ * Real status shape:
+ *   capabilities { auto, heat, room_temp }  "supported" | "unsupported"
+ *   fan          "auto" | numeric string
+ *   mode         "cool" | ...
+ *   online       boolean
+ *   power        boolean
+ *   room_temp    number
+ *   rssi         number (dBm)
+ *   s21_connected boolean
+ *   setpoint     number
+ *   simulated    boolean   (source "mock" + simulated true = bridge mock data)
+ *   source       string
+ *   state_valid  boolean
+ *   timestamp    number (epoch ms)
+ */
+export const DAIKIN_STATUS_CHILD = "status";
 
 export interface DaikinDeviceRecord {
   capabilities?: unknown;
@@ -49,8 +68,13 @@ export function isDaikinShape(value: unknown): value is DaikinDeviceRecord {
 
 export async function readDaikinDevice(rtdb: RtdbAdapter, ahuId: string): Promise<DaikinDeviceRecord | null> {
   if (typeof ahuId !== "string" || !ahuId.trim() || ahuId.length > 128) return null;
-  const record = await rtdb.get<unknown>(`${DAIKIN_DEVICES_NODE}/${ahuId}`);
-  return isDaikinShape(record) ? record : null;
+  const node = await rtdb.get<unknown>(`${DAIKIN_DEVICES_NODE}/${ahuId}`);
+  if (!node || typeof node !== "object") return null;
+  // Real layout: the live fields sit at devices/{id}/status.
+  const status = (node as Record<string, unknown>)[DAIKIN_STATUS_CHILD];
+  if (status && typeof status === "object") return isDaikinShape(status) ? (status as DaikinDeviceRecord) : null;
+  // Tolerate a flat node (older bridges / tests).
+  return isDaikinShape(node) ? (node as DaikinDeviceRecord) : null;
 }
 
 export interface DaikinSample {
@@ -112,7 +136,7 @@ export async function writeDaikinControl(
   if (typeof patch.power === "boolean") values.power = patch.power;
   if (typeof patch.setpoint === "number" && Number.isFinite(patch.setpoint)) values.setpoint = patch.setpoint;
   if (Object.keys(values).length === 0) return false;
-  await rtdb.update(`${DAIKIN_DEVICES_NODE}/${ahuId}`, values);
+  await rtdb.update(`${DAIKIN_DEVICES_NODE}/${ahuId}/${DAIKIN_STATUS_CHILD}`, values);
   return true;
 }
 
@@ -167,15 +191,16 @@ export async function findDeviceIdByToken(owner: RtdbAdapter, token: string): Pr
   return null;
 }
 
-/** Initial `devices/{id}` record for a freshly registered unit — the bridge owns it afterwards. */
-export function initialDaikinDeviceRecord(now = Date.now()): DaikinDeviceRecord & { timestamp: number } {
+/** Initial `devices/{id}/status` record for a freshly registered unit — fields per the VERIFIED dump. */
+export function initialDaikinDeviceStatus(now = Date.now()): Record<string, unknown> {
   return {
+    fan: "auto",
     mode: "cool",
     online: false,
     power: false,
     s21_connected: false,
+    setpoint: 24,
     simulated: false,
-    source: "web-registration",
     state_valid: false,
     timestamp: now,
   };
