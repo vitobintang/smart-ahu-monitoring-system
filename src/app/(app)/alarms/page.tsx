@@ -35,6 +35,9 @@ export default function AlarmsPage() {
 
   const path = `/api/alarms?state=${state}${ahuId ? `&ahuId=${ahuId}` : ""}`;
   const { data, error, loading, reload, paused, setPaused } = usePoll<{ alarms: AlarmRow[]; activeCount: number }>(path, LOCAL_POLL_MS);
+  // Unit filter options follow the ACTIVE device fleet (Daikin DB ⇄ My DB switch).
+  const { data: listData } = usePoll<{ ahus: Array<{ id: string }> }>("/api/ahu", 60000);
+  const unitIds = listData?.ahus?.length ? listData.ahus.map((a) => a.id) : [...AHU_IDS];
 
   async function ack(id: string) {
     setBusy(id);
@@ -89,7 +92,7 @@ export default function AlarmsPage() {
           </span>
           <select value={ahuId} onChange={(e) => setAhuId(e.target.value)} className="w-full rounded-lg border border-ink-600 bg-ink-950/80 px-2.5 py-1.5 text-xs text-slate-200 sm:w-auto">
             <option value="">All AHUs</option>
-            {AHU_IDS.map((id) => (
+            {unitIds.map((id) => (
               <option key={id} value={id}>
                 {id}
               </option>

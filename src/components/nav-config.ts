@@ -32,7 +32,7 @@ export const NAV: NavItem[] = [
   { href: "/reports", label: "Reports & Data Logger", icon: FileText, activity: "view" },
   { href: "/energy", label: "Energy Management", icon: Zap, activity: "view" },
   { href: "/maintenance", label: "Maintenance", icon: Wrench, activity: "view" },
-  { href: "/admin?tab=devices", label: "AHU Modules", icon: Database, activity: "manageUsers" },
+  { href: "/admin?tab=devices", label: "Modules", icon: Database, activity: "manageUsers" },
   { href: "/admin?tab=users", label: "Users", icon: Users, activity: "manageUsers" },
   { href: "/config", label: "Configurations", icon: Settings, activity: "configure" },
   { href: "/audit", label: "Audit Logs", icon: ClipboardList, activity: "viewAudit" },
@@ -58,7 +58,7 @@ export function isActive(item: NavItem, pathname: string | null, search: URLSear
 }
 
 export function rolePermissionsSummary(role: SessionUser["role"]): string[] {
-  if (role === "Admin") return ["Monitoring & Reports", "AHU Control", "Thresholds & Config", "Users & AHU Modules"];
+  if (role === "Admin") return ["Monitoring & Reports", "AHU Control", "Thresholds & Config", "Users & Modules"];
   if (role === "Engineering") return ["Monitoring & Reports", "AHU Control", "Thresholds & Config", "Audit Logs"];
   if (role === "Operator") return ["Monitoring & Reports", "AHU Control", "Alarm & Trend Ack"];
   return ["Read-Only Monitoring & Reports"];

@@ -31,6 +31,9 @@ interface IngestResponse {
 
 export default function SimulatorPage() {
   const { data, error, loading, reload, paused, setPaused } = usePoll<SimData>("/api/simulator", LOCAL_POLL_MS);
+  // Unit options follow the ACTIVE device fleet (Daikin DB ⇄ My DB switch).
+  const { data: listData } = usePoll<{ ahus: Array<{ id: string }> }>("/api/ahu", 60000);
+  const unitIds = listData?.ahus?.length ? listData.ahus.map((a) => a.id) : [...AHU_IDS];
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -224,8 +227,8 @@ export default function SimulatorPage() {
 
         <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <Field label="AHU">
-            <select className={inputClass} value={ahuId} onChange={(e) => setAhuId(e.target.value)}>
-              {AHU_IDS.map((id) => (
+            <select className={inputClass} value={unitIds.includes(ahuId) ? ahuId : unitIds[0]} onChange={(e) => setAhuId(e.target.value)}>
+              {unitIds.map((id) => (
                 <option key={id} value={id}>
                   {id}
                 </option>

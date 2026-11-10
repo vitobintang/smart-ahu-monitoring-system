@@ -227,7 +227,7 @@ export default function AdminPage() {
             onClick={() => router.replace("/admin?tab=devices")}
             className="justify-center"
           >
-            <HardDrive size={13} /> AHU Modules
+            <HardDrive size={13} /> Modules
           </Btn>
         </div>
       </div>
