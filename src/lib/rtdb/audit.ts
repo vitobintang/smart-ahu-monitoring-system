@@ -48,15 +48,51 @@ export interface AuditEntryFilter {
   action?: string | null;
   /** Exact entity match (mirrors the SQL `= entity`). */
   entity?: string | null;
+  /** When set, entries tied to a unit OUTSIDE this fleet are hidden (device-source switch). */
+  fleetIds?: ReadonlySet<string> | null;
+  /** Extra entity→unit resolutions (e.g. "alarm:{id}" → ahuId) for the fleet filter. */
+  unitRefs?: ReadonlyMap<string, string>;
   limit?: number;
+}
+
+/** Entity prefixes that reference a unit directly ("ahu:{id}", "device:{id}"). */
+const UNIT_ENTITY_PREFIXES = ["ahu:", "device:", "unit:"];
+
+/**
+ * The unit an audit entry refers to, or null for GLOBAL entries (user
+ * management, auth, device-source switch) that must stay visible on every
+ * fleet. Resolution: direct entity ref → entity lookup map (alarm/command
+ * ids) → details.ahuId written by the engine.
+ */
+export function auditEntryUnitId(entry: RtdbAuditRecord, unitRefs: ReadonlyMap<string, string> = new Map()): string | null {
+  const entity = entry.entity ?? "";
+  for (const prefix of UNIT_ENTITY_PREFIXES) {
+    if (entity.startsWith(prefix)) return entity.slice(prefix.length).replace(/^owner-/, "");
+  }
+  const viaRef = unitRefs.get(entity);
+  if (viaRef) return viaRef.replace(/^owner-/, "");
+  const details = entry.details as { ahuId?: unknown } | null;
+  if (details && typeof details.ahuId === "string" && details.ahuId) {
+    return details.ahuId.replace(/^owner-/, "");
+  }
+  // Dangling alarm/command refs cannot be tied to the active fleet — treat
+  // them as fleet-bound (hidden) rather than global.
+  if (entity.startsWith("alarm:") || entity.startsWith("command:")) return "";
+  return null;
 }
 
 /** Newest-first filter over audit entries (pure — shared by the API flip). */
 export function filterAuditEntries(entries: RtdbAuditRecord[], filter: AuditEntryFilter): RtdbAuditRecord[] {
   const limit = Number.isFinite(filter.limit) ? Number(filter.limit) : 150;
+  const unitRefs = filter.unitRefs ?? new Map<string, string>();
   return entries
     .filter((e) => (filter.action ? e.action.includes(filter.action) : true))
     .filter((e) => (filter.entity ? e.entity === filter.entity : true))
+    .filter((e) => {
+      if (!filter.fleetIds) return true;
+      const unit = auditEntryUnitId(e, unitRefs);
+      return unit === null || filter.fleetIds.has(unit);
+    })
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, limit);
 }
