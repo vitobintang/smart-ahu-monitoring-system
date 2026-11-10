@@ -15,7 +15,7 @@ import {
 } from "../src/lib/rtdb/alarms";
 import { commandToRow, readCommandHistory, writeRtdbCommand, type RtdbCommandRecord } from "../src/lib/rtdb/commands";
 import { auditEntryToJson, distinctAuditActions, filterAuditEntries, writeRtdbAuditLog, type RtdbAuditRecord } from "../src/lib/rtdb/audit";
-import { pruneTelemetryShards, writeTelemetryMirror, type RtdbTelemetryRecord } from "../src/lib/rtdb/telemetry";
+import { pruneTelemetryShards, writeDeviceSnapshot, type RtdbTelemetryRecord } from "../src/lib/rtdb/telemetry";
 import { buildReportFromRows, getSeries, streamReportCsv, type ReportSampleRow } from "../src/lib/queries";
 
 async function readAllCsv(stream: ReadableStream<Uint8Array>): Promise<string> {
@@ -60,6 +60,29 @@ function sample(overrides: Partial<RtdbTelemetryRecord> = {}): RtdbTelemetryReco
   };
 }
 
+/** Seeds a verbatim owner-format snapshot from the classic record fixture. */
+async function seedSnap(db: InMemoryRtdb, r: RtdbTelemetryRecord): Promise<void> {
+  const node: Record<string, unknown> = {
+    power: r.runState === "RUN" ? true : r.runState === "STOP" ? false : undefined,
+    fan: r.fanSpeed ?? undefined,
+    room_temp: r.roomTemp ?? undefined,
+    supply_temp: r.supplyTemp ?? undefined,
+    return_temp: r.returnTemp ?? undefined,
+    humidity: r.humidity ?? undefined,
+    filter_diff_pressure: r.filterDiffPressure ?? undefined,
+    coil_temp: r.coilTemp ?? undefined,
+    damper_position: r.damperPosition ?? undefined,
+    current: r.current ?? undefined,
+    voltage: r.voltage ?? undefined,
+    run_hours: r.runHours ?? undefined,
+    heater_output: r.heaterOutput ?? undefined,
+    fault: r.faultCode ?? undefined,
+    simulated: r.source === "SIMULATION",
+    timestamp: r.timestamp,
+  };
+  await writeDeviceSnapshot(db, r.ahuId, node);
+}
+
 test("listUtcDays spans day boundaries inclusively and caps", () => {
   deepStrictEqual(listUtcDays(Date.UTC(2026, 10, 9, 12, 0, 0), Date.UTC(2026, 10, 9, 13, 0, 0)), ["2026-11-09"]);
   deepStrictEqual(listUtcDays(Date.UTC(2026, 9, 31, 23, 0, 0), Date.UTC(2026, 10, 1, 1, 0, 0)), ["2026-10-31", "2026-11-01"]);
@@ -69,21 +92,21 @@ test("listUtcDays spans day boundaries inclusively and caps", () => {
 
 test("readTelemetryRange filters by range and source across day shards, ascending", async () => {
   const db = new InMemoryRtdb();
-  await writeTelemetryMirror(db, sample({ messageId: "d1-t1", timestamp: T0 + 1_000 }));
-  await writeTelemetryMirror(db, sample({ messageId: "d1-t2", timestamp: T0 + DAY + 2_000, source: "PHYSICAL" }));
-  await writeTelemetryMirror(db, sample({ messageId: "d2-t1", timestamp: T0 + DAY + 3_000 }));
-  await writeTelemetryMirror(db, sample({ messageId: "early", timestamp: T0 - 5_000 }));
-  await writeTelemetryMirror(db, sample({ messageId: "late", timestamp: T0 + 2 * DAY + 5_000 }));
+  await seedSnap(db, sample({ messageId: "d1-t1", timestamp: T0 + 1_000 }));
+  await seedSnap(db, sample({ messageId: "d1-t2", timestamp: T0 + DAY + 2_000, source: "PHYSICAL" }));
+  await seedSnap(db, sample({ messageId: "d2-t1", timestamp: T0 + DAY + 3_000 }));
+  await seedSnap(db, sample({ messageId: "early", timestamp: T0 - 5_000 }));
+  await seedSnap(db, sample({ messageId: "late", timestamp: T0 + 2 * DAY + 5_000 }));
 
   const all = await readTelemetryRange(db, "AHU-01", T0, T0 + 2 * DAY);
   deepStrictEqual(
-    all.map((r) => r.messageId),
-    ["d1-t1", "d1-t2", "d2-t1"],
+    all.map((r) => r.timestamp),
+    [T0 + 1_000, T0 + DAY + 2_000, T0 + DAY + 3_000],
     "in-range only, ascending across shards",
   );
 
   const physical = await readTelemetryRange(db, "AHU-01", T0, T0 + 2 * DAY, "PHYSICAL");
-  deepStrictEqual(physical.map((r) => r.messageId), ["d1-t2"]);
+  deepStrictEqual(physical.map((r) => r.timestamp), [T0 + DAY + 2_000]);
 
   const perUnit = await readTelemetryRange(db, "AHU-02", T0, T0 + 2 * DAY);
   deepStrictEqual(perUnit, []);
@@ -91,7 +114,7 @@ test("readTelemetryRange filters by range and source across day shards, ascendin
 
 test("readTelemetryRange rejects (no partial result) when a shard read fails", async () => {
   const db = new InMemoryRtdb();
-  await writeTelemetryMirror(db, sample({ messageId: "ok" }));
+  await seedSnap(db, sample({ messageId: "ok" }));
   const flaky: RtdbAdapter = {
     get: async <T,>(path: string) => {
       if (path.includes("/2026-11-10")) throw new Error("shard hiccup");
@@ -237,21 +260,21 @@ test("buildReportFromRows: summary, stats with fallback exclusion, buckets, samp
 test("pruneTelemetryShards removes only shards older than the retention window", async () => {
   const db = new InMemoryRtdb();
   const now = T0 + 12 * 3600_000; // Nov 9 12:00 UTC
-  await writeTelemetryMirror(db, sample({ messageId: "old-1", timestamp: Date.UTC(2026, 10, 7, 5, 0, 0) }));
-  await writeTelemetryMirror(db, sample({ messageId: "edge-1", timestamp: Date.UTC(2026, 10, 8, 5, 0, 0) }));
-  await writeTelemetryMirror(db, sample({ messageId: "today-1", timestamp: T0 + 3600_000 }));
+  await seedSnap(db, sample({ messageId: "old-1", timestamp: Date.UTC(2026, 10, 7, 5, 0, 0) }));
+  await seedSnap(db, sample({ messageId: "edge-1", timestamp: Date.UTC(2026, 10, 8, 5, 0, 0) }));
+  await seedSnap(db, sample({ messageId: "today-1", timestamp: T0 + 3600_000 }));
 
   const removed = await pruneTelemetryShards(db, ["AHU-01", "AHU-02"], 1, now, "2026-11-07");
   equal(removed, 1, "only the Nov 7 shard exists and is pruned");
-  equal(await db.get("telemetry/AHU-01/2026-11-07"), null, "old shard gone");
+  equal(await db.get("deviceHistory/AHU-01/2026-11-07"), null, "old shard gone");
   equal(
-    (await db.get<RtdbTelemetryRecord>("telemetry/AHU-01/2026-11-08/edge-1"))?.messageId,
-    "edge-1",
+    (await db.get<Record<string, unknown>>("deviceHistory/AHU-01/2026-11-08")) !== null,
+    true,
     "within-window shard kept (record is one level below the shard)",
   );
   equal(
-    (await db.get<RtdbTelemetryRecord>("telemetry/AHU-01/2026-11-09/today-1"))?.messageId,
-    "today-1",
+    (await db.get<Record<string, unknown>>("deviceHistory/AHU-01/2026-11-09")) !== null,
+    true,
     "today kept",
   );
   // second sweep is a clean no-op
@@ -260,31 +283,31 @@ test("pruneTelemetryShards removes only shards older than the retention window",
 
 test("streamTelemetryRangeDescending: newest-first, source filter, bounded chunks", async () => {
   const db = new InMemoryRtdb();
-  await writeTelemetryMirror(db, sample({ messageId: "d1-a", timestamp: T0 + 1_000 }));
-  await writeTelemetryMirror(db, sample({ messageId: "d1-b", timestamp: T0 + 2_000, source: "PHYSICAL" }));
-  await writeTelemetryMirror(db, sample({ messageId: "d2-a", timestamp: T0 + DAY + 3_000 }));
-  await writeTelemetryMirror(db, sample({ messageId: "out", timestamp: T0 + 5 * DAY }));
+  await seedSnap(db, sample({ messageId: "d1-a", timestamp: T0 + 1_000 }));
+  await seedSnap(db, sample({ messageId: "d1-b", timestamp: T0 + 2_000, source: "PHYSICAL" }));
+  await seedSnap(db, sample({ messageId: "d2-a", timestamp: T0 + DAY + 3_000 }));
+  await seedSnap(db, sample({ messageId: "out", timestamp: T0 + 5 * DAY }));
 
-  const chunks: string[][] = [];
+  const chunks: number[][] = [];
   for await (const chunk of streamTelemetryRangeDescending(db, "AHU-01", T0, T0 + 2 * DAY, "ALL", 2)) {
-    chunks.push(chunk.map((r) => r.messageId));
+    chunks.push(chunk.map((r) => r.timestamp));
   }
-  deepStrictEqual(chunks.flat(), ["d2-a", "d1-b", "d1-a"], "newest day first, newest record first");
+  deepStrictEqual(chunks.flat(), [T0 + DAY + 3_000, T0 + 2_000, T0 + 1_000], "newest day first, newest record first");
   deepStrictEqual(chunks.map((c) => c.length), [1, 2], "chunk size respected");
 
-  const physical: string[] = [];
+  const physical: number[] = [];
   for await (const chunk of streamTelemetryRangeDescending(db, "AHU-01", T0, T0 + 2 * DAY, "PHYSICAL", 10)) {
-    physical.push(...chunk.map((r) => r.messageId));
+    physical.push(...chunk.map((r) => r.timestamp));
   }
-  deepStrictEqual(physical, ["d1-b"]);
+  deepStrictEqual(physical, [T0 + 2_000]);
 });
 
 test("getSeries reads the RTDB mirror with the authoritative-source approximation", async () => {
   const db = new InMemoryRtdb();
   const base = Date.now();
-  await writeTelemetryMirror(db, sample({ messageId: "sim-1", timestamp: base - 120_000, supplyTemp: 10 }));
-  await writeTelemetryMirror(db, sample({ messageId: "sim-2", timestamp: base - 60_000, supplyTemp: 11 }));
-  await writeTelemetryMirror(db, sample({ messageId: "phys-1", timestamp: base - 30_000, source: "PHYSICAL", supplyTemp: 20 }));
+  await seedSnap(db, sample({ messageId: "sim-1", timestamp: base - 120_000, supplyTemp: 10 }));
+  await seedSnap(db, sample({ messageId: "sim-2", timestamp: base - 60_000, supplyTemp: 11 }));
+  await seedSnap(db, sample({ messageId: "phys-1", timestamp: base - 30_000, source: "PHYSICAL", supplyTemp: 20 }));
 
   const rtdbSeries = await getSeries("AHU-01", 5, db);
   deepStrictEqual(rtdbSeries.points.map((p) => p.source), ["PHYSICAL"], "physical presence drops simulation samples");
@@ -298,8 +321,8 @@ test("getSeries reads the RTDB mirror with the authoritative-source approximatio
 
 test("streamReportCsv streams RTDB shards newest-first; empty range emits header", async () => {
   const db = new InMemoryRtdb();
-  await writeTelemetryMirror(db, sample({ messageId: "csv-1", timestamp: T0 + 1_000, supplyTemp: 14.5 }));
-  await writeTelemetryMirror(db, sample({ messageId: "csv-2", timestamp: T0 + 2_000, supplyTemp: 15.5 }));
+  await seedSnap(db, sample({ messageId: "csv-1", timestamp: T0 + 1_000, supplyTemp: 14.5 }));
+  await seedSnap(db, sample({ messageId: "csv-2", timestamp: T0 + 2_000, supplyTemp: 15.5 }));
 
   const csv = await readAllCsv(
     streamReportCsv({ ahuId: "AHU-01", from: new Date(T0), to: new Date(T0 + DAY), source: "ALL" }, db),
@@ -307,8 +330,8 @@ test("streamReportCsv streams RTDB shards newest-first; empty range emits header
   const lines = csv.trim().split("\n");
   equal(lines[0].startsWith("timestamp,source,message_id,run_state,fault_code,"), true, "header first");
   equal(lines.length, 3, "header + 2 rows");
-  equal(lines[1].includes("csv-2"), true, "newest row first");
-  equal(lines[2].includes("csv-1"), true);
+  equal(lines[1].includes(String(T0 + 2_000)), true, "newest row first");
+  equal(lines[2].includes(String(T0 + 1_000)), true);
 
   const empty = await readAllCsv(
     streamReportCsv({ ahuId: "AHU-02", from: new Date(T0), to: new Date(T0 + DAY), source: "ALL" }, db),

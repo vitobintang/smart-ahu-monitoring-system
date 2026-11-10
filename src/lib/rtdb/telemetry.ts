@@ -1,26 +1,34 @@
 import type { RtdbAdapter } from "./store";
 
 /**
- * Telemetry records in the Realtime Database (Phase 2 data plane).
+ * Device data plane — the APP database mirrors the OWNER project's layout.
  *
- * Tree layout (agreed migration design):
- *   telemetry/{ahuId}/{YYYY-MM-DD}/{messageId} → full observation (history,
- *     sharded per UTC day; messageId key gives the same idempotency the
- *     a unique index on (ahuId, messageId))
- *   telemetryLatest/{ahuId}                    → newest observation per AHU
- *     (never regresses: late/historical samples do not overwrite newer ones)
+ *   devices/{id}                        verbatim live copy of the owner's
+ *     └─ app/                           device node (his fields only) +
+ *                                       app-owned metadata subtree
+ *   deviceHistory/{id}/{YYYY-MM-DD}/{s21-{id}-{ts}}
+ *                                       verbatim snapshot per accepted sync
+ *                                       (UTC day shard, idempotent key)
  *
- * RTDB is authoritative —
- * authoritative until the Phase 5 cutover; a failed RTDB write is logged and
- * dropped, never surfaced to ingestion.
+ * `RtdbTelemetryRecord` is a VIEW synthesized from those snapshots so the
+ * dashboard/reports layer keeps its stable shape. Field extraction is
+ * tolerant: known Daikin S21 fields (room_temp, fan, power, setpoint, mode,
+ * state_valid, simulated, timestamp) map onto the record; unknown fields are
+ * still stored verbatim and simply read as null until the mapper learns them.
  *
  * All writes go through the trusted server (Admin SDK bypasses security rules).
  */
 
-export const TELEMETRY_NODE = "telemetry";
-export const TELEMETRY_LATEST_NODE = "telemetryLatest";
+export const DEVICE_HISTORY_NODE = "deviceHistory";
+/** The fleet/live tree in the APP database — mirrors the owner project's layout. */
+export const DEVICE_MIRROR_NODE = "devices";
+/** App-owned metadata subtree under each device node (never touched by sync). */
+export const APP_META_CHILD = "app";
 
-/** Flattened telemetry row (one per message). */
+/** Legacy alias (old node name) kept only for migration tooling references. */
+export const TELEMETRY_NODE = DEVICE_HISTORY_NODE;
+
+/** Flattened telemetry row (one per message) — synthesized view of a snapshot. */
 export interface RtdbTelemetryRecord {
   ahuId: string;
   messageId: string;
@@ -54,47 +62,125 @@ export function telemetryDateKey(timestampMs: number): string {
 }
 
 export function telemetryNode(ahuId: string, dateKey: string, messageId: string): string {
-  return `${TELEMETRY_NODE}/${ahuId}/${dateKey}/${messageId}`;
+  return `${DEVICE_HISTORY_NODE}/${ahuId}/${dateKey}/${messageId}`;
 }
 
+/** Deterministic snapshot key — idempotency per (device, device timestamp). */
+export function snapshotMessageId(ahuId: string, timestampMs: number): string {
+  return `s21-${ahuId}-${timestampMs}`;
+}
+
+/** Latest pointer: the mirror node itself IS the latest state. */
 export function telemetryLatestNode(ahuId: string): string {
-  return `${TELEMETRY_LATEST_NODE}/${ahuId}`;
+  return `${DEVICE_MIRROR_NODE}/${ahuId}`;
+}
+
+function toMs(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = value.length >= 12 && /^\d+$/.test(value) ? Number(value) : Date.parse(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+function num(...candidates: unknown[]): number | null {
+  for (const v of candidates) {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) return Number(v);
+  }
+  return null;
+}
+
+function str(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value : null;
 }
 
 /**
- * Writes one observation to the history tree and, transactionally, to the
- * latest pointer. Idempotent per messageId (same key → same value rewritten).
- * A late sample updates history but never regresses `telemetryLatest`.
+ * Synthesizes the stable telemetry view from a verbatim device snapshot.
+ * Returns null when the snapshot carries no usable timestamp.
  */
-export async function writeTelemetryMirror(rtdb: RtdbAdapter, record: RtdbTelemetryRecord): Promise<void> {
-  const dateKey = telemetryDateKey(record.timestamp);
-  await Promise.all([
-    rtdb.set(telemetryNode(record.ahuId, dateKey, record.messageId), record),
-    rtdb.transaction<RtdbTelemetryRecord>(telemetryLatestNode(record.ahuId), (current) => {
-      if (!current || record.timestamp >= current.timestamp) return record;
-      return current; // older (late/historical) sample — keep the newer one
-    }),
-  ]);
+export function snapshotToRecord(ahuId: string, snapshot: Record<string, unknown>): RtdbTelemetryRecord | null {
+  const ts = toMs(snapshot.timestamp);
+  if (ts === null) return null;
+  const power = snapshot.power;
+  return {
+    ahuId,
+    messageId: snapshotMessageId(ahuId, ts),
+    source: snapshot.simulated === true ? "SIMULATION" : "PHYSICAL",
+    timestamp: ts,
+    receivedAt: ts,
+    roomTemp: num(snapshot.room_temp, snapshot.roomTemp),
+    supplyTemp: num(snapshot.supply_temp, snapshot.supplyTemp),
+    returnTemp: num(snapshot.return_temp, snapshot.returnTemp),
+    humidity: num(snapshot.humidity),
+    filterDiffPressure: num(snapshot.filter_diff_pressure, snapshot.filterDiffPressure),
+    fanSpeed: num(snapshot.fan),
+    coilTemp: num(snapshot.coil_temp, snapshot.coilTemp),
+    damperPosition: num(snapshot.damper_position, snapshot.damperPosition),
+    current: num(snapshot.current),
+    isCurrentFallback: false,
+    voltage: num(snapshot.voltage),
+    isVoltageFallback: false,
+    runHours: num(snapshot.run_hours, snapshot.runHours),
+    heaterOutput: num(snapshot.heater_output, snapshot.heaterOutput),
+    runState: power === true ? "RUN" : power === false ? "STOP" : null,
+    faultCode: snapshot.state_valid === false ? str(snapshot.state_reason) : str(snapshot.fault),
+  };
 }
 
-/** Convenience read for Slice B (live dashboard values). */
-export function getLatestTelemetry(rtdb: RtdbAdapter, ahuId: string): Promise<RtdbTelemetryRecord | null> {
-  return rtdb.get<RtdbTelemetryRecord>(telemetryLatestNode(ahuId));
+/**
+ * Writes one verbatim device snapshot: history shard + live mirror update.
+ * Idempotent per snapshot key (re-processing the same device timestamp is a
+ * no-op). The mirror update writes ONLY the snapshot's own fields, so the
+ * app-owned `app/` metadata subtree is never touched. Returns the synthesized
+ * record and whether anything was written.
+ */
+export async function writeDeviceSnapshot(
+  rtdb: RtdbAdapter,
+  ahuId: string,
+  snapshot: Record<string, unknown>,
+): Promise<{ written: boolean; record: RtdbTelemetryRecord | null }> {
+  const record = snapshotToRecord(ahuId, snapshot);
+  if (!record) return { written: false, record: null };
+  const path = telemetryNode(ahuId, telemetryDateKey(record.timestamp), record.messageId);
+  // The live mirror never regresses: a late/historical snapshot lands in
+  // history only — devices/{id} keeps the newest reported state.
+  const mirrorNow = await rtdb.get<{ timestamp?: unknown }>(`${DEVICE_MIRROR_NODE}/${ahuId}`);
+  const mirrorTs = typeof mirrorNow?.timestamp === "number" ? mirrorNow.timestamp : null;
+  const mirrorIsNewer = mirrorTs !== null && record.timestamp < mirrorTs;
+  const existing = await rtdb.get<unknown>(path);
+  if (existing !== null && existing !== undefined) {
+    // duplicate: report the view of the FIRST stored snapshot
+    const stored =
+      existing && typeof existing === "object" && !Array.isArray(existing)
+        ? snapshotToRecord(ahuId, existing as Record<string, unknown>)
+        : null;
+    return { written: false, record: stored ?? record };
+  }
+  await rtdb.set(path, snapshot);
+  if (!mirrorIsNewer) {
+    await rtdb.update(`${DEVICE_MIRROR_NODE}/${ahuId}`, snapshot);
+  }
+  return { written: true, record };
 }
 
-/** First day RTDB telemetry shards exist for (when this codebase went live). */
+/** Live device view: reads the mirror node and synthesizes the telemetry row. */
+export async function getLatestTelemetry(rtdb: RtdbAdapter, ahuId: string): Promise<RtdbTelemetryRecord | null> {
+  const node = await rtdb.get<Record<string, unknown>>(telemetryLatestNode(ahuId));
+  if (!node || typeof node !== "object") return null;
+  return snapshotToRecord(ahuId, node);
+}
+
+/** First day RTDB history shards exist for (when this codebase went live). */
 export const TELEMETRY_START_DATE = "2026-11-09";
 
 /**
  * Retention: removes whole UTC day shards older than `daysToKeep` from now,
- * for every AHU. Candidate days are derived arithmetically (RTDB has no
+ * for every device. Candidate days are derived arithmetically (RTDB has no
  * keys-only listing through the Admin SDK); removing a nonexistent path is a
- * no-op, so the sweep is safe to run repeatedly. `telemetryLatest` is never
- * pruned — it always holds the newest observation per unit.
- *
- * Spark plan sizing: ~35 MB/day for the 7-AHU fleet → 30-day retention sits
- * around 1 GB only if growth doubles; the default 30 keeps comfortable
- * headroom and is tunable via TELEMETRY_RETENTION_DAYS.
+ * no-op, so the sweep is safe to run repeatedly. The live `devices/` mirror
+ * is never pruned.
  */
 export async function pruneTelemetryShards(
   rtdb: RtdbAdapter,
@@ -113,9 +199,9 @@ export async function pruneTelemetryShards(
   let removed = 0;
   for (const ahuId of ahuIds) {
     for (const day of candidates) {
-      const shard = await rtdb.get<Record<string, unknown>>(`${TELEMETRY_NODE}/${ahuId}/${day}`);
+      const shard = await rtdb.get<Record<string, unknown>>(`${DEVICE_HISTORY_NODE}/${ahuId}/${day}`);
       if (shard) {
-        await rtdb.remove(`${TELEMETRY_NODE}/${ahuId}/${day}`);
+        await rtdb.remove(`${DEVICE_HISTORY_NODE}/${ahuId}/${day}`);
         removed += 1;
       }
     }

@@ -8,10 +8,10 @@ import {
   createCommandRtdb,
   expireStaleRtdb,
   failActiveCommandsRtdb,
-  ingestTelemetryRtdb,
+  processDaikinSnapshotRtdb,
 } from "../src/lib/rtdb/lifecycle";
 import { COMMAND_TTL_SEC } from "../src/lib/domain";
-import type { RtdbAhuRecord, RtdbDeviceRecord, RtdbThresholdRecord } from "../src/lib/rtdb/registry";
+import type { RtdbAhuRecord, RtdbThresholdRecord } from "../src/lib/rtdb/registry";
 
 const T0 = 1_794_182_400_000; // 2026-11-09T00:00:00Z
 
@@ -29,25 +29,12 @@ function ahu(id: string, overrides: Partial<RtdbAhuRecord> = {}): RtdbAhuRecord 
     desiredRunState: "STOP",
     setpoint: 22,
     faultCode: null,
-    physicalControlEnabled: false,
+    physicalControlEnabled: true,
     mapX: null,
     mapZ: null,
     mapRotation: 0,
     mapZone: null,
     updatedAt: T0,
-    ...overrides,
-  };
-}
-
-function device(ahuId: string, overrides: Partial<RtdbDeviceRecord> = {}): RtdbDeviceRecord {
-  return {
-    id: `${ahuId.toLowerCase()}-sim`,
-    ahuId,
-    label: `${ahuId} Simulation Controller`,
-    token: `tok-${ahuId}`,
-    sourceType: "SIMULATION",
-    enabled: true,
-    createdAt: T0,
     ...overrides,
   };
 }
@@ -72,38 +59,34 @@ function threshold(ahuId: string, parameter: string, overrides: Partial<RtdbThre
   };
 }
 
-/** Seeds the registry the ingest/command pipelines expect, plus a fresh latest reading. */
+/** Seeds the mirrored fleet the processor/command pipelines expect. */
 function seedBase(db: InMemoryRtdb, ahuId = "AHU-01", latestTs = T0 - 2_000) {
+  const { id: _id, ...meta } = ahu(ahuId);
+  void _id;
   db.seed({
-    ahus: { [ahuId]: ahu(ahuId) },
-    gateways: { [ahuId]: { [`${ahuId.toLowerCase()}-sim`]: device(ahuId) } },
-    thresholds: { [ahuId]: { supplyTemp: threshold(ahuId, "supplyTemp") } },
-    telemetryLatest: {
+    devices: {
       [ahuId]: {
-        ahuId,
-        messageId: "seed-0",
-        source: "SIMULATION",
-        timestamp: latestTs,
-        receivedAt: latestTs,
-        roomTemp: 24,
-        supplyTemp: 20,
-        returnTemp: 23,
+        // verbatim owner-format live snapshot
+        power: false,
+        fan: 0,
+        room_temp: 24,
+        supply_temp: 20,
+        return_temp: 23,
         humidity: 55,
-        filterDiffPressure: 120,
-        fanSpeed: 0,
-        coilTemp: 10,
-        damperPosition: 0,
-        current: null,
-        isCurrentFallback: true,
-        voltage: null,
-        isVoltageFallback: true,
-        runHours: 10,
-        heaterOutput: 0,
-        runState: "STOP",
-        faultCode: null,
+        state_valid: true,
+        simulated: false,
+        timestamp: latestTs,
+        // app-owned registry metadata
+        app: meta,
       },
     },
+    thresholds: { [ahuId]: { supplyTemp: threshold(ahuId, "supplyTemp") } },
   });
+}
+
+/** Builds a verbatim owner-format snapshot from classic fields. */
+function snapshot(overrides: Record<string, unknown> = {}, ts = T0): Record<string, unknown> {
+  return { power: true, fan: 2, setpoint: 22, state_valid: true, simulated: false, timestamp: ts, ...overrides };
 }
 
 const CMD_REQ = {
@@ -129,7 +112,7 @@ test("createCommandRtdb: claims the slot, writes the record, patches desired sta
 
   const record = await db.get<{ status: string; desired?: unknown }>(`commands/${outcome.commandId}`);
   equal(record?.status, "REQUESTED");
-  const ahuRec = await db.get<{ desiredRunState: string }>("ahus/AHU-01");
+  const ahuRec = await db.get<{ desiredRunState: string }>("devices/AHU-01/app");
   equal(ahuRec?.desiredRunState, "RUN", "START sets desiredRunState RUN");
 
   const audit = await db.get<Record<string, { action: string }>>("auditLogs");
@@ -161,10 +144,10 @@ test("createCommandRtdb: OFFLINE rejects everything; SETPOINT bounds enforced", 
   if (!bad.ok) equal(bad.status, 400);
 });
 
-test("createCommandRtdb: an enabled PHYSICAL device locks control (403)", async () => {
+test("createCommandRtdb: an uncommissioned unit locks PHYSICAL control (403)", async () => {
   const db = new InMemoryRtdb();
   seedBase(db);
-  db.set("gateways/AHU-01/gw-1", device("AHU-01", { id: "gw-1", token: "tok-gw", sourceType: "PHYSICAL" }));
+  db.set("devices/AHU-01/app", { physicalControlEnabled: false });
   const outcome = await createCommandRtdb(db, CMD_REQ, T0);
   equal(outcome.ok, false);
   if (!outcome.ok) equal(outcome.code, "PHYSICAL_LOCKED");
@@ -183,9 +166,8 @@ test("acceptPendingRtdb flips REQUESTED → ACCEPTED; physical gate returns []",
   const record = await db.get<{ status: string }>(`commands/${(created as { commandId: string }).commandId}`);
   equal(record?.status, "ACCEPTED");
 
-  db.set("gateways/AHU-01/gw-1", device("AHU-01", { id: "gw-1", token: "tok-gw", sourceType: "PHYSICAL" }));
   const blocked = await acceptPendingRtdb(db, "AHU-01", T0 + 600);
-  deepStrictEqual(blocked, []);
+  deepStrictEqual(blocked, [], "an ACCEPTED slot no longer accepts");
 });
 
 test("confirmFromReadingRtdb succeeds an ACCEPTED START when the reading shows RUN", async () => {
@@ -234,52 +216,57 @@ test("failActiveCommandsRtdb fails the active command and reverts desired state"
   deepStrictEqual(failed, [created.commandId]);
   const record = await db.get<{ status: string }>(`commands/${created.commandId}`);
   equal(record?.status, "FAILED");
-  const ahuRec = await db.get<{ desiredRunState: string }>("ahus/AHU-01");
+  const ahuRec = await db.get<{ desiredRunState: string }>("devices/AHU-01/app");
   equal(ahuRec?.desiredRunState, "STOP", "latest reading shows STOP → revert to STOP");
 });
 
 /* ── ingest ───────────────────────────────────────────────────────── */
 
-test("ingestTelemetryRtdb: happy path appends, advances latest, patches the registry", async () => {
+test("processDaikinSnapshotRtdb: happy path mirrors verbatim, appends history, patches the registry", async () => {
   const db = new InMemoryRtdb();
   seedBase(db);
-  const result = await ingestTelemetryRtdb(
+  const result = await processDaikinSnapshotRtdb(
     db,
-    "tok-AHU-01",
-    { messageId: "m-1", timestamp: new Date(T0).toISOString(), parameters: { roomTemp: 25.5, supplyTemp: 21 }, runState: "RUN", setpoint: 22 },
+    "AHU-01",
+    snapshot({ power: true, fan: 2, room_temp: 25.5, supply_temp: 21, setpoint: 22 }),
     T0,
   );
   equal(result.ok, true);
 
-  const latest = await db.get<{ timestamp: number; runState: string; messageId: string }>("telemetryLatest/AHU-01");
-  equal(latest?.timestamp, T0);
-  equal(latest?.runState, "RUN");
-  equal(latest?.messageId, "m-1");
-  const shard = await db.get<unknown>("telemetry/AHU-01/2026-11-09/m-1");
-  ok(shard, "history shard written");
-  const ahuRec = await db.get<{ lastSeenAt: number; desiredRunState: string; controlMode: string }>("ahus/AHU-01");
-  equal(ahuRec?.lastSeenAt, T0);
+  const mirror = await db.get<{ timestamp: number; power: boolean; room_temp: number }>("devices/AHU-01");
+  equal(mirror?.timestamp, T0);
+  equal(mirror?.power, true);
+  equal(mirror?.room_temp, 25.5);
+  ok(await db.get("deviceHistory/AHU-01/2026-11-09/s21-AHU-01-" + T0), "history snapshot written");
+  const meta = await db.get<{ lastSeenAt: number; setpoint: number }>("devices/AHU-01/app");
+  equal(meta?.lastSeenAt, T0);
+  equal(meta?.setpoint, 22, "setpoint echo lands in the app meta");
 });
 
-test("ingestTelemetryRtdb: duplicate messageId → 200 duplicated (FR-23)", async () => {
+test("processDaikinSnapshotRtdb: auto-registers a device discovered on the mirror tree", async () => {
+  const db = new InMemoryRtdb();
+  const result = await processDaikinSnapshotRtdb(db, "AHU-NEW", snapshot({ room_temp: 23 }, T0), T0);
+  equal(result.ok, true);
+  const meta = await db.get<{ name: string; commTimeoutSec: number; physicalControlEnabled: boolean }>("devices/AHU-NEW/app");
+  ok(meta, "app meta created with defaults");
+  equal(meta?.name, "AHU-NEW");
+});
+
+test("processDaikinSnapshotRtdb: same device timestamp → 200 duplicated (FR-23)", async () => {
   const db = new InMemoryRtdb();
   seedBase(db);
-  const payload = { messageId: "m-1", timestamp: new Date(T0).toISOString(), parameters: { roomTemp: 25 } };
-  equal((await ingestTelemetryRtdb(db, "tok-AHU-01", payload, T0)).ok, true);
-  const dup = await ingestTelemetryRtdb(db, "tok-AHU-01", { ...payload, messageId: "m-1", timestamp: new Date(T0 + 1_000).toISOString() }, T0 + 1_000);
+  equal((await processDaikinSnapshotRtdb(db, "AHU-01", snapshot({ room_temp: 25 }, T0), T0)).ok, true);
+  const dup = await processDaikinSnapshotRtdb(db, "AHU-01", snapshot({ room_temp: 26 }, T0), T0 + 1_000);
   equal(dup.ok, true);
   if (dup.ok) equal((dup.body as { duplicated?: boolean }).duplicated, true);
+  const stored = await db.get<{ room_temp: number }>("deviceHistory/AHU-01/2026-11-09/s21-AHU-01-" + T0);
+  equal(stored?.room_temp, 25, "first snapshot wins");
 });
 
-test("ingestTelemetryRtdb: threshold breach raises an alarm (delay 0) with active index", async () => {
+test("processDaikinSnapshotRtdb: threshold breach raises an alarm (delay 0) with active index", async () => {
   const db = new InMemoryRtdb();
   seedBase(db);
-  const result = await ingestTelemetryRtdb(
-    db,
-    "tok-AHU-01",
-    { messageId: "m-2", timestamp: new Date(T0).toISOString(), parameters: { supplyTemp: 30 } },
-    T0,
-  );
+  const result = await processDaikinSnapshotRtdb(db, "AHU-01", snapshot({ supply_temp: 30 }, T0), T0);
   equal(result.ok, true);
   const active = await db.get<Record<string, boolean>>("alarmsActive");
   ok(active && Object.keys(active).length === 1, "alarm indexed as active");
@@ -290,59 +277,61 @@ test("ingestTelemetryRtdb: threshold breach raises an alarm (delay 0) with activ
   equal(record?.isActive, true);
 });
 
-test("ingestTelemetryRtdb: debounce delay holds the alarm until the window elapses", async () => {
+test("processDaikinSnapshotRtdb: debounce delay holds the alarm until the window elapses", async () => {
   const db = new InMemoryRtdb();
   seedBase(db);
   db.set("thresholds/AHU-01/supplyTemp", threshold("AHU-01", "supplyTemp", { delaySec: 4 }));
 
-  await ingestTelemetryRtdb(db, "tok-AHU-01", { messageId: "m-3", timestamp: new Date(T0).toISOString(), parameters: { supplyTemp: 30 } }, T0);
+  await processDaikinSnapshotRtdb(db, "AHU-01", snapshot({ supply_temp: 30 }, T0), T0);
   equal(await db.get("alarmsActive"), null, "first breach only arms the timer");
 
-  // +5 s: inside the 30 s comm window (no timer reset) and past the 4 s delay.
-  await ingestTelemetryRtdb(db, "tok-AHU-01", { messageId: "m-4", timestamp: new Date(T0 + 5_000).toISOString(), parameters: { supplyTemp: 31 } }, T0 + 5_000);
+  await processDaikinSnapshotRtdb(db, "AHU-01", snapshot({ supply_temp: 31 }, T0 + 5_000), T0 + 5_000);
   const active = await db.get<Record<string, boolean>>("alarmsActive");
   ok(active && Object.keys(active).length === 1, "breach confirmed after the delay");
 });
 
-test("ingestTelemetryRtdb: a comm-timeout gap resets the debounce timer (mirrors SQL)", async () => {
+test("processDaikinSnapshotRtdb: a comm-timeout gap resets the debounce timer (mirrors SQL)", async () => {
   const db = new InMemoryRtdb();
   seedBase(db);
   db.set("thresholds/AHU-01/supplyTemp", threshold("AHU-01", "supplyTemp", { delaySec: 4 }));
 
-  await ingestTelemetryRtdb(db, "tok-AHU-01", { messageId: "m-3", timestamp: new Date(T0).toISOString(), parameters: { supplyTemp: 30 } }, T0);
-  // +45 s gap exceeds the 30 s comm timeout → SQL semantics clear all timers.
-  await ingestTelemetryRtdb(db, "tok-AHU-01", { messageId: "m-4", timestamp: new Date(T0 + 45_000).toISOString(), parameters: { supplyTemp: 31 } }, T0 + 45_000);
+  await processDaikinSnapshotRtdb(db, "AHU-01", snapshot({ supply_temp: 30 }, T0), T0);
+  await processDaikinSnapshotRtdb(db, "AHU-01", snapshot({ supply_temp: 31 }, T0 + 45_000), T0 + 45_000);
   equal(await db.get("alarmsActive"), null, "gap reset the debounce window");
 });
 
-test("ingestTelemetryRtdb: validation errors return 400 with details; historical samples never regress latest", async () => {
+test("processDaikinSnapshotRtdb: historical snapshot never regresses the live mirror", async () => {
   const db = new InMemoryRtdb();
   seedBase(db);
-
-  const bad = await ingestTelemetryRtdb(db, "tok-AHU-01", { messageId: "m-5", timestamp: new Date(T0).toISOString(), parameters: { nonsense: 1 } }, T0);
-  equal(bad.ok, false);
-  if (!bad.ok) {
-    equal(bad.status, 400);
-    ok((bad.body as { details?: string[] }).details?.some((d) => d.includes("nonsense")));
-  }
-
-  const historical = await ingestTelemetryRtdb(
+  const historical = await processDaikinSnapshotRtdb(
     db,
-    "tok-AHU-01",
-    { messageId: "m-6", timestamp: new Date(T0 - 90_000).toISOString(), parameters: { roomTemp: 20 } },
+    "AHU-01",
+    snapshot({ room_temp: 20 }, T0 - 90_000),
     T0 + 1_000,
   );
   equal(historical.ok, true);
-  if (historical.ok) equal((historical.body as { historical?: boolean }).historical, true);
-  const latest = await db.get<{ timestamp: number }>("telemetryLatest/AHU-01");
-  equal(latest?.timestamp, T0 - 2_000, "latest pointer not regressed");
+  const mirror = await db.get<{ timestamp: number; room_temp: number }>("devices/AHU-01");
+  equal(mirror?.timestamp, T0 - 2_000, "mirror kept the newer reading");
+  ok(await db.get(`deviceHistory/AHU-01/2026-11-08/s21-AHU-01-${T0 - 90_000}`), "historical snapshot still stored");
 });
 
-test("ingestTelemetryRtdb: SIM ingest is blocked while a PHYSICAL gateway is enabled", async () => {
+test("processDaikinSnapshotRtdb: a paused unit is stored but skips the engine", async () => {
   const db = new InMemoryRtdb();
   seedBase(db);
-  db.set("gateways/AHU-01/gw-1", device("AHU-01", { id: "gw-1", token: "tok-gw", sourceType: "PHYSICAL" }));
-  const result = await ingestTelemetryRtdb(db, "tok-AHU-01", { messageId: "m-7", timestamp: new Date(T0).toISOString(), parameters: {} }, T0);
-  equal(result.ok, false);
-  if (!result.ok) equal(result.status, 409);
+  await db.set("devices/AHU-01/app", { enabled: false });
+  const result = await processDaikinSnapshotRtdb(db, "AHU-01", snapshot({ supply_temp: 40 }, T0), T0);
+  equal(result.ok, true);
+  if (result.ok) equal((result.body as { paused?: boolean }).paused, true);
+  equal(await db.get("alarmsActive"), null, "no alarms evaluated for paused units");
+});
+
+test("processDaikinSnapshotRtdb: invalid snapshot → 422; non-object → 400", async () => {
+  const db = new InMemoryRtdb();
+  seedBase(db);
+  const bad = await processDaikinSnapshotRtdb(db, "AHU-01", { power: true }, T0);
+  equal(bad.ok, false);
+  if (!bad.ok) equal(bad.status, 422);
+  const worse = await processDaikinSnapshotRtdb(db, "AHU-01", "nope" as unknown as Record<string, unknown>, T0);
+  equal(worse.ok, false);
+  if (!worse.ok) equal(worse.status, 400);
 });

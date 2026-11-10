@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { deepStrictEqual } from "node:assert/strict";
 import test from "node:test";
 import { equal } from "node:assert/strict";
 
@@ -14,10 +15,10 @@ import {
   writeDaikinControl,
   writeDeviceOwnerToken,
 } from "../src/lib/rtdb/daikin";
-import { ingestTelemetryRtdb } from "../src/lib/rtdb/lifecycle";
+import { processDaikinSnapshotRtdb } from "../src/lib/rtdb/lifecycle";
 import { guardRtdbRoots } from "../src/lib/rtdb/store";
-import { rejects } from "node:assert/strict";
-import { setRtdbDevice, writeRtdbAhu } from "../src/lib/rtdb/registry";
+import { rejects, ok } from "node:assert/strict";
+import { writeRtdbAhu } from "../src/lib/rtdb/registry";
 import { createCommandRtdb, acceptPendingRtdb } from "../src/lib/rtdb/lifecycle";
 
 const OWNER_NODE = "devices/GTM-DAIKIN-001";
@@ -63,29 +64,10 @@ function ahu(overrides: Record<string, unknown> = {}) {
 }
 
 async function seedIntegration(rtdb: RtdbAdapter, overrides: Record<string, unknown> = {}) {
+  // The owner's live bridge node FIRST (a full-node set mirrors what the owner
+  // tree holds), then the app registry metadata at devices/{id}/app.
+  await rtdb.set(OWNER_NODE, { ...OWNER_RECORD, power: true, room_temp: 27.4, timestamp: Date.now() });
   await writeRtdbAhu(rtdb, ahu(overrides));
-  await setRtdbDevice(rtdb, {
-    id: "bridge-1",
-    ahuId: "GTM-DAIKIN-001",
-    label: "Daikin S21 Bridge (system)",
-    token: "tok-s21",
-    sourceType: "PHYSICAL",
-    enabled: true,
-    createdAt: 1,
-  });
-  // The owner's live bridge node (control write-through target).
-  await rtdb.set(OWNER_NODE, { ...OWNER_RECORD, power: true });
-  // A fresh latest sample keeps the FR-27 OFFLINE gate open for control.
-  await rtdb.set("telemetryLatest/GTM-DAIKIN-001", {
-    ahuId: "GTM-DAIKIN-001",
-    messageId: "seed-latest",
-    source: "PHYSICAL",
-    timestamp: Date.now(),
-    receivedAt: Date.now(),
-    roomTemp: 27.4,
-    fanSpeed: null,
-    runState: "RUN",
-  });
 }
 
 test("isDaikinShape and readDaikinDevice recognize the owner's bridge record", async () => {
@@ -177,21 +159,24 @@ test("initialDaikinDeviceRecord is inert until the bridge reports (no phantom sa
   assert.equal(record.source, "web-registration");
 });
 
-test("ingest accepts the owner's pre-shared device token (PHYSICAL)", async () => {
+test("the sampler mirrors the owner node verbatim into the app database", async () => {
   const appDb: RtdbAdapter = new InMemoryRtdb();
-  await writeRtdbAhu(appDb, ahu());
-  const ownerDb: RtdbAdapter = new InMemoryRtdb();
-  await writeDeviceOwnerToken(ownerDb, "GTM-DAIKIN-001", "preshared-token-01");
-
-  const bad = await ingestTelemetryRtdb(appDb, "wrong-token", { messageId: "m-1", timestamp: new Date(1_760_000_000_000).toISOString(), parameters: { roomTemp: 25 } }, 1_760_000_000_000, ownerDb);
-  equal(bad.ok, false);
-  if (!bad.ok) equal(bad.status, 401);
-
-  const okResult = await ingestTelemetryRtdb(appDb, "preshared-token-01", { messageId: "m-1", timestamp: new Date(1_760_000_000_000).toISOString(), parameters: { roomTemp: 25 }, runState: "RUN" }, 1_760_000_000_000, ownerDb);
-  equal(okResult.ok, true);
-  const latest = await appDb.get<{ ahuId: string; source: string }>("telemetryLatest/GTM-DAIKIN-001");
-  equal(latest?.ahuId, "GTM-DAIKIN-001");
-  equal(latest?.source, "PHYSICAL");
+  const ts = 1_794_182_400_000; // 2026-11-09T00:00:00Z
+  const ownerNode = { ...OWNER_RECORD, room_temp: 25.5, power: true, timestamp: ts };
+  const result = await processDaikinSnapshotRtdb(appDb, "GTM-DAIKIN-001", ownerNode, ts);
+  equal(result.ok, true);
+  deepStrictEqual(
+    await appDb.get(`deviceHistory/GTM-DAIKIN-001/2026-11-09/s21-GTM-DAIKIN-001-${ts}`),
+    ownerNode,
+    "verbatim history snapshot",
+  );
+  const mirror = await appDb.get<Record<string, unknown>>("devices/GTM-DAIKIN-001");
+  for (const [k, v] of Object.entries(ownerNode)) {
+    deepStrictEqual(mirror?.[k], v, `mirror field ${k} verbatim`);
+  }
+  const meta = await appDb.get<{ name: string }>("devices/GTM-DAIKIN-001/app");
+  ok(meta, "auto-registered app meta");
+  equal(meta?.name, "GTM-DAIKIN-001");
 });
 
 test("a commissioned physical bridge (physicalControlEnabled) accepts and writes control through", async () => {

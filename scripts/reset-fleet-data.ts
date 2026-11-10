@@ -25,11 +25,16 @@
 import { readFileSync } from "node:fs";
 
 const FLEET_NODES = [
+  // legacy layout (pre-mirror)
   "ahus",
   "gateways",
-  "thresholds",
   "telemetry",
   "telemetryLatest",
+  // mirrored Daikin layout (rebuilt automatically by the sampler)
+  "devices",
+  "deviceHistory",
+  // engine + feature nodes
+  "thresholds",
   "commands",
   "commandActive",
   "alarms",

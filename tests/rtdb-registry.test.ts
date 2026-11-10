@@ -7,16 +7,13 @@ import { commandToRow } from "../src/lib/rtdb/commands";
 import {
   readRtdbAhu,
   readRtdbAhus,
-  readRtdbDeviceByToken,
   readRtdbDevices,
   readRtdbEnabledSourceTypes,
   readRtdbThresholds,
   ahuToRow,
   deviceToRow,
   patchRtdbAhu,
-  removeRtdbDevice,
   removeRtdbThreshold,
-  setRtdbDevice,
   setRtdbThreshold,
   thresholdToRow,
   writeRtdbAhu,
@@ -24,6 +21,7 @@ import {
   type RtdbDeviceRecord,
   type RtdbThresholdRecord,
 } from "../src/lib/rtdb/registry";
+import { writeDeviceSnapshot } from "../src/lib/rtdb/telemetry";
 import {
   ackRtdbTrendAlert,
   readRtdbTrendCounts,
@@ -64,19 +62,6 @@ function ahu(id: string, overrides: Partial<RtdbAhuRecord> = {}): RtdbAhuRecord 
     mapRotation: 0,
     mapZone: null,
     updatedAt: T0,
-    ...overrides,
-  };
-}
-
-function device(id: string, ahuId: string, overrides: Partial<RtdbDeviceRecord> = {}): RtdbDeviceRecord {
-  return {
-    id,
-    ahuId,
-    label: `Logger ${id}`,
-    token: `tok-${id}`,
-    sourceType: "SIMULATION",
-    enabled: true,
-    createdAt: T0,
     ...overrides,
   };
 }
@@ -123,26 +108,32 @@ test("ahu registry: write, patch and read round-trip; ahuToRow maps Dates", asyn
   equal("updatedAt" in row, false, "updatedAt is RTDB bookkeeping, not a PG column");
 });
 
-test("devices: set/remove, per-AHU and fleet reads, token auth, enabled-source gate", async () => {
+test("fleet: mirror-discovered devices synthesize defaults; app meta merges; sources gate", async () => {
   const db = new InMemoryRtdb();
-  await setRtdbDevice(db, device("d1", "AHU-01"));
-  await setRtdbDevice(db, device("d2", "AHU-01", { sourceType: "PHYSICAL", enabled: false }));
-  await setRtdbDevice(db, device("d3", "AHU-02"));
+  // a device discovered on the mirror tree, before any registration
+  await writeDeviceSnapshot(db, "AHU-01", { power: true, fan: 2, room_temp: 25, timestamp: T0 });
+  const discovered = await readRtdbAhu(db, "AHU-01");
+  equal(discovered?.name, "AHU-01", "defaults synthesized from the mirror node");
+  equal(discovered?.physicalControlEnabled, false);
 
-  deepStrictEqual((await readRtdbDevices(db, "AHU-01")).map((d) => d.id).sort(), ["d1", "d2"]);
-  equal((await readRtdbDevices(db)).length, 3);
+  // registration writes app meta; reads merge meta over defaults
+  await writeRtdbAhu(db, ahu("AHU-01", { physicalControlEnabled: true, enabled: true }));
+  await writeDeviceSnapshot(db, "AHU-01", { power: false, room_temp: 26, timestamp: T0 + 1_000 });
+  const rec = await readRtdbAhu(db, "AHU-01");
+  equal(rec?.name, "Unit AHU-01", "app meta wins over defaults");
+  equal(rec?.physicalControlEnabled, true);
+  equal(rec?.lastSeenAt, null, "registry fields live in app meta only");
 
-  const byToken = await readRtdbDeviceByToken(db, "tok-d1");
-  equal(byToken?.ahuId, "AHU-01");
-  equal(await readRtdbDeviceByToken(db, "tok-d2"), null, "disabled devices cannot authenticate");
-  equal(await readRtdbDeviceByToken(db, "missing"), null);
+  deepStrictEqual(await readRtdbEnabledSourceTypes(db, "AHU-01"), ["PHYSICAL", "SIMULATION"]);
+  await patchRtdbAhu(db, "AHU-01", { enabled: false });
+  deepStrictEqual(await readRtdbEnabledSourceTypes(db, "AHU-01"), [], "paused units expose no sources");
 
-  deepStrictEqual(await readRtdbEnabledSourceTypes(db, "AHU-01"), ["SIMULATION"]);
-
-  await removeRtdbDevice(db, "AHU-01", "d1");
-  equal((await readRtdbDevices(db, "AHU-01")).length, 1);
-  const row = deviceToRow(device("d3", "AHU-02")) as { createdAt: Date };
+  const rows = await readRtdbDevices(db);
+  equal(rows.length, 1);
+  equal(rows[0]?.sourceType, "PHYSICAL");
+  const row = deviceToRow(rows[0]!) as { createdAt: Date; token: string };
   equal(row.createdAt instanceof Date, true);
+  equal(row.token.includes("pre-shared"), true, "tokens are never exposed");
 });
 
 test("thresholds: set/remove, per-AHU and fleet reads, row mapper", async () => {

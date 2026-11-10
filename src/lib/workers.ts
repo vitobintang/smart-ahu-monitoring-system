@@ -1,11 +1,10 @@
 import { randomId } from "@/lib/ids";
 import type { AhuRow, DeviceRow } from "@/lib/types";
 import { acceptPendingCommands, expireStaleCommands, failActiveCommands, refreshAhuStatus } from "@/lib/engine";
-import { ingestTelemetry } from "@/lib/ingest";
 import { runTrendDetection } from "@/lib/trends";
 import { PARAM_MAP, type ParamKey } from "@/lib/domain";
 import { tryGetAhuRtdb } from "@/lib/rtdb/live-read";
-import { readRtdbAhus, readRtdbDevices } from "@/lib/rtdb/registry";
+import { readRtdbAhus } from "@/lib/rtdb/registry";
 import { getLatestTelemetry } from "@/lib/rtdb/telemetry";
 import type { RtdbAdapter } from "@/lib/rtdb/store";
 
@@ -240,16 +239,34 @@ async function simulateAhu(ahu: AhuRow, device: DeviceRow, tickSec: number) {
 
   const roundedFan = Math.round(state.fanSpeed);
 
-  await ingestTelemetry(device.token, {
-    ahuId: ahu.id,
-    messageId: randomId(),
-    timestamp: new Date().toISOString(),
-    parameters,
-    runState: ov.forcedFault ? "STOP" : roundedFan > 0 ? "RUN" : "STOP",
-    faultCode: ov.forcedFault,
+  // Daikin-shaped fabricated node — identical format to the owner's
+  // devices/{id} tree (simulated:true marks it as simulator data).
+  const node: Record<string, unknown> = {
+    power: ov.forcedFault ? false : roundedFan > 0,
     setpoint: ahu.setpoint,
-    controlMode: ahu.controlMode,
-  });
+    mode: ahu.controlMode === "MANUAL" ? "manual" : "cool",
+    fan: parameters.fanSpeed ?? 0,
+    state_valid: true,
+    simulated: true,
+    timestamp: Date.now(),
+  };
+  if (parameters.roomTemp !== undefined) node.room_temp = parameters.roomTemp;
+  if (parameters.supplyTemp !== undefined) node.supply_temp = parameters.supplyTemp;
+  if (parameters.returnTemp !== undefined) node.return_temp = parameters.returnTemp;
+  if (parameters.humidity !== undefined) node.humidity = parameters.humidity;
+  if (parameters.filterDiffPressure !== undefined) node.filter_diff_pressure = parameters.filterDiffPressure;
+  if (parameters.coilTemp !== undefined) node.coil_temp = parameters.coilTemp;
+  if (parameters.damperPosition !== undefined) node.damper_position = parameters.damperPosition;
+  if (parameters.current !== undefined) node.current = parameters.current;
+  if (parameters.voltage !== undefined) node.voltage = parameters.voltage;
+  if (parameters.runHours !== undefined) node.run_hours = parameters.runHours;
+  if (parameters.heaterOutput !== undefined) node.heater_output = parameters.heaterOutput;
+  if (ov.forcedFault) node.fault = ov.forcedFault;
+
+  const rtdb2 = await requireRtdb();
+  const { processDaikinSnapshotRtdb } = await import("@/lib/rtdb/lifecycle");
+  const result = await processDaikinSnapshotRtdb(rtdb2, ahu.id, node);
+  if (!result.ok) console.error(`[simulator] ${ahu.id} snapshot rejected:`, result.body.error);
 }
 
 export async function simulationTick() {
@@ -260,15 +277,16 @@ export async function simulationTick() {
   try {
     const rtdb = await requireRtdb();
     const registry = await readRtdbAhus(rtdb);
-    const allDevices = await readRtdbDevices(rtdb);
-    const devs = allDevices.filter((d) => d.sourceType === "SIMULATION" && d.enabled);
-    const physicalIds = new Set(allDevices.filter((d) => d.sourceType === "PHYSICAL" && d.enabled).map((d) => d.ahuId));
+    // Units fed by the owner's live tree win — the simulator never fabricates
+    // data over real device data.
+    const { tryGetOwnerRtdb } = await import("@/lib/firebase/admin");
+    const owner = await tryGetOwnerRtdb();
+    const ownerIds = new Set(Object.keys(((await owner?.get<Record<string, unknown>>("devices")) ?? {})));
 
     for (const record of [...registry.values()].sort((a, b) => a.id.localeCompare(b.id))) {
       const ahu = record as unknown as AhuRow;
-      if (physicalIds.has(ahu.id)) continue;
-      const device = devs.find((d) => d.ahuId === ahu.id);
-      if (!device) continue;
+      if (ownerIds.has(ahu.id)) continue;
+      if ((record as { enabled?: boolean }).enabled === false) continue;
       try {
         const ov = getOverride(ahu.id);
         if (ov.rejectCommands && !ov.commLoss) {
@@ -277,7 +295,7 @@ export async function simulationTick() {
             revertDesiredState: true,
           });
         }
-        await simulateAhu(ahu, device as unknown as DeviceRow, tickSec);
+        await simulateAhu(ahu, { id: `sim-${ahu.id}` } as unknown as DeviceRow, tickSec);
         if (!ov.rejectCommands) {
           await acceptPendingCommands(ahu.id);
         }
@@ -312,32 +330,21 @@ let monitorTickCount = 0;
  */
 export async function syncDaikinDevices(now = new Date()): Promise<number> {
   const rtdb = await requireRtdb();
-  const { readRtdbAhus } = await import("@/lib/rtdb/registry");
-  const { readDaikinDevice, mapDaikinToSample, readDeviceOwnerToken } = await import("@/lib/rtdb/daikin");
-  const { ingestTelemetryRtdb } = await import("@/lib/rtdb/lifecycle");
+  const { processDaikinSnapshotRtdb } = await import("@/lib/rtdb/lifecycle");
   const { tryGetOwnerRtdb } = await import("@/lib/firebase/admin");
   const owner = await tryGetOwnerRtdb();
   if (!owner) return 0;
 
-  const registry = await readRtdbAhus(rtdb);
+  // Enumerate the OWNER tree verbatim and mirror every device node into the
+  // app database (devices/{id} + deviceHistory/...). Units paused via
+  // app meta are skipped inside the processor.
+  const tree = (await owner.get<Record<string, unknown>>("devices")) ?? {};
   let ingested = 0;
-  for (const ahuId of registry.keys()) {
+  for (const [ahuId, node] of Object.entries(tree)) {
+    if (!node || typeof node !== "object" || Array.isArray(node)) continue;
     try {
-      const record = await readDaikinDevice(owner, ahuId);
-      if (!record) continue; // no bridge node on the owner tree for this unit
-      const deviceToken = await readDeviceOwnerToken(owner, ahuId);
-      if (!deviceToken) continue; // not registered (no pre-shared token yet)
-      const sample = mapDaikinToSample(record, ahuId, now.getTime());
-      if (!sample) continue;
-      const result = await ingestTelemetryRtdb(rtdb, deviceToken, {
-        ahuId,
-        messageId: sample.messageId,
-        timestamp: sample.timestampIso,
-        parameters: sample.parameters,
-        runState: sample.runState,
-        setpoint: sample.setpoint ?? null,
-      }, now.getTime(), owner);
-      if (result.ok && result.status === 200) ingested += 1;
+      const result = await processDaikinSnapshotRtdb(rtdb, ahuId, node as Record<string, unknown>, now.getTime());
+      if (result.ok && (result.status === 201 || result.status === 200)) ingested += 1;
     } catch (err) {
       console.error(`[daikin] sync failed for ${ahuId}:`, summarizeErr(err));
     }

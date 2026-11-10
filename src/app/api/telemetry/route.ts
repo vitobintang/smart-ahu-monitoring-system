@@ -1,28 +1,17 @@
-import { ingestTelemetry, type TelemetryPayload } from "@/lib/ingest";
-
 export const dynamic = "force-dynamic";
 
 /**
- * FR-22 secure telemetry ingestion endpoint.
- * Authentication: `Authorization: Bearer <device token>` (FR-21).
- * NFR-04: the historical row is committed inside a DB transaction BEFORE the
- * success response is returned.
+ * Push ingestion is RETIRED. Devices report through the OWNER Firebase tree
+ * (devices/{id}); the app's sampler mirrors them into this database. There is
+ * no push endpoint anymore — the pre-shared device tokens live in the owner
+ * project's deviceOwners/{id} and are never accepted here.
  */
-export async function POST(req: Request) {
-  const auth = req.headers.get("authorization") ?? "";
-  const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
-  const token = bearer || req.headers.get("x-device-token") || "";
-  if (!token) {
-    return Response.json({ error: "Missing device bearer token" }, { status: 401 });
-  }
-
-  let payload: TelemetryPayload;
-  try {
-    payload = (await req.json()) as TelemetryPayload;
-  } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
-
-  const result = await ingestTelemetry(token, payload);
-  return Response.json(result.body, { status: result.status });
+export async function POST(): Promise<Response> {
+  return Response.json(
+    {
+      error:
+        "Telemetry push ingestion is retired. Devices report via the owner Firebase devices/{id} tree; this API no longer accepts pushes.",
+    },
+    { status: 410 },
+  );
 }
