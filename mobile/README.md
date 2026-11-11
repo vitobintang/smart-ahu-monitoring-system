@@ -13,7 +13,7 @@ Capacitor-based Android and iOS client. This is a bundled React app; it does not
 
 1. Copy `.env.example` to `.env.local` in this directory.
 2. Set `VITE_API_BASE_URL` to the deployed Next.js API origin, for example `https://monitoring.example.com` (no trailing slash).
-3. Set the four `VITE_FIREBASE_*` public web-app values to the same Firebase Auth project used by the Next.js backend. Do not put service-account JSON or other Admin credentials in this file.
+3. Set the four `VITE_FIREBASE_AUTH_*` public web-app values from the AUTH/identity Firebase project (`daikinsmart-efeb7`, the project holding user sign-in). The APP-DATA (`smart-monitoring-ahu`) and OWNER/device Firebase projects are server-side only: their `FIREBASE_DATABASE_URL` / `FIREBASE_SERVICE_ACCOUNT_*` and `OWNER_DEVICES_*` settings stay on the Next.js API and are never bundled into the mobile app. This client deliberately does not connect directly to either RTDB.
 4. On the API deployment, include the Capacitor origins in CORS. Defaults are `capacitor://localhost` (iOS) and `https://localhost` (Android). Add only trusted exact origins to `MOBILE_APP_ORIGINS`; do not use `*`.
 5. Install/build the web client and sync native projects:
 
