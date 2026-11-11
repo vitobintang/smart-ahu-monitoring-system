@@ -11,6 +11,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "mobile:dev": "npm --prefix mobile run dev",
+    "mobile:build": "npm --prefix mobile run build",
+    "mobile:sync": "npm --prefix mobile run cap:sync",
     "emulator": "npx -y firebase-tools@^14 emulators:start --only database --project smart-monitoring-ahu",
     "typecheck": "tsc --noEmit"
   },
