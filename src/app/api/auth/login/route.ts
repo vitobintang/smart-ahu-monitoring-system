@@ -2,7 +2,7 @@ import { getClientIp, invalidateSessionCache, safePublicUser, sameOrigin, setCsr
 import { getFirebaseClientConfig } from "@/lib/firebase/config";
 import { FirebasePasswordAuthError, stageFirebasePassword } from "@/lib/firebase/password-auth";
 import { publishSessionCookie, SessionCookieOperationError } from "@/lib/firebase/session";
-import { getAhuRtdb } from "@/lib/firebase/admin";
+import { FirebaseAdminAuthInitializationError, getAhuRtdb } from "@/lib/firebase/admin";
 
 import { getRtdbUserByEmail, getRtdbUserByUsername } from "@/lib/rtdb/users";
 import {
@@ -165,10 +165,13 @@ export async function POST(req: Request) {
   } catch (err) {
     const operationError = err instanceof SessionCookieOperationError ? err : null;
     const underlyingError = operationError?.originalError ?? err;
+    const bootstrapError =
+      underlyingError instanceof FirebaseAdminAuthInitializationError ? underlyingError : null;
+    const rootError = bootstrapError?.originalError ?? underlyingError;
     console.error("[auth-login] Firebase Admin session-cookie creation failed", {
-      stage: operationError?.stage ?? "admin_session_cookie_creation",
-      reason: safeSessionFailureReason(underlyingError),
-      ...safeErrorMetadata(underlyingError),
+      stage: bootstrapError?.stage ?? operationError?.stage ?? "admin_session_cookie_creation",
+      reason: safeSessionFailureReason(rootError),
+      ...safeErrorMetadata(rootError),
     });
     await staged.discard();
     return Response.json({ error: "Authentication unavailable. Try again shortly." }, { status: 503 });
