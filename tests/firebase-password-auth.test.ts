@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import { equal, doesNotThrow, rejects } from "node:assert/strict";
 
-import { stageFirebasePassword, getIdentityToolkitUrl } from "../src/lib/firebase/password-auth";
+import {
+  FirebasePasswordAuthError,
+  stageFirebasePassword,
+  getIdentityToolkitUrl,
+} from "../src/lib/firebase/password-auth";
 
 const KEY = "AIza" + "A".repeat(33);
 const OK_BODY = {
@@ -76,6 +80,27 @@ test("wrong credentials map to null (401), rate limiting and network errors map 
       { apiKey: KEY, fetch: (async () => jsonResponse(500, {})) as unknown as typeof fetch },
     ),
     /Authentication unavailable/,
+  );
+});
+
+test("password-auth failures carry only safe diagnostic reason and upstream status", async () => {
+  await rejects(
+    stageFirebasePassword(
+      { email: "user@example.invalid", password: "secret" },
+      { apiKey: "invalid-key" },
+    ),
+    (error: unknown) =>
+      error instanceof FirebasePasswordAuthError && error.reason === "invalid_api_key_format",
+  );
+  await rejects(
+    stageFirebasePassword(
+      { email: "user@example.invalid", password: "secret" },
+      { apiKey: KEY, fetch: (async () => jsonResponse(503, {})) as unknown as typeof fetch },
+    ),
+    (error: unknown) =>
+      error instanceof FirebasePasswordAuthError &&
+      error.reason === "identity_toolkit_http_error" &&
+      error.upstreamStatus === 503,
   );
 });
 

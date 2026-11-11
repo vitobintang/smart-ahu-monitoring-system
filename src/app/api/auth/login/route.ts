@@ -1,6 +1,6 @@
 import { getClientIp, invalidateSessionCache, safePublicUser, sameOrigin, setCsrfCookie, writeAudit } from "@/lib/auth";
 import { getFirebaseClientConfig } from "@/lib/firebase/config";
-import { stageFirebasePassword } from "@/lib/firebase/password-auth";
+import { FirebasePasswordAuthError, stageFirebasePassword } from "@/lib/firebase/password-auth";
 import { publishSessionCookie } from "@/lib/firebase/session";
 import { getAhuRtdb } from "@/lib/firebase/admin";
 
@@ -14,6 +14,22 @@ import {
 import { parseLoginPayload } from "@/lib/role-auth";
 
 export const dynamic = "force-dynamic";
+
+function safeErrorMetadata(error: unknown): { errorName: string; errorCode?: string } {
+  const errorName =
+    error instanceof Error && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(error.name)
+      ? error.name
+      : "UnknownError";
+  const candidate =
+    error && typeof error === "object" && "code" in error
+      ? (error as { code?: unknown }).code
+      : undefined;
+  const errorCode =
+    typeof candidate === "string" && /^[A-Za-z0-9._/-]{1,80}$/.test(candidate)
+      ? candidate
+      : undefined;
+  return { errorName, ...(errorCode ? { errorCode } : {}) };
+}
 
 export async function POST(req: Request) {
   if (!(await sameOrigin())) return Response.json({ error: "Invalid request origin" }, { status: 403 });
@@ -80,13 +96,19 @@ export async function POST(req: Request) {
       { apiKey: config.apiKey },
     );
   } catch (err) {
-    const message = err instanceof Error ? err.message : "";
-    if (message.includes("rate limited")) {
+    if (err instanceof FirebasePasswordAuthError && err.reason === "rate_limited") {
       return Response.json(
         { error: "Too many failed sign-in attempts. Please wait and try again." },
         { status: 429, headers: { "Retry-After": "60" } },
       );
     }
+    console.error("[auth-login] Identity Toolkit password sign-in unavailable", {
+      stage: "identity_toolkit_password_sign_in",
+      reason: err instanceof FirebasePasswordAuthError ? err.reason : "unexpected_error",
+      ...(err instanceof FirebasePasswordAuthError && err.upstreamStatus
+        ? { upstreamStatus: err.upstreamStatus }
+        : {}),
+    });
     return Response.json({ error: "Authentication unavailable. Try again shortly." }, { status: 503 });
   }
   if (!staged) {
@@ -120,7 +142,11 @@ export async function POST(req: Request) {
   try {
     const session = staged.takeSession();
     await publishSessionCookie(session.idToken);
-  } catch {
+  } catch (err) {
+    console.error("[auth-login] Firebase Admin session-cookie creation failed", {
+      stage: "admin_session_cookie_creation",
+      ...safeErrorMetadata(err),
+    });
     await staged.discard();
     return Response.json({ error: "Authentication unavailable. Try again shortly." }, { status: 503 });
   }
