@@ -4,6 +4,9 @@ const enforceHttps = process.env.ENFORCE_HTTPS_REDIRECT === "true";
 
 const nextConfig: NextConfig = {
   images: { unoptimized: true },
+  // Firebase Admin relies on Node APIs and its runtime-resolved service subpaths.
+  // Keep it external in Vercel functions rather than bundling each dynamic import.
+  serverExternalPackages: ["firebase-admin"],
   experimental: {
     optimizePackageImports: ["lucide-react", "recharts", "three"],
   },
