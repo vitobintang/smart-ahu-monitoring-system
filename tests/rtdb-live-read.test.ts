@@ -60,6 +60,14 @@ test("firebaseEnvConfigured requires the public config AND admin credentials", (
     }),
     true,
   );
+  equal(
+    firebaseEnvConfigured({
+      ...process.env,
+      NEXT_PUBLIC_FIREBASE_PROJECT_ID: "p",
+      FIREBASE_SERVICE_ACCOUNT: "{}",
+    }),
+    true,
+  );
 });
 
 test("tryGetAhuRtdb returns null (never throws) when Firebase env is missing", async () => {

@@ -8,7 +8,8 @@ import type { RtdbAdapter } from "@/lib/rtdb/store";
  *
  * Credentials come from exactly one of:
  *   FIREBASE_SERVICE_ACCOUNT_PATH  — path to the downloaded service-account JSON
- *   FIREBASE_SERVICE_ACCOUNT_JSON  — the full JSON inlined (for hosts without a filesystem)
+ *   FIREBASE_SERVICE_ACCOUNT       — full service-account JSON in an environment variable
+ *   FIREBASE_SERVICE_ACCOUNT_JSON  — legacy alias for the inline JSON variable
  *
  * These are SERVER-ONLY secrets: never prefix them with NEXT_PUBLIC_ and never
  * commit the JSON. The Admin SDK bypasses RTDB security rules by design — all
@@ -27,9 +28,22 @@ const globalForFirebaseAdmin = globalThis as typeof globalThis & {
   __ahOwnerServiceAccount?: object;
 };
 
+function parseServiceAccountJson(raw: string): object {
+  const parsed: unknown = JSON.parse(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Firebase service-account environment value must be a JSON object");
+  }
+  const serviceAccount = { ...parsed } as Record<string, unknown>;
+  if (typeof serviceAccount.private_key === "string") {
+    // Vercel/environment UIs may preserve an extra layer of escaping.
+    serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, "\n");
+  }
+  return serviceAccount;
+}
+
 async function readServiceAccountJson(env: NodeJS.ProcessEnv): Promise<object> {
   const path = env.FIREBASE_SERVICE_ACCOUNT_PATH?.trim();
-  const inline = env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
+  const inline = env.FIREBASE_SERVICE_ACCOUNT?.trim() || env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
   if (path) {
     // Lazy AND bundler-invisible: webpackIgnore/turbopackKeep the Edge bundles
     // from ever resolving "node:fs", while plain ESM runtimes (tsx tests,
@@ -40,13 +54,13 @@ async function readServiceAccountJson(env: NodeJS.ProcessEnv): Promise<object> {
     const { readFileSync } = (await import(
       /* webpackIgnore: true */ /* turbopackIgnore: true */ fsModule
     )) as typeof import("node:fs");
-    return JSON.parse(readFileSync(path, "utf8")) as object;
+    return parseServiceAccountJson(readFileSync(path, "utf8"));
   }
   if (inline) {
-    return JSON.parse(inline) as object;
+    return parseServiceAccountJson(inline);
   }
   throw new Error(
-    "Firebase Admin is not configured: set FIREBASE_SERVICE_ACCOUNT_PATH or FIREBASE_SERVICE_ACCOUNT_JSON",
+    "Firebase Admin is not configured: set FIREBASE_SERVICE_ACCOUNT_PATH or FIREBASE_SERVICE_ACCOUNT",
   );
 }
 
@@ -99,6 +113,7 @@ async function readAuthServiceAccountJson(env: NodeJS.ProcessEnv): Promise<objec
   const inline =
     env.FIREBASE_AUTH_SERVICE_ACCOUNT_JSON?.trim() ||
     env.OWNER_DEVICES_SERVICE_ACCOUNT_JSON?.trim() ||
+    env.FIREBASE_SERVICE_ACCOUNT?.trim() ||
     env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
   const path = authPath || ownerPath || mainPath;
   let parsed: object;
@@ -107,9 +122,9 @@ async function readAuthServiceAccountJson(env: NodeJS.ProcessEnv): Promise<objec
     const { readFileSync } = (await import(
       /* webpackIgnore: true */ /* turbopackIgnore: true */ fsModule
     )) as typeof import("node:fs");
-    parsed = JSON.parse(readFileSync(path, "utf8")) as object;
+    parsed = parseServiceAccountJson(readFileSync(path, "utf8"));
   } else if (inline) {
-    parsed = JSON.parse(inline) as object;
+    parsed = parseServiceAccountJson(inline);
   } else {
     parsed = await readServiceAccountJson(env);
   }
@@ -184,9 +199,9 @@ async function readOwnerServiceAccountJson(env: NodeJS.ProcessEnv): Promise<obje
   if (globalForFirebaseAdmin.__ahOwnerServiceAccount) return globalForFirebaseAdmin.__ahOwnerServiceAccount;
   let parsed: object;
   if (path) {
-    parsed = JSON.parse(await readOwnerServiceAccountText(path)) as object;
+    parsed = parseServiceAccountJson(await readOwnerServiceAccountText(path));
   } else if (inline) {
-    parsed = JSON.parse(inline) as object;
+    parsed = parseServiceAccountJson(inline);
   } else {
     parsed = await readServiceAccountJson(env);
   }
