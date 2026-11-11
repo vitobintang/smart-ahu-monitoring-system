@@ -1,7 +1,7 @@
 import { getClientIp, invalidateSessionCache, safePublicUser, sameOrigin, setCsrfCookie, writeAudit } from "@/lib/auth";
 import { getFirebaseClientConfig } from "@/lib/firebase/config";
 import { FirebasePasswordAuthError, stageFirebasePassword } from "@/lib/firebase/password-auth";
-import { publishSessionCookie } from "@/lib/firebase/session";
+import { publishSessionCookie, SessionCookieOperationError } from "@/lib/firebase/session";
 import { getAhuRtdb } from "@/lib/firebase/admin";
 
 import { getRtdbUserByEmail, getRtdbUserByUsername } from "@/lib/rtdb/users";
@@ -29,6 +29,26 @@ function safeErrorMetadata(error: unknown): { errorName: string; errorCode?: str
       ? candidate
       : undefined;
   return { errorName, ...(errorCode ? { errorCode } : {}) };
+}
+
+function safeSessionFailureReason(error: unknown): string {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (/audience|issuer|project.{0,20}(mismatch|incorrect)|mismatch.{0,20}project/.test(message)) {
+    return "auth_project_or_token_mismatch";
+  }
+  if (/private key|pem|invalid_grant|signing key|failed to parse.*key/.test(message)) {
+    return "service_account_key_or_signing_failure";
+  }
+  if (/permission|not authorized|forbidden|insufficient access/.test(message)) {
+    return "admin_permission_failure";
+  }
+  if (/expired|invalid.*token|token.*invalid/.test(message)) {
+    return "id_token_rejected";
+  }
+  if (/timeout|network|fetch failed|socket|econn|enotfound/.test(message)) {
+    return "google_auth_network_failure";
+  }
+  return "unclassified";
 }
 
 export async function POST(req: Request) {
@@ -143,9 +163,12 @@ export async function POST(req: Request) {
     const session = staged.takeSession();
     await publishSessionCookie(session.idToken);
   } catch (err) {
+    const operationError = err instanceof SessionCookieOperationError ? err : null;
+    const underlyingError = operationError?.originalError ?? err;
     console.error("[auth-login] Firebase Admin session-cookie creation failed", {
-      stage: "admin_session_cookie_creation",
-      ...safeErrorMetadata(err),
+      stage: operationError?.stage ?? "admin_session_cookie_creation",
+      reason: safeSessionFailureReason(underlyingError),
+      ...safeErrorMetadata(underlyingError),
     });
     await staged.discard();
     return Response.json({ error: "Authentication unavailable. Try again shortly." }, { status: 503 });
