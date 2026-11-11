@@ -29,7 +29,14 @@ const globalForFirebaseAdmin = globalThis as typeof globalThis & {
 };
 
 function parseServiceAccountJson(raw: string): object {
-  const parsed: unknown = JSON.parse(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(
+      "Invalid Firebase service-account JSON. For a multiline value in a local .env file, wrap the entire JSON block in single quotes; in Vercel, enter raw JSON without surrounding quotes.",
+    );
+  }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("Firebase service-account environment value must be a JSON object");
   }
