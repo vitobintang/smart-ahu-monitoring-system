@@ -10,7 +10,8 @@ import { getLatestTelemetry, type RtdbTelemetryRecord } from "./telemetry";
 /** True when the environment carries both the public config and admin credentials. */
 export function firebaseEnvConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
   return Boolean(
-    env.NEXT_PUBLIC_FIREBASE_PROJECT_ID && (env.FIREBASE_SERVICE_ACCOUNT_PATH || env.FIREBASE_SERVICE_ACCOUNT_JSON),
+    env.NEXT_PUBLIC_FIREBASE_PROJECT_ID &&
+      (env.FIREBASE_SERVICE_ACCOUNT_PATH || env.FIREBASE_SERVICE_ACCOUNT || env.FIREBASE_SERVICE_ACCOUNT_JSON),
   );
 }
 
