@@ -16,6 +16,7 @@ import {
   LogOut,
   Mail,
   Menu,
+  MoreHorizontal,
   Search,
   ShieldCheck,
   UserCog,
@@ -48,6 +49,7 @@ export default function AppShell({
   const search = useSearchParams();
   const [currentUser, setCurrentUser] = useState<SessionUser>(user);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [feed, setFeed] = useState<Feed | null>(null);
   const [bellOpen, setBellOpen] = useState(false);
@@ -79,17 +81,18 @@ export default function AppShell({
   // Close mobile drawer automatically on route change
   useEffect(() => {
     setMobileOpen(false);
+    setMobileMoreOpen(false);
   }, [pathname, search]);
 
-  // Lock body scroll when mobile drawer or account modal is open
+  // Lock body scroll when a mobile sheet, drawer, or account modal is open
   useEffect(() => {
-    if (!mobileOpen && !settingsOpen) return;
+    if (!mobileOpen && !mobileMoreOpen && !settingsOpen) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [mobileOpen, settingsOpen]);
+  }, [mobileOpen, mobileMoreOpen, settingsOpen]);
 
   // FR-18 in-app notification broadcast to active web sessions.
   useEffect(() => {
@@ -147,6 +150,7 @@ export default function AppShell({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setMobileOpen(false);
+        setMobileMoreOpen(false);
         setBellOpen(false);
         setProfileOpen(false);
         setSettingsOpen(false);
@@ -231,6 +235,10 @@ export default function AppShell({
   }
 
   const items = NAV.filter((n) => can(currentUser.role, n.activity));
+  const mobilePrimaryPaths = new Set(["/dashboard", "/devices", "/alarms", "/reports"]);
+  const mobilePrimaryItems = items.filter((item) => mobilePrimaryPaths.has(item.href.split("?")[0]));
+  const mobileMoreItems = items.filter((item) => !mobilePrimaryPaths.has(item.href.split("?")[0]));
+  const mobileMoreActive = mobileMoreItems.some((item) => isActive(item, pathname, search));
   const isImmersive3dPage = pathname === "/devices";
   const unackedAlarms = (feed?.alarms ?? []).filter((a) => !a.acknowledged).length;
   const displayName =
@@ -387,10 +395,13 @@ export default function AppShell({
               : "border-b border-transparent bg-white/40 backdrop-blur-[2px] lg:bg-transparent lg:backdrop-blur-none",
           )}
         >
-          <div className="flex h-[60px] items-center gap-2 px-3 sm:h-[64px] sm:gap-3 sm:px-6">
+          <div className="flex h-[56px] items-center gap-2 px-3 sm:h-[64px] sm:gap-3 sm:px-6">
             <button
               type="button"
-              className="grid h-10 w-10 flex-none place-items-center rounded-xl text-slate-600 transition hover:bg-slate-100 lg:hidden"
+              className={cx(
+                "grid h-10 w-10 flex-none place-items-center rounded-xl text-slate-600 transition hover:bg-slate-100 lg:hidden",
+                !isImmersive3dPage && "hidden md:grid",
+              )}
               onClick={() => setMobileOpen((v) => !v)}
               aria-label="Toggle navigation"
               aria-expanded={mobileOpen}
@@ -609,15 +620,15 @@ export default function AppShell({
           className={cx(
             "relative min-w-0",
             isImmersive3dPage
-              ? "h-[calc(100dvh-60px)] w-full flex-none overflow-hidden p-0 sm:h-[calc(100dvh-64px)]"
-              : "flex-1 px-3.5 py-4 sm:px-6 sm:py-6 lg:px-7",
+              ? "h-[calc(100dvh-56px)] w-full flex-none overflow-hidden p-0 sm:h-[calc(100dvh-64px)]"
+              : "flex-1 px-3 py-3 pb-[calc(5.75rem+env(safe-area-inset-bottom))] sm:px-6 sm:py-6 md:pb-6 lg:px-7 lg:pb-6",
           )}
         >
           <SessionUserContext.Provider value={currentUser}>{children}</SessionUserContext.Provider>
         </main>
 
         {!isImmersive3dPage ? (
-          <footer className="no-print relative flex flex-col items-start justify-between gap-2 px-4 pb-5 pt-2 text-[11px] text-slate-500 sm:flex-row sm:items-center sm:px-6">
+          <footer className="no-print relative hidden flex-col items-start justify-between gap-2 px-4 pb-5 pt-2 text-[11px] text-slate-500 sm:flex sm:flex-row sm:items-center sm:px-6">
             <span>© 2026 Smart Monitoring AHU. All rights reserved.</span>
             <span className="flex flex-wrap items-center gap-1.5">
               Safer Air <span className="text-slate-400">|</span> Smarter Buildings <span className="text-slate-400">|</span> A Cleaner Tomorrow
@@ -626,6 +637,114 @@ export default function AppShell({
           </footer>
         ) : null}
       </div>
+
+      {!isImmersive3dPage ? (
+        <nav
+          aria-label="Mobile navigation"
+          className="mobile-bottom-nav no-print fixed inset-x-0 bottom-0 z-40 border-t border-[#dbe4f0] bg-white/95 px-1.5 pt-1.5 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
+        >
+          {mobilePrimaryItems.map((item) => {
+            const Icon = item.icon;
+            const active = isActive(item, pathname, search);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={active ? "page" : undefined}
+                onClick={() => setMobileMoreOpen(false)}
+                className={cx("mobile-tab-item", active && "is-active")}
+              >
+                <span className="relative grid h-7 place-items-center">
+                  <Icon size={20} strokeWidth={active ? 2.4 : 1.9} />
+                  {item.badge === "alarms" && unackedAlarms > 0 ? (
+                    <span className="absolute -right-2 -top-1 grid h-[16px] min-w-[16px] place-items-center rounded-full bg-red-600 px-1 font-mono text-[9px] font-bold text-white ring-2 ring-white">
+                      {unackedAlarms > 99 ? "99+" : unackedAlarms}
+                    </span>
+                  ) : null}
+                </span>
+                <span>{item.label === "Reports & Data Logger" ? "Reports" : item.label}</span>
+              </Link>
+            );
+          })}
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={mobileMoreOpen}
+            onClick={() => setMobileMoreOpen((open) => !open)}
+            className={cx("mobile-tab-item", (mobileMoreOpen || mobileMoreActive) && "is-active")}
+          >
+            <MoreHorizontal size={21} strokeWidth={2} />
+            <span>More</span>
+          </button>
+        </nav>
+      ) : null}
+
+      {mobileMoreOpen && !isImmersive3dPage ? (
+        <div
+          className="no-print fixed inset-0 z-[60] flex items-end bg-slate-950/35 backdrop-blur-[2px] md:hidden"
+          role="presentation"
+          onClick={() => setMobileMoreOpen(false)}
+        >
+          <section
+            aria-label="More destinations"
+            aria-modal="true"
+            role="dialog"
+            className="mobile-more-sheet w-full rounded-t-[24px] border border-[#dbe4f0] bg-white px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-3 shadow-[0_-18px_50px_-24px_rgba(15,23,42,0.32)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-300" aria-hidden="true" />
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h2 className="text-[16px] font-bold text-[#12294d]">More</h2>
+                <p className="text-[12px] text-slate-500">Tools and settings</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMobileMoreOpen(false)}
+                aria-label="Close more menu"
+                className="grid h-11 w-11 place-items-center rounded-full bg-slate-100 text-slate-600"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="grid max-h-[55dvh] grid-cols-2 gap-2 overflow-y-auto overscroll-contain">
+              {mobileMoreItems.map((item) => {
+                const Icon = item.icon;
+                const active = isActive(item, pathname, search);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    aria-current={active ? "page" : undefined}
+                    onClick={() => setMobileMoreOpen(false)}
+                    className={cx("mobile-more-link", active && "is-active")}
+                  >
+                    <Icon size={19} />
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {item.badge === "alarms" && unackedAlarms > 0 ? (
+                      <span className="rounded-full bg-red-100 px-2 py-0.5 font-mono text-[10px] font-bold text-red-700">
+                        {unackedAlarms}
+                      </span>
+                    ) : null}
+                  </Link>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMoreOpen(false);
+                  openAccountSettings();
+                }}
+                className="mobile-more-link col-span-2"
+              >
+                <UserCog size={19} />
+                <span className="flex-1 text-left">Profile &amp; account settings</span>
+                <ChevronDown size={16} className="-rotate-90 text-slate-400" />
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {/* Portal-mounted Account Settings modal */}
       {settingsOpen && mounted

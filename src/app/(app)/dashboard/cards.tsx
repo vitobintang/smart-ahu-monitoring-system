@@ -110,7 +110,7 @@ export function Tile({
   ) : (
     <div
       className={cx(
-        "panel card-hover relative flex aspect-square h-full flex-col justify-between rounded-2xl p-3.5 sm:aspect-auto sm:justify-start sm:p-5",
+        "panel card-hover relative flex min-h-[116px] h-full flex-col gap-2 rounded-2xl p-3 sm:min-h-0 sm:justify-start sm:gap-0 sm:p-5",
         alert && "border-red-200 bg-red-50/40",
       )}
     >
@@ -134,11 +134,12 @@ export function Tile({
         ) : null}
       </div>
       <div className="sm:hidden">
-        <span className="num block text-[28px] font-extrabold leading-none tracking-[-0.03em] text-[#12294d]">
+        <span className="num block truncate text-[25px] font-extrabold leading-none tracking-[-0.03em] text-[#12294d]">
           {value}
         </span>
-        <span className="mt-1 block truncate text-[11.5px] font-semibold text-slate-600">{label}</span>
+        <span className="mt-1 block truncate text-[12px] font-semibold text-slate-600">{label}</span>
       </div>
+      <div className="mt-auto border-t border-[#eef2f7] pt-1.5 text-[10.5px] font-semibold sm:hidden">{caption}</div>
 
       {/* Rich Tablet/Desktop Layout (>= sm) */}
       <div className="hidden items-start gap-3.5 sm:flex">
