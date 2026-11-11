@@ -169,10 +169,14 @@ export async function POST(req: Request) {
     const bootstrapError =
       underlyingError instanceof FirebaseAdminAuthInitializationError ? underlyingError : null;
     const rootError = bootstrapError?.originalError ?? underlyingError;
+    const stage = bootstrapError?.stage ?? operationError?.stage ?? "admin_session_cookie_creation";
+    // Module import errors only mention package paths, never credentials, so the message is safe to log.
+    const importFailure = stage.endsWith("_module_import") && rootError instanceof Error;
     console.error("[auth-login] Firebase Admin session-cookie creation failed", {
-      stage: bootstrapError?.stage ?? operationError?.stage ?? "admin_session_cookie_creation",
+      stage,
       reason: safeSessionFailureReason(rootError),
       ...safeErrorMetadata(rootError),
+      ...(importFailure ? { detail: rootError.message.slice(0, 300), nodeVersion: process.version } : {}),
     });
     await staged.discard();
     return Response.json({ error: "Authentication unavailable. Try again shortly." }, { status: 503 });
