@@ -393,33 +393,8 @@ input[type="checkbox"] { cursor: pointer; }
   .print-only { display: none !important; }
 }
 
-/* Compact phone-first navigation with safe-area support. */
-.mobile-bottom-nav {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  box-shadow: 0 -8px 24px -20px rgba(15, 23, 42, 0.42);
-}
-
-.mobile-tab-item {
-  display: flex;
-  min-width: 0;
-  min-height: 48px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  border-radius: 12px;
-  color: #64748b;
-  font-size: 10px;
-  font-weight: 650;
-  line-height: 1.15;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.mobile-tab-item.is-active {
-  color: #1d6ef2;
-}
-
+/* Compact phone-first More sheet. Bottom-tab layout uses Tailwind utilities */
+/* so responsive display and grid utilities stay in the same CSS cascade layer. */
 .mobile-more-sheet {
   animation: mobile-sheet-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }

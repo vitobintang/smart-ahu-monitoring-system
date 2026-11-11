@@ -641,7 +641,7 @@ export default function AppShell({
       {!isImmersive3dPage ? (
         <nav
           aria-label="Mobile navigation"
-          className="mobile-bottom-nav no-print fixed inset-x-0 bottom-0 z-40 border-t border-[#dbe4f0] bg-white/95 px-1.5 pt-1.5 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
+          className="no-print fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-[#dbe4f0] bg-white/95 px-1.5 pt-1.5 pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_24px_-20px_rgba(15,23,42,0.42)] backdrop-blur-xl md:hidden"
         >
           {mobilePrimaryItems.map((item) => {
             const Icon = item.icon;
@@ -652,7 +652,10 @@ export default function AppShell({
                 href={item.href}
                 aria-current={active ? "page" : undefined}
                 onClick={() => setMobileMoreOpen(false)}
-                className={cx("mobile-tab-item", active && "is-active")}
+                className={cx(
+                  "flex min-h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-semibold leading-tight text-slate-500 [-webkit-tap-highlight-color:transparent]",
+                  active && "text-[#1d6ef2]",
+                )}
               >
                 <span className="relative grid h-7 place-items-center">
                   <Icon size={20} strokeWidth={active ? 2.4 : 1.9} />
@@ -662,7 +665,7 @@ export default function AppShell({
                     </span>
                   ) : null}
                 </span>
-                <span>{item.label === "Reports & Data Logger" ? "Reports" : item.label}</span>
+                <span className="block max-w-full truncate">{item.label === "Reports & Data Logger" ? "Reports" : item.label}</span>
               </Link>
             );
           })}
@@ -671,7 +674,10 @@ export default function AppShell({
             aria-haspopup="dialog"
             aria-expanded={mobileMoreOpen}
             onClick={() => setMobileMoreOpen((open) => !open)}
-            className={cx("mobile-tab-item", (mobileMoreOpen || mobileMoreActive) && "is-active")}
+            className={cx(
+              "flex min-h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-semibold leading-tight text-slate-500 [-webkit-tap-highlight-color:transparent]",
+              (mobileMoreOpen || mobileMoreActive) && "text-[#1d6ef2]",
+            )}
           >
             <MoreHorizontal size={21} strokeWidth={2} />
             <span>More</span>
