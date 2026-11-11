@@ -6,6 +6,22 @@ async function auth(): Promise<Auth> {
   return getFirebaseAuth();
 }
 
+export type SessionCookieOperationStage =
+  | "admin_auth_initialization"
+  | "admin_create_session_cookie"
+  | "next_cookie_write";
+
+/** Carries stage-only metadata while keeping the original failure out of logs/responses. */
+export class SessionCookieOperationError extends Error {
+  constructor(
+    readonly stage: SessionCookieOperationStage,
+    readonly originalError: unknown,
+  ) {
+    super("Firebase session-cookie operation failed");
+    this.name = "SessionCookieOperationError";
+  }
+}
+
 /**
  * Firebase session-cookie session management.
  *
@@ -40,7 +56,19 @@ export function sessionCookieOptions() {
  * Injectable so tests can run without a service account.
  */
 export async function mintSessionCookieValue(idToken: string): Promise<string> {
-  return (await auth()).createSessionCookie(idToken, { expiresIn: SESSION_MAX_AGE_SECONDS * 1000 });
+  let firebaseAuth: Auth;
+  try {
+    firebaseAuth = await auth();
+  } catch (error) {
+    throw new SessionCookieOperationError("admin_auth_initialization", error);
+  }
+  try {
+    return await firebaseAuth.createSessionCookie(idToken, {
+      expiresIn: SESSION_MAX_AGE_SECONDS * 1000,
+    });
+  } catch (error) {
+    throw new SessionCookieOperationError("admin_create_session_cookie", error);
+  }
 }
 
 /** Verifies a session cookie value; injectable for tests. Returns null when invalid/expired. */
@@ -65,7 +93,11 @@ export async function readVerifiedSession(): Promise<VerifiedFirebaseSession | n
 /** Publishes the session cookie after a successful server-side login. */
 export async function publishSessionCookie(idToken: string): Promise<void> {
   const value = await mintSessionCookieValue(idToken);
-  (await cookies()).set(SESSION_COOKIE, value, sessionCookieOptions());
+  try {
+    (await cookies()).set(SESSION_COOKIE, value, sessionCookieOptions());
+  } catch (error) {
+    throw new SessionCookieOperationError("next_cookie_write", error);
+  }
 }
 
 /** Clears the session cookie (logout / rejected login). */
