@@ -14,6 +14,7 @@ import {
 import { parseLoginPayload } from "@/lib/role-auth";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 function safeErrorMetadata(error: unknown): { errorName: string; errorCode?: string } {
   const errorName =
