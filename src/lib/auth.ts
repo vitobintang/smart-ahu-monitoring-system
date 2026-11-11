@@ -48,57 +48,71 @@ export function invalidateSessionCache() {
   sessionInFlight.clear();
 }
 
-/**
- * Resolve session by role authentication policy: all roles authenticate through
- * Firebase Auth; the httpOnly `__session` cookie is verified with the Admin SDK
- * and the profile (role) is read from RTDB `users/{uid}`. Authorization never
- * trusts client-editable data.
- */
-export async function getSession(): Promise<SessionContext | null> {
-  const store = await cookies();
-  const { SESSION_COOKIE } = await firebaseSession();
-  const raw = store.get(SESSION_COOKIE)?.value;
-  if (!raw) return null;
+async function getProfileForUid(uid: string): Promise<SessionUser | null> {
+  const profile = await getRtdbUserById(await ahuRtdb(), uid);
+  if (!profile || profile.id !== uid) return null;
+  if (!["Admin", "Engineering", "Operator"].includes(profile.role as UserRole)) return null;
+  return profile as SessionUser;
+}
 
-  const cacheKey = await secretHash(raw);
+async function cachedSessionUser(key: string, resolve: () => Promise<SessionUser | null>) {
   const now = Date.now();
-  const cached = sessionCache.get(cacheKey);
-  if (cached && cached.expiresAt > now) {
-    return { user: cached.user };
-  }
+  const cached = sessionCache.get(key);
+  if (cached && cached.expiresAt > now) return cached.user;
 
-  let pending = sessionInFlight.get(cacheKey);
+  let pending = sessionInFlight.get(key);
   if (!pending) {
-    pending = (async (): Promise<SessionUser | null> => {
-      try {
-        const { readVerifiedSession } = await firebaseSession();
-        const verified = await readVerifiedSession();
-        if (!verified) return null;
-        const profile = await getRtdbUserById(await ahuRtdb(), verified.uid);
-        if (!profile || profile.id !== verified.uid) return null;
-        if (!["Admin", "Engineering", "Operator"].includes(profile.role as UserRole)) return null;
-        return profile as SessionUser;
-      } catch {
-        return null;
-      }
-    })().finally(() => {
-      sessionInFlight.delete(cacheKey);
-    });
-    sessionInFlight.set(cacheKey, pending);
+    pending = resolve()
+      .catch(() => null)
+      .finally(() => sessionInFlight.delete(key));
+    sessionInFlight.set(key, pending);
   }
-
   const user = await pending;
   if (user) {
     if (sessionCache.size > 128) {
-      for (const [k, v] of sessionCache.entries()) {
-        if (v.expiresAt <= now) sessionCache.delete(k);
+      for (const [cacheKey, value] of sessionCache.entries()) {
+        if (value.expiresAt <= now) sessionCache.delete(cacheKey);
       }
       if (sessionCache.size > 128) sessionCache.clear();
     }
-    sessionCache.set(cacheKey, { user, expiresAt: Date.now() + SESSION_CACHE_TTL_MS });
+    sessionCache.set(key, { user, expiresAt: Date.now() + SESSION_CACHE_TTL_MS });
   } else {
-    sessionCache.delete(cacheKey);
+    sessionCache.delete(key);
   }
+  return user;
+}
+
+/**
+ * Resolve the trusted role profile from either the browser's httpOnly Firebase
+ * session cookie or a Firebase ID token issued to the native Capacitor client.
+ * The caller never supplies role data; every credential is verified by Firebase
+ * Admin and the role is reloaded from RTDB.
+ */
+export async function getSession(): Promise<SessionContext | null> {
+  const requestHeaders = await headers();
+  const authorization = requestHeaders.get("authorization");
+  if (authorization !== null) {
+    const match = /^Bearer ([A-Za-z0-9._~-]{20,8192})$/.exec(authorization);
+    if (!match) return null;
+    const token = match[1];
+    const cacheKey = `id-token:${await secretHash(token)}`;
+    const user = await cachedSessionUser(cacheKey, async () => {
+      const { getFirebaseAuth } = await import("@/lib/firebase/admin");
+      const decoded = await (await getFirebaseAuth()).verifyIdToken(token, true);
+      return getProfileForUid(decoded.uid);
+    });
+    return user ? { user } : null;
+  }
+
+  const { SESSION_COOKIE } = await firebaseSession();
+  const raw = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (!raw) return null;
+  const cacheKey = `session-cookie:${await secretHash(raw)}`;
+  const user = await cachedSessionUser(cacheKey, async () => {
+    const { readVerifiedSession } = await firebaseSession();
+    const verified = await readVerifiedSession();
+    return verified ? getProfileForUid(verified.uid) : null;
+  });
   return user ? { user } : null;
 }
 
@@ -137,8 +151,14 @@ export async function sameOrigin(): Promise<boolean> {
 }
 
 export async function csrfValid(): Promise<boolean> {
+  const requestHeaders = await headers();
+  if (requestHeaders.has("authorization")) {
+    // Native calls use an explicitly attached Firebase bearer token. Browsers
+    // cannot attach this credential cross-site without passing the CORS preflight.
+    return Boolean(await getSession());
+  }
   if (!(await sameOrigin())) return false;
-  const provided = (await headers()).get("x-csrf-token");
+  const provided = requestHeaders.get("x-csrf-token");
   const token = (await cookies()).get(CSRF_COOKIE)?.value;
   return Boolean(token && provided && safeEqual(token, provided));
 }

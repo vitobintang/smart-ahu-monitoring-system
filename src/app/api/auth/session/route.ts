@@ -1,4 +1,4 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { CSRF_COOKIE, getSession, safePublicUser, setCsrfCookie } from "@/lib/auth";
 import { getSyncStatus } from "@/lib/realtime";
 
@@ -20,7 +20,7 @@ export async function GET() {
       { status: 200, headers: { "Cache-Control": "no-store" } },
     );
   }
-  if (!(await cookies()).get(CSRF_COOKIE)?.value) {
+  if (!(await headers()).has("authorization") && !(await cookies()).get(CSRF_COOKIE)?.value) {
     await setCsrfCookie();
   }
   return Response.json(
