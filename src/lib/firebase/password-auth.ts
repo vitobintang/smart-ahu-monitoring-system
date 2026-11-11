@@ -48,6 +48,24 @@ const RATE_LIMIT_CODES = new Set([
   "EXCEEDED_RETRY_LIMIT",
 ]);
 
+export type PasswordAuthFailureReason =
+  | "invalid_api_key_format"
+  | "identity_toolkit_request_failed"
+  | "identity_toolkit_http_error"
+  | "identity_toolkit_invalid_response"
+  | "rate_limited";
+
+/** Safe diagnostic metadata; never includes credentials, tokens, or request URLs. */
+export class FirebasePasswordAuthError extends Error {
+  constructor(
+    readonly reason: PasswordAuthFailureReason,
+    readonly upstreamStatus?: number,
+  ) {
+    super(reason === "rate_limited" ? "Authentication rate limited" : "Authentication unavailable");
+    this.name = "FirebasePasswordAuthError";
+  }
+}
+
 export function getIdentityToolkitUrl(apiKey: string): string {
   if (!/^AIza[0-9A-Za-z_-]{30,50}$/.test(apiKey)) throw new Error("Invalid Firebase web API key format");
   return `${SIGN_IN_URL}?key=${encodeURIComponent(apiKey)}`;
@@ -62,17 +80,23 @@ export async function stageFirebasePassword(
   const password = input.password;
   if (!email || !password) return null;
 
+  let url: string;
+  try {
+    url = getIdentityToolkitUrl(apiKey);
+  } catch {
+    throw new FirebasePasswordAuthError("invalid_api_key_format");
+  }
   const boundedFetch = options.fetch ?? fetch;
   let response: Response;
   try {
-    response = await boundedFetch(getIdentityToolkitUrl(apiKey), {
+    response = await boundedFetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email, password, returnSecureToken: true }),
       signal: AbortSignal.timeout(10_000),
     });
   } catch {
-    throw new Error("Authentication unavailable");
+    throw new FirebasePasswordAuthError("identity_toolkit_request_failed");
   }
 
   if (response.status === 400 || response.status === 401 || response.status === 403) {
@@ -81,16 +105,18 @@ export async function stageFirebasePassword(
       const body = (await response.json()) as IdentityToolkitError;
       code = body.error?.message?.split(":")[0]?.trim() ?? "";
     } catch { /* body unreadable — treat as invalid */ }
-    if (RATE_LIMIT_CODES.has(code)) throw new Error("Authentication rate limited");
+    if (RATE_LIMIT_CODES.has(code)) throw new FirebasePasswordAuthError("rate_limited", response.status);
     return null;
   }
-  if (!response.ok) throw new Error("Authentication unavailable");
+  if (!response.ok) {
+    throw new FirebasePasswordAuthError("identity_toolkit_http_error", response.status);
+  }
 
   let data: IdentityToolkitSuccess;
   try {
     data = (await response.json()) as IdentityToolkitSuccess;
   } catch {
-    throw new Error("Authentication unavailable");
+    throw new FirebasePasswordAuthError("identity_toolkit_invalid_response", response.status);
   }
   if (
     typeof data.localId !== "string" || !data.localId ||
@@ -98,7 +124,7 @@ export async function stageFirebasePassword(
     typeof data.idToken !== "string" || data.idToken.length < 20 ||
     data.idToken.split(".").length !== 3
   ) {
-    throw new Error("Authentication unavailable");
+    throw new FirebasePasswordAuthError("identity_toolkit_invalid_response", response.status);
   }
 
   // Nothing to revoke server-side: an unused ID token simply expires (~1 h).
