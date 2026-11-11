@@ -28,6 +28,25 @@ const globalForFirebaseAdmin = globalThis as typeof globalThis & {
   __ahOwnerServiceAccount?: object;
 };
 
+export type FirebaseAdminAuthInitializationStage =
+  | "admin_auth_module_import"
+  | "auth_service_account_resolution"
+  | "firebase_admin_app_module_import"
+  | "auth_credential_construction"
+  | "auth_database_url_resolution"
+  | "auth_app_initialization"
+  | "admin_auth_instance_creation";
+
+export class FirebaseAdminAuthInitializationError extends Error {
+  constructor(
+    readonly stage: FirebaseAdminAuthInitializationStage,
+    readonly originalError: unknown,
+  ) {
+    super("Firebase Admin Auth initialization failed");
+    this.name = "FirebaseAdminAuthInitializationError";
+  }
+}
+
 export function parseServiceAccountFields(
   env: Record<string, string | undefined>,
   prefix: string,
@@ -179,22 +198,71 @@ async function readAuthServiceAccountJson(env: NodeJS.ProcessEnv): Promise<objec
 
 async function getAuthApp_(env: NodeJS.ProcessEnv): Promise<App> {
   if (globalForFirebaseAdmin.__ahAuthFirebaseApp) return globalForFirebaseAdmin.__ahAuthFirebaseApp;
-  const { cert, getApps, initializeApp } = await import("firebase-admin/app");
-  const existing = getApps().find((app) => app.name === "ahu-auth");
-  const app =
-    existing ??
-    initializeApp(
-      { credential: cert(await readAuthServiceAccountJson(env)), databaseURL: resolveDatabaseUrl(env) },
-      "ahu-auth",
-    );
+  let firebaseAppModule: typeof import("firebase-admin/app");
+  try {
+    firebaseAppModule = await import("firebase-admin/app");
+  } catch (error) {
+    throw new FirebaseAdminAuthInitializationError("firebase_admin_app_module_import", error);
+  }
+  const { cert, getApps, initializeApp } = firebaseAppModule;
+  let existing: App | undefined;
+  try {
+    existing = getApps().find((app) => app.name === "ahu-auth");
+  } catch (error) {
+    throw new FirebaseAdminAuthInitializationError("auth_app_initialization", error);
+  }
+  let app: App;
+  if (existing) {
+    app = existing;
+  } else {
+    let serviceAccount: object;
+    try {
+      serviceAccount = await readAuthServiceAccountJson(env);
+    } catch (error) {
+      throw new FirebaseAdminAuthInitializationError("auth_service_account_resolution", error);
+    }
+    let credential: ReturnType<typeof cert>;
+    try {
+      credential = cert(serviceAccount);
+    } catch (error) {
+      throw new FirebaseAdminAuthInitializationError("auth_credential_construction", error);
+    }
+    let databaseURL: string;
+    try {
+      databaseURL = resolveDatabaseUrl(env);
+    } catch (error) {
+      throw new FirebaseAdminAuthInitializationError("auth_database_url_resolution", error);
+    }
+    try {
+      app = initializeApp({ credential, databaseURL }, "ahu-auth");
+    } catch (error) {
+      throw new FirebaseAdminAuthInitializationError("auth_app_initialization", error);
+    }
+  }
   globalForFirebaseAdmin.__ahAuthFirebaseApp = app;
   return app;
 }
 
 /** Admin Auth — session cookies, token verification, user management (AUTH project). */
 export async function getFirebaseAuth(env: NodeJS.ProcessEnv = process.env): Promise<Auth> {
-  const { getAuth } = await import("firebase-admin/auth");
-  return getAuth(await getAuthApp_(env));
+  let getAuth: typeof import("firebase-admin/auth").getAuth;
+  try {
+    ({ getAuth } = await import("firebase-admin/auth"));
+  } catch (error) {
+    throw new FirebaseAdminAuthInitializationError("admin_auth_module_import", error);
+  }
+  let app: App;
+  try {
+    app = await getAuthApp_(env);
+  } catch (error) {
+    if (error instanceof FirebaseAdminAuthInitializationError) throw error;
+    throw new FirebaseAdminAuthInitializationError("auth_app_initialization", error);
+  }
+  try {
+    return getAuth(app);
+  } catch (error) {
+    throw new FirebaseAdminAuthInitializationError("admin_auth_instance_creation", error);
+  }
 }
 
 /** Admin Realtime Database — full server-side data access (rules do not apply). */
