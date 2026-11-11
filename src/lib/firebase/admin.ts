@@ -28,6 +28,26 @@ const globalForFirebaseAdmin = globalThis as typeof globalThis & {
   __ahOwnerServiceAccount?: object;
 };
 
+export function parseServiceAccountFields(
+  env: Record<string, string | undefined>,
+  prefix: string,
+): object | null {
+  const projectId = env[`${prefix}PROJECT_ID`]?.trim();
+  const clientEmail = env[`${prefix}CLIENT_EMAIL`]?.trim();
+  const privateKey = env[`${prefix}PRIVATE_KEY`]?.trim();
+  if (!projectId && !clientEmail && !privateKey) return null;
+  if (!projectId || !clientEmail || !privateKey) {
+    throw new Error(
+      `Incomplete Firebase service-account fields for ${prefix}: set PROJECT_ID, CLIENT_EMAIL, and PRIVATE_KEY together`,
+    );
+  }
+  return {
+    project_id: projectId,
+    client_email: clientEmail,
+    private_key: privateKey.replace(/\\n/g, "\n"),
+  };
+}
+
 function parseServiceAccountJson(raw: string): object {
   let parsed: unknown;
   try {
@@ -66,8 +86,10 @@ async function readServiceAccountJson(env: NodeJS.ProcessEnv): Promise<object> {
   if (inline) {
     return parseServiceAccountJson(inline);
   }
+  const fields = parseServiceAccountFields(env, "FIREBASE_SERVICE_ACCOUNT_");
+  if (fields) return fields;
   throw new Error(
-    "Firebase Admin is not configured: set FIREBASE_SERVICE_ACCOUNT_PATH or FIREBASE_SERVICE_ACCOUNT",
+    "Firebase Admin is not configured: set FIREBASE_SERVICE_ACCOUNT_PATH, FIREBASE_SERVICE_ACCOUNT, or the FIREBASE_SERVICE_ACCOUNT_PROJECT_ID/CLIENT_EMAIL/PRIVATE_KEY fields",
   );
 }
 
@@ -114,27 +136,43 @@ async function getApp_(env: NodeJS.ProcessEnv): Promise<App> {
 
 async function readAuthServiceAccountJson(env: NodeJS.ProcessEnv): Promise<object> {
   if (globalForFirebaseAdmin.__ahAuthServiceAccount) return globalForFirebaseAdmin.__ahAuthServiceAccount;
-  const authPath = env.FIREBASE_AUTH_SERVICE_ACCOUNT_PATH?.trim();
-  const ownerPath = env.OWNER_DEVICES_SERVICE_ACCOUNT_PATH?.trim();
-  const mainPath = env.FIREBASE_SERVICE_ACCOUNT_PATH?.trim();
-  const inline =
-    env.FIREBASE_AUTH_SERVICE_ACCOUNT_JSON?.trim() ||
-    env.OWNER_DEVICES_SERVICE_ACCOUNT_JSON?.trim() ||
-    env.FIREBASE_SERVICE_ACCOUNT?.trim() ||
-    env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
-  const path = authPath || ownerPath || mainPath;
-  let parsed: object;
-  if (path) {
-    const fsModule = "node:fs";
-    const { readFileSync } = (await import(
-      /* webpackIgnore: true */ /* turbopackIgnore: true */ fsModule
-    )) as typeof import("node:fs");
-    parsed = parseServiceAccountJson(readFileSync(path, "utf8"));
-  } else if (inline) {
-    parsed = parseServiceAccountJson(inline);
-  } else {
-    parsed = await readServiceAccountJson(env);
+  // Prefer explicit AUTH credentials, then the OWNER credential (often the same
+  // collaborator project), then the APP-DATA credential for single-project use.
+  const roles = [
+    {
+      prefix: "FIREBASE_AUTH_SERVICE_ACCOUNT_",
+      path: env.FIREBASE_AUTH_SERVICE_ACCOUNT_PATH?.trim(),
+      inline: env.FIREBASE_AUTH_SERVICE_ACCOUNT_JSON?.trim(),
+    },
+    {
+      prefix: "OWNER_DEVICES_SERVICE_ACCOUNT_",
+      path: env.OWNER_DEVICES_SERVICE_ACCOUNT_PATH?.trim(),
+      inline: env.OWNER_DEVICES_SERVICE_ACCOUNT_JSON?.trim(),
+    },
+    {
+      prefix: "FIREBASE_SERVICE_ACCOUNT_",
+      path: env.FIREBASE_SERVICE_ACCOUNT_PATH?.trim(),
+      inline: env.FIREBASE_SERVICE_ACCOUNT?.trim() || env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim(),
+    },
+  ];
+  let parsed: object | undefined;
+  for (const role of roles) {
+    if (role.path) {
+      const fsModule = "node:fs";
+      const { readFileSync } = (await import(
+        /* webpackIgnore: true */ /* turbopackIgnore: true */ fsModule
+      )) as typeof import("node:fs");
+      parsed = parseServiceAccountJson(readFileSync(role.path, "utf8"));
+      break;
+    }
+    if (role.inline) {
+      parsed = parseServiceAccountJson(role.inline);
+      break;
+    }
+    parsed = parseServiceAccountFields(env, role.prefix) ?? undefined;
+    if (parsed) break;
   }
+  if (!parsed) parsed = await readServiceAccountJson(env);
   globalForFirebaseAdmin.__ahAuthServiceAccount = parsed;
   return parsed;
 }
@@ -210,7 +248,7 @@ async function readOwnerServiceAccountJson(env: NodeJS.ProcessEnv): Promise<obje
   } else if (inline) {
     parsed = parseServiceAccountJson(inline);
   } else {
-    parsed = await readServiceAccountJson(env);
+    parsed = parseServiceAccountFields(env, "OWNER_DEVICES_SERVICE_ACCOUNT_") ?? await readServiceAccountJson(env);
   }
   globalForFirebaseAdmin.__ahOwnerServiceAccount = parsed;
   return parsed;
