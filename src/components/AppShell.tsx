@@ -875,27 +875,27 @@ export default function AppShell({
           )
         : null}
 
-      {/* FR-18 live alarms & trend proximity toast notifications (compact dynamic island pill) */}
+      {/* FR-18 live alarms & trend proximity toast notifications (crisp high-clarity pill) */}
       <div className="no-print pointer-events-none fixed top-3 inset-x-0 z-[70] flex flex-col items-center px-3 sm:top-auto sm:bottom-4 sm:right-4 sm:left-auto sm:items-end sm:px-0 sm:w-96">
         {toasts.map((t) => (
           <div
             key={t.id}
             className={cx(
-              "panel-raised animate-rise pointer-events-auto flex max-w-[92vw] items-center gap-2 rounded-full border px-3 py-1.5 shadow-[0_12px_32px_-8px_rgba(15,23,42,0.32)] backdrop-blur-xl sm:rounded-xl sm:p-2.5 sm:max-w-none sm:w-full sm:items-start",
+              "panel-raised animate-rise pointer-events-auto flex max-w-[92vw] items-center gap-2 rounded-full border px-3.5 py-1.5 shadow-[0_12px_28px_-6px_rgba(15,23,42,0.18)] sm:rounded-xl sm:p-2.5 sm:max-w-none sm:w-full sm:items-start",
               t.tone === "critical"
-                ? "border-red-400/40 bg-slate-950/92 text-red-100"
+                ? "border-red-300 bg-white text-red-800 ring-1 ring-red-500/20"
                 : t.tone === "warn"
-                ? "border-amber-400/35 bg-slate-950/92 text-amber-100"
-                : "border-slate-700 bg-slate-950/92 text-slate-100",
+                ? "border-amber-300 bg-white text-amber-900 ring-1 ring-amber-500/20"
+                : "border-slate-300 bg-white text-slate-800 ring-1 ring-slate-400/20",
             )}
           >
-            <span className={cx("h-2 w-2 flex-none rounded-full animate-pulse", t.tone === "critical" ? "bg-red-400 shadow-[0_0_8px_#f87171]" : t.tone === "warn" ? "bg-amber-400 shadow-[0_0_8px_#fbbf24]" : "bg-sky-400 shadow-[0_0_8px_#38bdf8]")} />
-            <p className="flex-1 truncate text-[11px] font-medium leading-tight sm:whitespace-normal sm:text-[11.5px] sm:leading-snug">{t.text}</p>
+            <span className={cx("h-2 w-2 flex-none rounded-full", t.tone === "critical" ? "bg-red-500 shadow-[0_0_6px_#ef4444]" : t.tone === "warn" ? "bg-amber-500 shadow-[0_0_6px_#f59e0b]" : "bg-blue-500 shadow-[0_0_6px_#3b82f6]")} />
+            <p className="flex-1 truncate text-[11px] font-semibold leading-tight sm:whitespace-normal sm:text-[11.5px] sm:leading-snug">{t.text}</p>
             <button
               type="button"
               onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}
               aria-label="Dismiss notification"
-              className="flex-none rounded-full p-0.5 text-slate-400 transition hover:bg-white/10 hover:text-white"
+              className="flex-none rounded-full p-0.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
             >
               <X size={13} />
             </button>
