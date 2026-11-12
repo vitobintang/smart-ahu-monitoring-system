@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { AhuStatus } from "@/lib/ahu";
 import { disposeGroupDeep } from "@/components/ahu-model-builders";
+import { cx } from "@/components/ui";
 
 /**
  * AhuDetailed3DView — the detailed 3D "inside of the machine" viewer
@@ -59,20 +60,25 @@ interface RotorSpec {
   axis: "x" | "y";
 }
 
-/** Canvas-texture billboard label so every internal component is identifiable. */
+/** Canvas-texture billboard label so every internal component is identifiable without clipping. */
 function makeLabel(text: string, scale = 1): THREE.Sprite {
+  // Render at 2x resolution for retina-crisp typography on high-DPI and mobile screens
   const canvas = document.createElement("canvas");
-  const measure = canvas.getContext("2d");
-  const font = "600 30px ui-sans-serif, system-ui, -apple-system, sans-serif";
-  if (measure) measure.font = font;
-  const textW = measure ? measure.measureText(text).width : text.length * 16;
-  const w = Math.ceil(textW) + 40;
-  const h = 52;
+  const ctx = canvas.getContext("2d");
+  const font = "600 48px ui-sans-serif, system-ui, -apple-system, sans-serif";
+  if (ctx) ctx.font = font;
+  const textW = ctx ? ctx.measureText(text).width : text.length * 28;
+  const padX = 56;
+  const padY = 32;
+  const w = Math.ceil(textW + padX * 2);
+  const h = 104;
   canvas.width = w;
   canvas.height = h;
-  const ctx = canvas.getContext("2d");
+
   if (ctx) {
-    const r = 14;
+    ctx.font = font;
+    const r = 24;
+    // Pill background
     ctx.beginPath();
     ctx.moveTo(r, 0);
     ctx.lineTo(w - r, 0);
@@ -84,24 +90,43 @@ function makeLabel(text: string, scale = 1): THREE.Sprite {
     ctx.lineTo(0, r);
     ctx.quadraticCurveTo(0, 0, r, 0);
     ctx.closePath();
-    ctx.fillStyle = "rgba(8,15,30,0.88)";
+
+    ctx.fillStyle = "rgba(10, 18, 35, 0.94)";
     ctx.fill();
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = "rgba(125,211,252,0.55)";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(56, 189, 248, 0.85)";
     ctx.stroke();
-    ctx.font = font;
-    ctx.fillStyle = "#e2e8f0";
+
+    // Subtle inner glowing border
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+    ctx.stroke();
+
+    // Text with subtle shadow
+    ctx.fillStyle = "#ffffff";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(text, w / 2, h / 2 + 1);
   }
+
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+
+  // CRITICAL FIX: depthTest = false, depthWrite = false, renderOrder = 999
+  // This guarantees labels are never clipped, cut off, or intersected by the 3D meshes!
   const sprite = new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0.95 }),
+    new THREE.SpriteMaterial({
+      map: tex,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      opacity: 0.98,
+    }),
   );
-  sprite.scale.set(((w / h) * 0.115) * scale, 0.115 * scale, 1);
-  sprite.renderOrder = 10;
+  sprite.scale.set(((w / h) * 0.12) * scale, 0.12 * scale, 1);
+  sprite.renderOrder = 999;
   return sprite;
 }
 
@@ -459,37 +484,37 @@ function zoneColorAt(t: number, zones: Array<{ at: number; color: THREE.Color }>
 function getGlbLabels(type: string, hasHeater: boolean): Array<{ text: string; pos: [number, number, number]; scale?: number }> {
   if (type === "AC_SPLIT_WALL") {
     return [
-      { text: "AIR INTAKE", pos: [0, 0.22, 0], scale: 0.72 },
-      { text: "AIR FILTER", pos: [-0.36, 0.16, 0.02], scale: 0.72 },
-      { text: "EVAPORATOR COIL", pos: [-0.36, 0.06, 0.04], scale: 0.75 },
-      { text: "CROSS-FLOW FAN", pos: [0.36, -0.04, 0.02], scale: 0.75 },
-      { text: "AIR LOUVER", pos: [0, -0.19, -0.04], scale: 0.72 },
+      { text: "AIR INTAKE", pos: [0, 0.28, 0], scale: 0.72 },
+      { text: "AIR FILTER", pos: [-0.36, 0.20, 0.10], scale: 0.72 },
+      { text: "EVAPORATOR COIL", pos: [-0.38, 0.08, 0.15], scale: 0.75 },
+      { text: "CROSS-FLOW FAN", pos: [0.38, -0.04, 0.15], scale: 0.75 },
+      { text: "AIR LOUVER", pos: [0, -0.22, 0.08], scale: 0.72 },
     ];
   }
   if (type === "AC_DAK") {
     return [
-      { text: "INTAKE GRILLE", pos: [0, -0.10, 0], scale: 0.72 },
-      { text: "TURBO FAN", pos: [-0.30, 0.06, 0], scale: 0.72 },
-      { text: "COOLING COIL RING", pos: [0.34, 0.08, 0.34], scale: 0.75 },
-      { text: "4-WAY LOUVERS", pos: [0, -0.10, 0.40], scale: 0.75 },
+      { text: "INTAKE GRILLE", pos: [0, -0.12, 0], scale: 0.72 },
+      { text: "TURBO FAN", pos: [-0.34, 0.10, 0], scale: 0.72 },
+      { text: "COOLING COIL RING", pos: [0.38, 0.10, 0.38], scale: 0.75 },
+      { text: "4-WAY LOUVERS", pos: [0, -0.12, 0.44], scale: 0.75 },
     ];
   }
   if (type === "AC_STANDING") {
     return [
-      { text: "AIR INTAKE", pos: [0.36, 0.35, 0.15], scale: 0.72 },
-      { text: "EVAPORATOR COIL", pos: [-0.36, 0.82, 0], scale: 0.75 },
-      { text: "CONTROL PANEL", pos: [0.36, 1.48, 0.15], scale: 0.72 },
-      { text: "TOP BLOWER", pos: [0, 1.92, 0], scale: 0.75 },
+      { text: "AIR INTAKE", pos: [0.38, 0.35, 0.18], scale: 0.72 },
+      { text: "EVAPORATOR COIL", pos: [-0.38, 0.85, 0.14], scale: 0.75 },
+      { text: "CONTROL PANEL", pos: [0.38, 1.48, 0.18], scale: 0.72 },
+      { text: "TOP BLOWER", pos: [0, 1.98, 0], scale: 0.75 },
     ];
   }
   return [
-    { text: "AIR INTAKE DAMPER", pos: [-1.28, 0.62, 0], scale: 0.85 },
-    { text: "PRE-FILTER", pos: [-0.92, 0.62, 0], scale: 0.85 },
-    { text: "BAG FILTERS", pos: [-0.68, 0.62, 0], scale: 0.85 },
-    { text: "COOLING COIL", pos: [-0.18, 0.62, 0], scale: 0.85 },
-    ...(hasHeater ? [{ text: "HEATING COIL", pos: [0.20, 0.62, 0] as [number, number, number], scale: 0.85 }] : []),
-    { text: "CENTRIFUGAL FAN", pos: [0.82, 0.62, 0], scale: 0.85 },
-    { text: "SUPPLY DUCT", pos: [1.32, 0.62, 0], scale: 0.85 },
+    { text: "AIR INTAKE DAMPER", pos: [-1.28, 0.72, 0], scale: 0.85 },
+    { text: "PRE-FILTER", pos: [-0.92, 0.72, 0], scale: 0.85 },
+    { text: "BAG FILTERS", pos: [-0.68, 0.72, 0], scale: 0.85 },
+    { text: "COOLING COIL", pos: [-0.18, 0.72, 0], scale: 0.85 },
+    ...(hasHeater ? [{ text: "HEATING COIL", pos: [0.20, 0.72, 0] as [number, number, number], scale: 0.85 }] : []),
+    { text: "SUPPLY FAN", pos: [0.68, 0.72, 0], scale: 0.85 },
+    { text: "SUPPLY DUCT", pos: [1.32, 0.72, 0], scale: 0.85 },
   ];
 }
 
@@ -587,6 +612,15 @@ const FLOW_CONFIG: Record<string, { count: number; size: number }> = {
 
 export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater, fanSpeed, className }: Props) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const [showLabels, setShowLabels] = useState(true);
+  const labelSpritesRef = useRef<THREE.Sprite[]>([]);
+  const resetCameraRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    labelSpritesRef.current.forEach((s) => {
+      s.visible = showLabels;
+    });
+  }, [showLabels]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -602,6 +636,7 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = false;
+    renderer.domElement.style.touchAction = "none";
     renderer.domElement.style.touchAction = "none";
     mount.appendChild(renderer.domElement);
 
@@ -649,17 +684,26 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
     const activeFlaps: THREE.Object3D[] = [...procedural.flaps];
     let activePathZones = [...procedural.pathZones];
 
+    labelSpritesRef.current = [];
     for (const l of procedural.labels) {
       const sprite = makeLabel(l.text, l.scale ?? 1);
       sprite.position.set(...l.pos);
+      sprite.visible = showLabels;
       internals.add(sprite);
+      labelSpritesRef.current.push(sprite);
     }
 
     // Auto-frame helper
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.enablePan = false;
+    controls.enablePan = true;
+    controls.enableZoom = true;
+    controls.zoomSpeed = 1.2;
+    controls.touches = {
+      ONE: THREE.TOUCH.ROTATE,
+      TWO: THREE.TOUCH.DOLLY_PAN,
+    };
 
     // Grounding disc under the machine
     const floor = new THREE.Mesh(
@@ -690,6 +734,7 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
       floor.position.y = bbox.min.y - Math.max(0.12, sphere.radius * 0.12);
       floor.scale.setScalar(sphere.radius * 1.35);
     };
+    resetCameraRef.current = frameCameraToModel;
     frameCameraToModel();
 
     // Airflow particles
@@ -728,7 +773,7 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
           }
           isGlbActive = true;
 
-          // Hide the procedural wireframe / outer casing as Blender model has its own sleek casing
+          // Hide procedural wireframe & outer box as Blender model has its own sleek cutaway
           casing.visible = false;
           edges.visible = false;
 
@@ -746,6 +791,7 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
             (spr.material as THREE.Material)?.dispose();
             internals.remove(s);
           });
+          labelSpritesRef.current = [];
 
           // Mount Blender model
           const modelScene = gltf.scene;
@@ -757,8 +803,8 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
 
           modelScene.traverse((child) => {
             if (child.name === "Rotor") {
-              // AHU centrifugal fan rotates around Z; split wall along X; dak/standing along Y
-              const axis: "x" | "y" = type === "AC_SPLIT_WALL" ? "x" : "y";
+              // AHU direct-drive plug fan and Split Wall cross-flow fan both rotate around X!
+              const axis: "x" | "y" = type === "AC_SPLIT_WALL" || type === "AHU" ? "x" : "y";
               activeRotors.push({ obj: child as THREE.Group, axis });
             }
             if (child.name === "AirLouver" || child.name === "LouverVane") {
@@ -773,17 +819,41 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
               if (
                 child.name.includes("Window") ||
                 child.name.includes("Cutaway") ||
+                child.name.includes("Glass") ||
                 matName.includes("Glass") ||
                 matName.includes("Cutaway")
               ) {
+                // High-transparency crystal clear viewing glass
                 mesh.material = new THREE.MeshPhysicalMaterial({
-                  color: 0xbae6fd,
+                  color: 0xe0f2fe,
                   transparent: true,
-                  opacity: 0.2,
-                  roughness: 0.08,
+                  opacity: 0.16,
+                  roughness: 0.04,
                   metalness: 0.05,
-                  transmission: 0.9,
+                  transmission: 0.94,
                   depthWrite: false,
+                });
+              } else if (matName.includes("Coil") || child.name.includes("Coil")) {
+                // Vibrant metallic cooling blue fins
+                mesh.material = new THREE.MeshStandardMaterial({
+                  color: matName.includes("Heat") ? 0xf97316 : 0x0284c7,
+                  roughness: 0.28,
+                  metalness: 0.55,
+                });
+              } else if (matName.includes("Copper") || child.name.includes("Copper") || child.name.includes("Header")) {
+                // Polished copper headers
+                mesh.material = new THREE.MeshStandardMaterial({
+                  color: 0xb45309,
+                  roughness: 0.22,
+                  metalness: 0.9,
+                });
+              } else if (matName.includes("Display")) {
+                // Glowing cyan LED display
+                mesh.material = new THREE.MeshStandardMaterial({
+                  color: 0x38bdf8,
+                  emissive: new THREE.Color(0x0ea5e9),
+                  emissiveIntensity: 2.5,
+                  roughness: 0.1,
                 });
               }
             }
@@ -794,7 +864,9 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
           for (const l of glbLabels) {
             const sprite = makeLabel(l.text, l.scale ?? 1);
             sprite.position.set(...l.pos);
+            sprite.visible = showLabels;
             internals.add(sprite);
+            labelSpritesRef.current.push(sprite);
           }
 
           // Path zones for colors
@@ -838,12 +910,8 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
       fanAngle += fanSpeedNow * dt;
 
       for (const r of activeRotors) {
-        if (type === "AHU" && isGlbActive) {
-          // In AHU Blender GLTF, centrifugal fan rotates around Z axis
-          r.obj.rotation.z = -fanAngle;
-        } else {
-          r.obj.rotation[r.axis] = -fanAngle;
-        }
+        // Spin along true aerodynamic airflow axis
+        r.obj.rotation[r.axis] = -fanAngle;
       }
 
       if (running) flapPhase += dt * 1.8;
@@ -914,18 +982,81 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
     };
   }, [ahuId, deviceType, status, hasHeater, fanSpeed]);
 
+  const typeName =
+    deviceType === "AC_SPLIT_WALL"
+      ? "Wall-Mounted Split AC"
+      : deviceType === "AC_DAK"
+        ? "4-Way Ceiling Cassette"
+        : deviceType === "AC_STANDING"
+          ? "Floor Standing AC Tower"
+          : "Air Handling Unit (AHU)";
+
+  const isRunning = status === "RUN";
+
   return (
-    <div className={className} data-ahu-detail-3d={ahuId}>
-      <div ref={mountRef} className="h-[320px] w-full overflow-hidden rounded-xl bg-gradient-to-b from-slate-900 to-slate-800 sm:h-[380px]" />
-      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
-        <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-slate-400" /> intake</span>
-        <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-slate-300" /> filter</span>
-        <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-sky-400" /> cooling</span>
-        {hasHeater && (
-          <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-orange-400" /> heating</span>
-        )}
-        <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-cyan-300" /> supply</span>
-        <span className="ml-auto italic">drag to rotate · scroll to zoom</span>
+    <div className={cx("relative overflow-hidden rounded-2xl border border-slate-700/60 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 shadow-2xl", className)} data-ahu-detail-3d={ahuId}>
+      {/* Top Floating Glassmorphic Toolbar (shadcn/ui & Magic UI inspired) */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between p-3 sm:p-4">
+        {/* Left: Device Name & Pulsing Status */}
+        <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-slate-700/70 bg-slate-900/80 px-3 py-1.5 backdrop-blur-md shadow-sm">
+          <span className="text-[12px] font-semibold text-slate-200">{typeName}</span>
+          <span className="h-3 w-px bg-slate-700" />
+          <span className="flex items-center gap-1.5 text-[11px] font-mono font-bold tracking-wider">
+            <span className="relative flex h-2 w-2">
+              {isRunning && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />}
+              <span className={cx("relative inline-flex h-2 w-2 rounded-full", isRunning ? "bg-emerald-400 shadow-[0_0_8px_#34d399]" : status === "FAULT" ? "bg-rose-500 shadow-[0_0_8px_#f43f5e]" : "bg-slate-400")} />
+            </span>
+            <span className={isRunning ? "text-emerald-400" : status === "FAULT" ? "text-rose-400" : "text-slate-400"}>
+              {status}
+            </span>
+          </span>
+        </div>
+
+        {/* Right: Interactive Toolbar Buttons */}
+        <div className="pointer-events-auto flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setShowLabels(!showLabels)}
+            className={cx(
+              "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-all active:scale-95 shadow-sm backdrop-blur-md",
+              showLabels
+                ? "border-sky-500/40 bg-sky-500/20 text-sky-200 ring-1 ring-sky-500/30"
+                : "border-slate-700/70 bg-slate-900/80 text-slate-400 hover:text-slate-200 hover:border-slate-600",
+            )}
+            title="Toggle component tags"
+          >
+            <span>🏷️</span>
+            <span className="hidden sm:inline">Labels</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => resetCameraRef.current()}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-700/70 bg-slate-900/80 px-2.5 py-1 text-[11px] font-medium text-slate-300 transition-all hover:border-slate-600 hover:text-white active:scale-95 shadow-sm backdrop-blur-md"
+            title="Reset Camera Framing"
+          >
+            <span>🔄</span>
+            <span className="hidden sm:inline">Reset</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 3D Canvas Mount */}
+      <div ref={mountRef} className="h-[340px] w-full sm:h-[400px] touch-none select-none" style={{ touchAction: "none" }} />
+
+      {/* Bottom Floating Legend Bar (Clean pill design) */}
+      <div className="border-t border-slate-800/80 bg-slate-950/70 px-4 py-2 backdrop-blur-md flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11.5px] text-slate-300">
+        <div className="flex items-center gap-3">
+          <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full bg-slate-400 shadow-[0_0_6px_#94a3b8]" /> intake</span>
+          <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full bg-slate-300 shadow-[0_0_6px_#cbd5e1]" /> filter</span>
+          <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full bg-sky-400 shadow-[0_0_6px_#38bdf8]" /> cooling</span>
+          {hasHeater && (
+            <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full bg-orange-400 shadow-[0_0_6px_#fb923c]" /> heating</span>
+          )}
+          <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_6px_#67e8f9]" /> supply</span>
+        </div>
+        <span className="ml-auto text-[11px] text-slate-400 font-medium">
+          🖱️ Drag to orbit · Scroll / Pinch to zoom
+        </span>
       </div>
     </div>
   );

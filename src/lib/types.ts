@@ -39,6 +39,7 @@ export interface AhuRow {
   setpoint: number;
   faultCode: string | null;
   physicalControlEnabled: boolean;
+  deviceType?: string | null;
   mapX: number | null;
   mapZ: number | null;
   mapRotation: number;

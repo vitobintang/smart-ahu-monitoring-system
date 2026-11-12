@@ -778,6 +778,7 @@ export default function AhuFacilityMap3D({
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.06;
     container.innerHTML = "";
+    domEl.style.touchAction = "none";
     container.appendChild(domEl);
 
     const scene = new THREE.Scene();
@@ -1762,6 +1763,16 @@ export default function AhuFacilityMap3D({
       }
     };
 
+    const handlePointerCancel = (e: PointerEvent) => {
+      activeTouches.delete(e.pointerId);
+      if (activeTouches.size < 2) {
+        pinchStartDist = 0;
+      }
+      isDragging = false;
+      isDraggingModelDirectly = false;
+      draggingRoomElement = null;
+    };
+
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
       const c = camStateRef.current;
@@ -1774,6 +1785,7 @@ export default function AhuFacilityMap3D({
     domEl.addEventListener("pointermove", handlePointerMove);
     domEl.addEventListener("pointerup", handlePointerUp);
     domEl.addEventListener("pointerleave", handlePointerLeave);
+    domEl.addEventListener("pointercancel", handlePointerCancel);
     domEl.addEventListener("wheel", handleWheel, { passive: false });
     domEl.addEventListener("contextmenu", handleContextMenu);
 
@@ -2030,6 +2042,7 @@ export default function AhuFacilityMap3D({
       domEl.removeEventListener("pointermove", handlePointerMove);
       domEl.removeEventListener("pointerup", handlePointerUp);
       domEl.removeEventListener("pointerleave", handlePointerLeave);
+      domEl.removeEventListener("pointercancel", handlePointerCancel);
       domEl.removeEventListener("wheel", handleWheel);
       domEl.removeEventListener("contextmenu", handleContextMenu);
       ahuSceneObjectsRef.current?.roomPool.dispose();

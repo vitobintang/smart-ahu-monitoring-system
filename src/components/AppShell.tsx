@@ -652,8 +652,10 @@ export default function AppShell({
                 aria-current={active ? "page" : undefined}
                 onClick={() => setMobileMoreOpen(false)}
                 className={cx(
-                  "flex min-h-[44px] min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-0.5 py-1 text-[9.5px] font-semibold leading-none text-slate-500 [-webkit-tap-highlight-color:transparent]",
-                  active && "text-[#1d6ef2]",
+                  "flex min-h-[44px] min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1 text-[9.5px] font-semibold leading-none text-slate-500 [-webkit-tap-highlight-color:transparent] transition-all",
+                  active
+                    ? "bg-blue-500/15 text-[#1d6ef2] font-bold shadow-[0_1px_3px_rgba(29,110,242,0.12)] ring-1 ring-blue-500/25"
+                    : "hover:text-slate-800",
                 )}
               >
                 <span className="relative grid h-6 place-items-center">
@@ -674,8 +676,10 @@ export default function AppShell({
             aria-expanded={mobileMoreOpen}
             onClick={() => setMobileMoreOpen((open) => !open)}
             className={cx(
-              "flex min-h-[44px] min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-0.5 py-1 text-[9.5px] font-semibold leading-none text-slate-500 [-webkit-tap-highlight-color:transparent]",
-              (mobileMoreOpen || mobileMoreActive) && "text-[#1d6ef2]",
+              "flex min-h-[44px] min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1 text-[9.5px] font-semibold leading-none text-slate-500 [-webkit-tap-highlight-color:transparent] transition-all",
+              (mobileMoreOpen || mobileMoreActive)
+                ? "bg-blue-500/15 text-[#1d6ef2] font-bold shadow-[0_1px_3px_rgba(29,110,242,0.12)] ring-1 ring-blue-500/25"
+                : "hover:text-slate-800",
             )}
           >
             <span className="relative grid h-6 place-items-center">
@@ -875,27 +879,40 @@ export default function AppShell({
           )
         : null}
 
-      {/* FR-18 live alarms & trend proximity toast notifications (crisp high-clarity pill) */}
-      <div className="no-print pointer-events-none fixed top-3 inset-x-0 z-[70] flex flex-col items-center px-3 sm:top-auto sm:bottom-4 sm:right-4 sm:left-auto sm:items-end sm:px-0 sm:w-96">
+      {/* Sonner-grade live alarm & telemetry toast notifications */}
+      <div className="no-print pointer-events-none fixed top-[max(0.75rem,env(safe-area-inset-top))] inset-x-0 z-[70] flex flex-col items-center px-3 sm:top-auto sm:bottom-4 sm:right-4 sm:left-auto sm:items-end sm:px-0 sm:w-96 space-y-2">
         {toasts.map((t) => (
           <div
             key={t.id}
             className={cx(
-              "panel-raised animate-rise pointer-events-auto flex max-w-[92vw] items-center gap-2 rounded-full border px-3.5 py-1.5 shadow-[0_12px_28px_-6px_rgba(15,23,42,0.18)] sm:rounded-xl sm:p-2.5 sm:max-w-none sm:w-full sm:items-start",
+              "animate-rise pointer-events-auto flex max-w-[94vw] items-center gap-2.5 rounded-full border px-3.5 py-2 shadow-[0_12px_32px_-4px_rgba(15,23,42,0.16)] backdrop-blur-md sm:rounded-2xl sm:p-3 sm:max-w-none sm:w-full sm:items-start transition-all",
               t.tone === "critical"
-                ? "border-red-300 bg-white text-red-800 ring-1 ring-red-500/20"
+                ? "border-rose-200 bg-white/95 text-rose-900 ring-1 ring-rose-500/20"
                 : t.tone === "warn"
-                ? "border-amber-300 bg-white text-amber-900 ring-1 ring-amber-500/20"
-                : "border-slate-300 bg-white text-slate-800 ring-1 ring-slate-400/20",
+                ? "border-amber-200 bg-white/95 text-amber-950 ring-1 ring-amber-500/20"
+                : "border-slate-200 bg-white/95 text-slate-800 ring-1 ring-slate-400/20",
             )}
           >
-            <span className={cx("h-2 w-2 flex-none rounded-full", t.tone === "critical" ? "bg-red-500 shadow-[0_0_6px_#ef4444]" : t.tone === "warn" ? "bg-amber-500 shadow-[0_0_6px_#f59e0b]" : "bg-blue-500 shadow-[0_0_6px_#3b82f6]")} />
-            <p className="flex-1 truncate text-[11px] font-semibold leading-tight sm:whitespace-normal sm:text-[11.5px] sm:leading-snug">{t.text}</p>
+            <span
+              className={cx(
+                "relative flex h-2.5 w-2.5 flex-none rounded-full mt-0.5",
+                t.tone === "critical"
+                  ? "bg-rose-500 shadow-[0_0_8px_#f43f5e]"
+                  : t.tone === "warn"
+                  ? "bg-amber-500 shadow-[0_0_8px_#f59e0b]"
+                  : "bg-sky-500 shadow-[0_0_8px_#0ea5e9]",
+              )}
+            >
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 bg-current" />
+            </span>
+            <p className="flex-1 truncate text-[11.5px] font-semibold leading-tight sm:whitespace-normal sm:text-[12px] sm:leading-snug">
+              {t.text}
+            </p>
             <button
               type="button"
               onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}
               aria-label="Dismiss notification"
-              className="flex-none rounded-full p-0.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              className="flex-none rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 active:scale-95"
             >
               <X size={13} />
             </button>

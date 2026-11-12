@@ -37,10 +37,22 @@ export interface Card {
 
 /** Product-shot preview per device kind — same white studio style as the AHU shot. */
 const DEVICE_IMG: Record<string, string> = {
+  AHU: "/ahu/unit-iso2-t.png",
   AC_SPLIT_WALL: "/ahu/unit-split-t.png",
   AC_DAK: "/ahu/unit-dak-t.png",
   AC_STANDING: "/ahu/unit-standing-t.png",
 };
+
+export function getDeviceImage(ahu: { id: string; deviceType?: string | null }): string {
+  if (ahu.deviceType && DEVICE_IMG[ahu.deviceType]) {
+    return DEVICE_IMG[ahu.deviceType];
+  }
+  const upper = ahu.id.toUpperCase();
+  if (upper.includes("SPLIT")) return DEVICE_IMG.AC_SPLIT_WALL;
+  if (upper.includes("DAK") || upper.includes("CASSETTE")) return DEVICE_IMG.AC_DAK;
+  if (upper.includes("STD") || upper.includes("STANDING")) return DEVICE_IMG.AC_STANDING;
+  return DEVICE_IMG.AHU;
+}
 
 const PILL: Record<AhuStatus, { label: string; cls: string }> = {
   RUN: { label: "RUNNING", cls: "bg-[#22c55e] text-white shadow-[0_6px_14px_-6px_rgba(34,197,94,0.9)]" },
@@ -216,7 +228,7 @@ export function UnitCard({ card }: { card: Card }) {
       <Link
         href={`/devices/${card.ahu.id}?from=/dashboard`}
         className={cx(
-          "panel card-hover flex flex-col justify-between rounded-2xl p-3 sm:hidden",
+          "panel card-hover group flex flex-col justify-between rounded-2xl p-3 sm:hidden transition-all duration-200 hover:border-blue-400/80 hover:shadow-md",
           card.status === "FAULT" && "border-red-200 bg-red-50/30",
         )}
       >
@@ -227,7 +239,7 @@ export function UnitCard({ card }: { card: Card }) {
             </span>
             <span
               className={cx(
-                "rounded-md px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-wider",
+                "rounded-md px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-wider shadow-xs",
                 pill.cls,
               )}
             >
@@ -238,13 +250,13 @@ export function UnitCard({ card }: { card: Card }) {
         </div>
 
         {/* Product preview picture (matches desktop preview) */}
-        <div className="relative my-2 h-16 w-full overflow-hidden">
+        <div className="relative my-2.5 h-20 w-full overflow-hidden flex items-center justify-center">
           <Image
-            src={DEVICE_IMG[card.ahu.deviceType ?? ""] ?? "/ahu/unit-iso2-t.png"}
+            src={getDeviceImage(card.ahu)}
             alt={`${card.ahu.id} unit`}
             fill
-            sizes="(max-width: 640px) 45vw, 128px"
-            className={cx("scale-[1.15] object-contain", off && "opacity-40 grayscale")}
+            sizes="160px"
+            className={cx("object-contain transition-transform duration-300 group-hover:scale-105", off && "opacity-40 grayscale")}
           />
         </div>
 
@@ -301,7 +313,7 @@ export function UnitCard({ card }: { card: Card }) {
         <div className="mt-3 flex items-center gap-3">
           <div className="relative h-[84px] w-32 flex-none overflow-hidden">
             <Image
-              src={DEVICE_IMG[card.ahu.deviceType ?? ""] ?? "/ahu/unit-iso2-t.png"}
+              src={getDeviceImage(card.ahu)}
               alt={`${card.ahu.id} unit`}
               fill
               sizes="128px"
