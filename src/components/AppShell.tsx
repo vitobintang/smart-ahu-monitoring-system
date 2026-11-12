@@ -23,6 +23,8 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { Toaster, toast } from "sonner";
+import { CommandPalette } from "./CommandPalette";
 import { api, fmtDateTime, timeAgo, type SessionUser, type SyncInfo } from "@/lib/client";
 import { can } from "@/lib/domain";
 import { BUILD_STAMP } from "@/lib/build";
@@ -50,13 +52,13 @@ export default function AppShell({
   const [currentUser, setCurrentUser] = useState<SessionUser>(user);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [feed, setFeed] = useState<Feed | null>(null);
   const [bellOpen, setBellOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [toasts, setToasts] = useState<{ id: string; text: string; tone: string }[]>([]);
   const seen = useRef<Set<string>>(new Set());
   const [liveSync, setLiveSync] = useState<SyncInfo | null>(sync);
 
@@ -106,15 +108,34 @@ export default function AppShell({
           const key = `alarm:${a.id}`;
           if (seen.current.has(key)) continue;
           seen.current.add(key);
-          if (a.priority === "CRITICAL" || a.priority === "HIGH") {
-            pushToast(`${a.ahuId} · ${a.priority} · ${a.message}`, a.priority === "CRITICAL" ? "critical" : "warn");
+          if (a.priority === "CRITICAL") {
+            toast.error(`${a.ahuId} · CRITICAL ALARM`, {
+              description: a.message,
+              duration: 8000,
+              action: {
+                label: "Review",
+                onClick: () => router.push("/alarms"),
+              },
+            });
+          } else if (a.priority === "HIGH") {
+            toast.warning(`${a.ahuId} · HIGH ALARM`, {
+              description: a.message,
+              duration: 6000,
+              action: {
+                label: "Review",
+                onClick: () => router.push("/alarms"),
+              },
+            });
           }
         }
         for (const t of data.trends) {
           const key = `trend:${t.id}`;
           if (seen.current.has(key)) continue;
           seen.current.add(key);
-          pushToast(`Trend proximity · ${t.ahuId} ${t.parameter} ${t.direction} — breach within ${t.estimatedMin} min`, "info");
+          toast.info(`Trend Alert · ${t.ahuId}`, {
+            description: `${t.parameter} ${t.direction} — breach projected within ${t.estimatedMin} min`,
+            duration: 5000,
+          });
         }
       } catch {
         /* best-effort */
@@ -139,7 +160,7 @@ export default function AppShell({
       clearInterval(id);
       clearInterval(syncId);
     };
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -170,12 +191,6 @@ export default function AppShell({
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
-
-  function pushToast(text: string, tone: string) {
-    const id = `${Date.now()}-${Math.random()}`;
-    setToasts((t) => [...t.slice(-1), { id, text, tone }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 6000);
-  }
 
   function openAccountSettings() {
     setProfileOpen(false);
@@ -418,25 +433,31 @@ export default function AppShell({
               </span>
             </Link>
 
-            <label className="relative hidden max-w-xl flex-1 md:block">
-              <Search size={15} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                className="w-full rounded-full border border-[#e6ecf5] bg-[#f1f5fb]/90 py-2 pl-10 pr-16 text-[12.5px] text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-[#bfdbfe] focus:bg-white focus:ring-4 focus:ring-[#2563eb]/10"
-                placeholder="Search devices, alarms, reports…"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    const q = e.currentTarget.value.trim().toUpperCase();
-                    if (/^AHU-0[1-7]$/.test(q)) router.push(`/devices/${q}`);
-                    else if (q) router.push("/devices");
-                  }
-                }}
-              />
-              <kbd className="absolute right-4 top-1/2 -translate-y-1/2 rounded-md border border-[#e6ecf5] bg-white px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
-                ↵
+            {/* Command Palette Trigger (Desktop ⌘K) */}
+            <button
+              type="button"
+              onClick={() => setCommandOpen(true)}
+              className="relative hidden max-w-xl flex-1 items-center justify-between rounded-xl border border-slate-200/90 bg-white/85 px-3.5 py-2 text-[12.5px] font-medium text-slate-400 shadow-2xs backdrop-blur-md transition-all hover:border-blue-400 hover:bg-white hover:text-slate-600 md:flex"
+            >
+              <div className="flex items-center gap-2.5">
+                <Search size={15} className="text-slate-400" />
+                <span>Search systems, devices, or jump to page…</span>
+              </div>
+              <kbd className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-0.5 font-mono text-[10.5px] font-bold text-slate-500 shadow-2xs">
+                ⌘K
               </kbd>
-            </label>
+            </button>
 
             <div className="ml-auto flex items-center gap-1 sm:gap-1.5">
+              {/* Mobile Search Button */}
+              <button
+                type="button"
+                onClick={() => setCommandOpen(true)}
+                className="grid h-10 w-10 place-items-center rounded-full text-slate-600 transition hover:bg-slate-100 hover:text-blue-600 md:hidden"
+                aria-label="Quick Search (⌘K)"
+              >
+                <Search size={18} />
+              </button>
               {/* Notifications popover */}
               <div className="relative" data-bell>
                 <button
@@ -640,7 +661,7 @@ export default function AppShell({
 
       <nav
           aria-label="Mobile navigation"
-          className="no-print fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-[#dbe4f0] bg-white/95 px-1 pt-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_-20px_rgba(15,23,42,0.42)] backdrop-blur-xl md:hidden"
+          className="no-print fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-slate-200/90 bg-white/95 px-1.5 pt-1.5 pb-[max(0.45rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_-16px_rgba(15,23,42,0.25)] backdrop-blur-xl md:hidden"
         >
           {mobilePrimaryItems.map((item) => {
             const Icon = item.icon;
@@ -652,21 +673,24 @@ export default function AppShell({
                 aria-current={active ? "page" : undefined}
                 onClick={() => setMobileMoreOpen(false)}
                 className={cx(
-                  "flex min-h-[44px] min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1 text-[9.5px] font-semibold leading-none text-slate-500 [-webkit-tap-highlight-color:transparent] transition-all",
+                  "relative flex min-h-[50px] min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-1 py-1 text-[10px] font-semibold leading-none [-webkit-tap-highlight-color:transparent] transition-all duration-200",
                   active
-                    ? "bg-blue-500/15 text-[#1d6ef2] font-bold shadow-[0_1px_3px_rgba(29,110,242,0.12)] ring-1 ring-blue-500/25"
-                    : "hover:text-slate-800",
+                    ? "bg-blue-600/12 text-blue-600 font-bold shadow-2xs ring-1 ring-blue-600/25"
+                    : "text-slate-500 hover:text-slate-800",
                 )}
               >
                 <span className="relative grid h-6 place-items-center">
-                  <Icon size={18} strokeWidth={active ? 2.3 : 1.8} />
+                  <Icon size={19} strokeWidth={active ? 2.4 : 1.8} />
                   {item.badge === "alarms" && unackedAlarms > 0 ? (
-                    <span className="absolute -right-2 -top-1 grid h-[15px] min-w-[15px] place-items-center rounded-full bg-red-600 px-0.5 font-mono text-[8.5px] font-bold text-white ring-2 ring-white">
+                    <span className="absolute -right-2 -top-1 grid h-[15px] min-w-[15px] place-items-center rounded-full bg-rose-600 px-0.5 font-mono text-[8.5px] font-bold text-white ring-2 ring-white">
                       {unackedAlarms > 99 ? "99+" : unackedAlarms}
                     </span>
                   ) : null}
                 </span>
                 <span className="block max-w-full truncate tracking-tight">{item.label === "Reports & Data Logger" ? "Reports" : item.label}</span>
+                {active ? (
+                  <span className="absolute bottom-0.5 h-1 w-5 rounded-full bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.8)]" />
+                ) : null}
               </Link>
             );
           })}
@@ -676,22 +700,26 @@ export default function AppShell({
             aria-expanded={mobileMoreOpen}
             onClick={() => setMobileMoreOpen((open) => !open)}
             className={cx(
-              "flex min-h-[44px] min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1 text-[9.5px] font-semibold leading-none text-slate-500 [-webkit-tap-highlight-color:transparent] transition-all",
-              (mobileMoreOpen || mobileMoreActive)
-                ? "bg-blue-500/15 text-[#1d6ef2] font-bold shadow-[0_1px_3px_rgba(29,110,242,0.12)] ring-1 ring-blue-500/25"
-                : "hover:text-slate-800",
+              "relative flex min-h-[50px] min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-1 py-1 text-[10px] font-semibold leading-none [-webkit-tap-highlight-color:transparent] transition-all duration-200",
+              mobileMoreOpen || mobileMoreActive
+                ? "bg-blue-600/12 text-blue-600 font-bold shadow-2xs ring-1 ring-blue-600/25"
+                : "text-slate-500 hover:text-slate-800",
             )}
           >
             <span className="relative grid h-6 place-items-center">
-              <MoreHorizontal size={18} strokeWidth={mobileMoreOpen || mobileMoreActive ? 2.3 : 1.8} />
+              <MoreHorizontal size={19} strokeWidth={mobileMoreOpen || mobileMoreActive ? 2.4 : 1.8} />
             </span>
             <span className="block max-w-full truncate tracking-tight">More</span>
+            {mobileMoreOpen || mobileMoreActive ? (
+              <span className="absolute bottom-0.5 h-1 w-5 rounded-full bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.8)]" />
+            ) : null}
           </button>
         </nav>
 
+      {/* Vaul-grade bottom sheet for Mobile 'More' destinations */}
       {mobileMoreOpen ? (
         <div
-          className="no-print fixed inset-0 z-[60] flex items-end bg-slate-950/35 backdrop-blur-[2px] md:hidden"
+          className="no-print fixed inset-0 z-[60] flex items-end bg-slate-950/45 backdrop-blur-sm md:hidden animate-fade-in"
           role="presentation"
           onClick={() => setMobileMoreOpen(false)}
         >
@@ -699,20 +727,21 @@ export default function AppShell({
             aria-label="More destinations"
             aria-modal="true"
             role="dialog"
-            className="mobile-more-sheet w-full rounded-t-[24px] border border-[#dbe4f0] bg-white px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-3 shadow-[0_-18px_50px_-24px_rgba(15,23,42,0.32)]"
+            className="mobile-more-sheet w-full rounded-t-[28px] border-t border-slate-200/90 bg-white/98 px-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-3 shadow-[0_-24px_70px_-16px_rgba(15,23,42,0.45)] backdrop-blur-xl animate-rise"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-300" aria-hidden="true" />
-            <div className="mb-3 flex items-center justify-between">
+            {/* Vaul Drag Handle */}
+            <div className="mx-auto mb-3.5 h-1.5 w-12 rounded-full bg-slate-300" aria-hidden="true" />
+            <div className="mb-3.5 flex items-center justify-between">
               <div>
-                <h2 className="text-[16px] font-bold text-[#12294d]">More</h2>
-                <p className="text-[12px] text-slate-500">Tools and settings</p>
+                <h2 className="text-[17px] font-bold text-slate-900">More Destinations</h2>
+                <p className="text-[12px] text-slate-500">Quick tools, diagnostics, and preferences</p>
               </div>
               <button
                 type="button"
                 onClick={() => setMobileMoreOpen(false)}
                 aria-label="Close more menu"
-                className="grid h-11 w-11 place-items-center rounded-full bg-slate-100 text-slate-600"
+                className="grid h-10 w-10 place-items-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 active:scale-95"
               >
                 <X size={18} />
               </button>
@@ -879,46 +908,20 @@ export default function AppShell({
           )
         : null}
 
-      {/* Sonner-grade live alarm & telemetry toast notifications */}
-      <div className="no-print pointer-events-none fixed top-[max(0.75rem,env(safe-area-inset-top))] inset-x-0 z-[70] flex flex-col items-center px-3 sm:top-auto sm:bottom-4 sm:right-4 sm:left-auto sm:items-end sm:px-0 sm:w-96 space-y-2">
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            className={cx(
-              "animate-rise pointer-events-auto flex max-w-[94vw] items-center gap-2.5 rounded-full border px-3.5 py-2 shadow-[0_12px_32px_-4px_rgba(15,23,42,0.16)] backdrop-blur-md sm:rounded-2xl sm:p-3 sm:max-w-none sm:w-full sm:items-start transition-all",
-              t.tone === "critical"
-                ? "border-rose-200 bg-white/95 text-rose-900 ring-1 ring-rose-500/20"
-                : t.tone === "warn"
-                ? "border-amber-200 bg-white/95 text-amber-950 ring-1 ring-amber-500/20"
-                : "border-slate-200 bg-white/95 text-slate-800 ring-1 ring-slate-400/20",
-            )}
-          >
-            <span
-              className={cx(
-                "relative flex h-2.5 w-2.5 flex-none rounded-full mt-0.5",
-                t.tone === "critical"
-                  ? "bg-rose-500 shadow-[0_0_8px_#f43f5e]"
-                  : t.tone === "warn"
-                  ? "bg-amber-500 shadow-[0_0_8px_#f59e0b]"
-                  : "bg-sky-500 shadow-[0_0_8px_#0ea5e9]",
-              )}
-            >
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 bg-current" />
-            </span>
-            <p className="flex-1 truncate text-[11.5px] font-semibold leading-tight sm:whitespace-normal sm:text-[12px] sm:leading-snug">
-              {t.text}
-            </p>
-            <button
-              type="button"
-              onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}
-              aria-label="Dismiss notification"
-              className="flex-none rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 active:scale-95"
-            >
-              <X size={13} />
-            </button>
-          </div>
-        ))}
-      </div>
+      {/* Official Sonner Toast System (Emil Kowalski) */}
+      <Toaster
+        position="top-right"
+        richColors
+        closeButton
+        expand={false}
+        theme="system"
+        toastOptions={{
+          className: "font-sans border border-slate-200/90 shadow-lg rounded-2xl",
+        }}
+      />
+
+      {/* Paco Coursey cmdk Command Palette */}
+      <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
     </div>
   );
 }

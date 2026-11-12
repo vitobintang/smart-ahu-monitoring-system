@@ -3,6 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import type { ReactNode } from "react";
+import NumberFlow from "@number-flow/react";
 import {
   ArrowRight,
   CheckCircle2,
@@ -106,7 +107,11 @@ export function Tile({
         </span>
         <span className="min-w-0 flex-1 pr-5 sm:pr-0">
           <span className={valueClass ?? "num block text-[22px] font-bold leading-tight tracking-[-0.02em] text-[#12294d] sm:text-[26px]"}>
-            {value}
+            {!Number.isNaN(Number(value)) && String(Number(value)) === value.trim() ? (
+              <NumberFlow value={Number(value)} className="tabular-nums font-bold" />
+            ) : (
+              value
+            )}
           </span>
           <span className="mt-0.5 block truncate text-[11px] leading-snug text-slate-500 sm:text-[11.5px]">{label}</span>
         </span>
@@ -147,7 +152,11 @@ export function Tile({
       </div>
       <div className="sm:hidden">
         <span className="num block truncate text-[25px] font-extrabold leading-none tracking-[-0.03em] text-[#12294d]">
-          {value}
+          {!Number.isNaN(Number(value)) && String(Number(value)) === value.trim() ? (
+            <NumberFlow value={Number(value)} className="tabular-nums font-bold" />
+          ) : (
+            value
+          )}
         </span>
         <span className="mt-1 block truncate text-[12px] font-semibold text-slate-600">{label}</span>
       </div>
@@ -163,7 +172,11 @@ export function Tile({
         </span>
         <span className="min-w-0">
           <span className={valueClass ?? "num block text-[26px] font-bold leading-tight tracking-[-0.02em] text-[#12294d]"}>
-            {value}
+            {!Number.isNaN(Number(value)) && String(Number(value)) === value.trim() ? (
+              <NumberFlow value={Number(value)} className="tabular-nums font-bold" />
+            ) : (
+              value
+            )}
           </span>
           <span className="mt-0.5 block text-[11.5px] leading-snug text-slate-500">{label}</span>
         </span>
@@ -263,20 +276,41 @@ export function UnitCard({ card }: { card: Card }) {
         <div className="grid grid-cols-2 gap-1.5">
           <div className="rounded-lg bg-[#f4f7fc] px-2 py-1.5">
             <span className="block text-[8.5px] font-bold uppercase tracking-wider text-slate-400">Temp</span>
-            <span className="num block text-[12.5px] font-bold leading-tight text-[#12294d]">
-              {off || v.supplyTemp === null ? "—" : `${v.supplyTemp.toFixed(1)}°C`}
+            <span className="num flex items-baseline text-[12.5px] font-bold leading-tight text-[#12294d]">
+              {off || v.supplyTemp === null ? (
+                "—"
+              ) : (
+                <>
+                  <NumberFlow value={v.supplyTemp} format={{ minimumFractionDigits: 1, maximumFractionDigits: 1 }} className="tabular-nums" />
+                  <span className="ml-0.5 text-[9.5px] font-semibold text-slate-500">°C</span>
+                </>
+              )}
             </span>
           </div>
           <div className="rounded-lg bg-[#f4f7fc] px-2 py-1.5">
             <span className="block text-[8.5px] font-bold uppercase tracking-wider text-slate-400">RH</span>
-            <span className="num block text-[12.5px] font-bold leading-tight text-[#12294d]">
-              {off || v.humidity === null ? "—" : `${v.humidity.toFixed(0)}%`}
+            <span className="num flex items-baseline text-[12.5px] font-bold leading-tight text-[#12294d]">
+              {off || v.humidity === null ? (
+                "—"
+              ) : (
+                <>
+                  <NumberFlow value={v.humidity} format={{ maximumFractionDigits: 0 }} className="tabular-nums" />
+                  <span className="ml-0.5 text-[9.5px] font-semibold text-slate-500">%</span>
+                </>
+              )}
             </span>
           </div>
           <div className="rounded-lg bg-[#f4f7fc] px-2 py-1.5">
             <span className="block text-[8.5px] font-bold uppercase tracking-wider text-slate-400">Fan</span>
-            <span className="num block text-[12.5px] font-bold leading-tight text-[#12294d]">
-              {off || v.fanSpeed === null ? "—" : `${v.fanSpeed.toFixed(0)}%`}
+            <span className="num flex items-baseline text-[12.5px] font-bold leading-tight text-[#12294d]">
+              {off || v.fanSpeed === null ? (
+                "—"
+              ) : (
+                <>
+                  <NumberFlow value={v.fanSpeed} format={{ maximumFractionDigits: 0 }} className="tabular-nums" />
+                  <span className="ml-0.5 text-[9.5px] font-semibold text-slate-500">%</span>
+                </>
+              )}
             </span>
           </div>
           <div

@@ -125,7 +125,8 @@ function makeLabel(text: string, scale = 1): THREE.Sprite {
       opacity: 0.98,
     }),
   );
-  sprite.scale.set(((w / h) * 0.12) * scale, 0.12 * scale, 1);
+  const spriteH = 0.075 * scale;
+  sprite.scale.set((w / h) * spriteH, spriteH, 1);
   sprite.renderOrder = 999;
   return sprite;
 }
@@ -484,37 +485,37 @@ function zoneColorAt(t: number, zones: Array<{ at: number; color: THREE.Color }>
 function getGlbLabels(type: string, hasHeater: boolean): Array<{ text: string; pos: [number, number, number]; scale?: number }> {
   if (type === "AC_SPLIT_WALL") {
     return [
-      { text: "AIR INTAKE", pos: [0, 0.28, -0.06], scale: 0.72 },
-      { text: "AIR FILTER", pos: [-0.36, 0.18, -0.10], scale: 0.72 },
-      { text: "EVAPORATOR COIL", pos: [-0.38, 0.05, -0.12], scale: 0.75 },
-      { text: "CROSS-FLOW FAN", pos: [0.38, -0.05, -0.12], scale: 0.75 },
-      { text: "AIR LOUVER", pos: [0, -0.22, -0.08], scale: 0.72 },
+      { text: "AIR INTAKE", pos: [0, 0.24, -0.06], scale: 0.68 },
+      { text: "AIR FILTER", pos: [-0.26, 0.14, -0.08], scale: 0.68 },
+      { text: "EVAPORATOR COIL", pos: [-0.26, 0.02, -0.10], scale: 0.68 },
+      { text: "CROSS-FLOW FAN", pos: [0.26, -0.03, -0.10], scale: 0.68 },
+      { text: "AIR LOUVER", pos: [0, -0.18, -0.08], scale: 0.68 },
     ];
   }
   if (type === "AC_DAK") {
     return [
-      { text: "INTAKE GRILLE", pos: [0, -0.12, 0], scale: 0.72 },
-      { text: "TURBO FAN", pos: [-0.34, 0.10, 0], scale: 0.72 },
-      { text: "COOLING COIL RING", pos: [0.38, 0.08, -0.32], scale: 0.75 },
-      { text: "4-WAY LOUVERS", pos: [0, -0.12, -0.42], scale: 0.75 },
+      { text: "INTAKE GRILLE", pos: [0, -0.08, 0], scale: 0.68 },
+      { text: "TURBO FAN", pos: [-0.22, 0.08, 0], scale: 0.68 },
+      { text: "COOLING COIL", pos: [0.25, 0.08, -0.22], scale: 0.68 },
+      { text: "4-WAY LOUVERS", pos: [0, -0.08, -0.32], scale: 0.68 },
     ];
   }
   if (type === "AC_STANDING") {
     return [
-      { text: "AIR INTAKE", pos: [0.36, 0.35, -0.16], scale: 0.72 },
-      { text: "EVAPORATOR COIL", pos: [-0.36, 0.85, -0.16], scale: 0.75 },
-      { text: "CONTROL PANEL", pos: [0.36, 1.48, -0.16], scale: 0.72 },
-      { text: "TOP BLOWER", pos: [0, 1.98, -0.05], scale: 0.75 },
+      { text: "AIR INTAKE", pos: [0.22, 0.35, -0.12], scale: 0.68 },
+      { text: "EVAPORATOR COIL", pos: [-0.22, 0.85, -0.12], scale: 0.68 },
+      { text: "CONTROL PANEL", pos: [0.22, 1.48, -0.12], scale: 0.68 },
+      { text: "TOP BLOWER", pos: [0, 1.95, -0.04], scale: 0.70 },
     ];
   }
   return [
-    { text: "AIR INTAKE DAMPER", pos: [-1.28, 0.68, -0.25], scale: 0.85 },
-    { text: "PRE-FILTER", pos: [-0.92, 0.68, -0.25], scale: 0.85 },
-    { text: "BAG FILTERS", pos: [-0.68, 0.68, -0.25], scale: 0.85 },
-    { text: "COOLING COIL", pos: [-0.18, 0.68, -0.25], scale: 0.85 },
-    ...(hasHeater ? [{ text: "HEATING COIL", pos: [0.20, 0.68, -0.25] as [number, number, number], scale: 0.85 }] : []),
-    { text: "SUPPLY FAN", pos: [0.68, 0.68, -0.25], scale: 0.85 },
-    { text: "SUPPLY DUCT", pos: [1.32, 0.68, -0.25], scale: 0.85 },
+    { text: "AIR INTAKE DAMPER", pos: [-1.22, 0.62, -0.25], scale: 0.75 },
+    { text: "PRE-FILTER", pos: [-0.88, 0.62, -0.25], scale: 0.75 },
+    { text: "BAG FILTERS", pos: [-0.62, 0.62, -0.25], scale: 0.75 },
+    { text: "COOLING COIL", pos: [-0.15, 0.62, -0.25], scale: 0.75 },
+    ...(hasHeater ? [{ text: "HEATING COIL", pos: [0.18, 0.62, -0.25] as [number, number, number], scale: 0.75 }] : []),
+    { text: "SUPPLY FAN", pos: [0.65, 0.62, -0.25], scale: 0.75 },
+    { text: "SUPPLY DUCT", pos: [1.25, 0.62, -0.25], scale: 0.75 },
   ];
 }
 
@@ -685,15 +686,15 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
       const bbox = new THREE.Box3().setFromObject(internals);
       if (bbox.isEmpty()) return;
       const sphere = bbox.getBoundingSphere(new THREE.Sphere());
-      // Detailed zoom factor: brings the camera close to reveal all fine internal mechanics
+      // Balanced zoom factor: reveals fine internal mechanics while keeping labels safely inside canvas
       const zoomFactor =
         type === "AHU"
-          ? 0.72
+          ? 0.98
           : type === "AC_SPLIT_WALL"
-            ? 0.74
+            ? 1.05
             : type === "AC_DAK"
-              ? 0.76
-              : 0.76;
+              ? 1.08
+              : 1.05;
       const fitDist = (sphere.radius / Math.sin((camera.fov * Math.PI) / 360)) * zoomFactor;
       // View direction: looking straight into the transparent viewing side (-Z axis in glTF!)
       const viewDir =
