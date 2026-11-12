@@ -641,7 +641,7 @@ export default function AppShell({
       {!isImmersive3dPage ? (
         <nav
           aria-label="Mobile navigation"
-          className="no-print fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-[#dbe4f0] bg-white/95 px-1.5 pt-1.5 pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_24px_-20px_rgba(15,23,42,0.42)] backdrop-blur-xl md:hidden"
+          className="no-print fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-[#dbe4f0] bg-white/95 px-1 pt-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_-20px_rgba(15,23,42,0.42)] backdrop-blur-xl md:hidden"
         >
           {mobilePrimaryItems.map((item) => {
             const Icon = item.icon;
@@ -653,19 +653,19 @@ export default function AppShell({
                 aria-current={active ? "page" : undefined}
                 onClick={() => setMobileMoreOpen(false)}
                 className={cx(
-                  "flex min-h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-semibold leading-tight text-slate-500 [-webkit-tap-highlight-color:transparent]",
+                  "flex min-h-[44px] min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-0.5 py-1 text-[9.5px] font-semibold leading-none text-slate-500 [-webkit-tap-highlight-color:transparent]",
                   active && "text-[#1d6ef2]",
                 )}
               >
-                <span className="relative grid h-7 place-items-center">
-                  <Icon size={20} strokeWidth={active ? 2.4 : 1.9} />
+                <span className="relative grid h-6 place-items-center">
+                  <Icon size={18} strokeWidth={active ? 2.3 : 1.8} />
                   {item.badge === "alarms" && unackedAlarms > 0 ? (
-                    <span className="absolute -right-2 -top-1 grid h-[16px] min-w-[16px] place-items-center rounded-full bg-red-600 px-1 font-mono text-[9px] font-bold text-white ring-2 ring-white">
+                    <span className="absolute -right-2 -top-1 grid h-[15px] min-w-[15px] place-items-center rounded-full bg-red-600 px-0.5 font-mono text-[8.5px] font-bold text-white ring-2 ring-white">
                       {unackedAlarms > 99 ? "99+" : unackedAlarms}
                     </span>
                   ) : null}
                 </span>
-                <span className="block max-w-full truncate">{item.label === "Reports & Data Logger" ? "Reports" : item.label}</span>
+                <span className="block max-w-full truncate tracking-tight">{item.label === "Reports & Data Logger" ? "Reports" : item.label}</span>
               </Link>
             );
           })}
@@ -675,12 +675,14 @@ export default function AppShell({
             aria-expanded={mobileMoreOpen}
             onClick={() => setMobileMoreOpen((open) => !open)}
             className={cx(
-              "flex min-h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-semibold leading-tight text-slate-500 [-webkit-tap-highlight-color:transparent]",
+              "flex min-h-[44px] min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-0.5 py-1 text-[9.5px] font-semibold leading-none text-slate-500 [-webkit-tap-highlight-color:transparent]",
               (mobileMoreOpen || mobileMoreActive) && "text-[#1d6ef2]",
             )}
           >
-            <MoreHorizontal size={21} strokeWidth={2} />
-            <span>More</span>
+            <span className="relative grid h-6 place-items-center">
+              <MoreHorizontal size={18} strokeWidth={mobileMoreOpen || mobileMoreActive ? 2.3 : 1.8} />
+            </span>
+            <span className="block max-w-full truncate tracking-tight">More</span>
           </button>
         </nav>
       ) : null}
@@ -875,13 +877,14 @@ export default function AppShell({
           )
         : null}
 
-      <div className="no-print pointer-events-none fixed bottom-3 right-3 left-3 z-50 flex flex-col gap-2 sm:left-auto sm:bottom-4 sm:right-4 sm:w-96">
+      {/* FR-18 live alarms & trend proximity toast notifications */}
+      <div className="no-print pointer-events-none fixed top-16 right-3 left-3 z-50 flex flex-col gap-2 sm:top-auto sm:bottom-4 sm:right-4 sm:left-auto sm:w-96">
         {toasts.map((t) => (
           <div
             key={t.id}
             className={cx(
-              "panel panel-raised animate-rise pointer-events-auto flex items-start gap-2.5 rounded-xl border px-3 py-2.5",
-              t.tone === "critical" ? "border-red-200 bg-red-50" : t.tone === "warn" ? "border-amber-200 bg-amber-50" : "border-violet-200 bg-violet-50",
+              "panel panel-raised animate-rise pointer-events-auto flex items-start gap-2.5 rounded-xl border px-3 py-2.5 shadow-lg",
+              t.tone === "critical" ? "border-red-200 bg-red-50/95" : t.tone === "warn" ? "border-amber-200 bg-amber-50/95" : "border-violet-200 bg-violet-50/95",
             )}
           >
             <Activity size={14} className={cx("mt-0.5 flex-none", t.tone === "critical" ? "text-red-500" : t.tone === "warn" ? "text-amber-500" : "text-violet-500")} />

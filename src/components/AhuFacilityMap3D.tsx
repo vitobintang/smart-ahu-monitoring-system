@@ -1074,6 +1074,13 @@ export default function AhuFacilityMap3D({
     let lastWallClickAt = 0;
     let lastWallClickedIdx = -1;
 
+    // Multi-touch tracking for 2-finger pinch zoom and 2-finger pan
+    const activeTouches = new Map<number, { x: number; y: number }>();
+    let pinchStartDist = 0;
+    let pinchStartRadius = 0;
+    let pinchMidX = 0;
+    let pinchMidY = 0;
+
     const updateNdc = (clientX: number, clientY: number) => {
       const rect = domEl.getBoundingClientRect();
       pointerNdc.x = ((clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
@@ -1205,6 +1212,23 @@ export default function AhuFacilityMap3D({
     };
 
     const handlePointerDown = (e: PointerEvent) => {
+      activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      // Handle 2-finger pinch/zoom init
+      if (activeTouches.size === 2) {
+        const pts = Array.from(activeTouches.values());
+        const p1 = pts[0];
+        const p2 = pts[1];
+        if (p1 && p2) {
+          pinchStartDist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+          pinchStartRadius = camStateRef.current.goalRadius;
+          pinchMidX = (p1.x + p2.x) / 2;
+          pinchMidY = (p1.y + p2.y) / 2;
+        }
+        isDragging = false;
+        return;
+      }
+
       isDragging = true;
       isDraggingModelDirectly = false;
       draggingRoomElement = null;
@@ -1320,6 +1344,41 @@ export default function AhuFacilityMap3D({
     };
 
     const handlePointerMove = (e: PointerEvent) => {
+      if (activeTouches.has(e.pointerId)) {
+        activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+
+      // Handle 2-finger pinch zoom + 2-finger pan
+      if (activeTouches.size === 2) {
+        const pts = Array.from(activeTouches.values());
+        const p1 = pts[0];
+        const p2 = pts[1];
+        if (p1 && p2) {
+          const currentDist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+          if (pinchStartDist > 0) {
+            const factor = pinchStartDist / Math.max(10, currentDist);
+            const targetRadius = pinchStartRadius * factor;
+            const c = camStateRef.current;
+            c.goalRadius = Math.min(CAM_RADIUS_MAX, Math.max(CAM_RADIUS_MIN, targetRadius));
+
+            // Pan with 2-finger midpoint drag
+            const curMidX = (p1.x + p2.x) / 2;
+            const curMidY = (p1.y + p2.y) / 2;
+            const mdx = curMidX - pinchMidX;
+            const mdy = curMidY - pinchMidY;
+            pinchMidX = curMidX;
+            pinchMidY = curMidY;
+
+            const panScale = c.goalRadius * 0.0016;
+            const sinT = Math.sin(c.theta);
+            const cosT = Math.cos(c.theta);
+            c.goalTargetX = Math.min(CAM_PAN_RANGE_X, Math.max(-CAM_PAN_RANGE_X, c.goalTargetX - (mdx * cosT + mdy * sinT) * panScale));
+            c.goalTargetZ = Math.min(CAM_PAN_RANGE_Z, Math.max(-CAM_PAN_RANGE_Z, c.goalTargetZ - (-mdx * sinT + mdy * cosT) * panScale));
+          }
+        }
+        return;
+      }
+
       const isEditingPlacement = mode === "placement" || Boolean(movingAhuIdRef.current);
 
       // ROOMS corner drag: defer to the animation frame (same pattern as hall-vertex drags)
@@ -1489,6 +1548,10 @@ export default function AhuFacilityMap3D({
     };
 
     const handlePointerUp = (e: PointerEvent) => {
+      activeTouches.delete(e.pointerId);
+      if (activeTouches.size < 2) {
+        pinchStartDist = 0;
+      }
       // ROOMS corner drag commit: snap the final rect into React state exactly once
       if (roomCornerDragRef.current) {
         const { roomId, corner } = roomCornerDragRef.current;
@@ -1675,7 +1738,13 @@ export default function AhuFacilityMap3D({
       }
     };
 
-    const handlePointerLeave = () => {
+    const handlePointerLeave = (e?: PointerEvent) => {
+      if (e?.pointerId) {
+        activeTouches.delete(e.pointerId);
+      } else {
+        activeTouches.clear();
+      }
+      pinchStartDist = 0;
       const objs = ahuSceneObjectsRef.current;
       if (objs) {
         objs.ghostGroup.visible = false;

@@ -216,7 +216,7 @@ export function UnitCard({ card }: { card: Card }) {
       <Link
         href={`/devices/${card.ahu.id}?from=/dashboard`}
         className={cx(
-          "panel card-hover flex aspect-square flex-col justify-between rounded-2xl p-3 sm:hidden",
+          "panel card-hover flex flex-col justify-between rounded-2xl p-3 sm:hidden",
           card.status === "FAULT" && "border-red-200 bg-red-50/30",
         )}
       >
@@ -235,6 +235,17 @@ export function UnitCard({ card }: { card: Card }) {
             </span>
           </div>
           <p className="mt-0.5 truncate text-[10px] font-medium text-slate-500">{card.ahu.location}</p>
+        </div>
+
+        {/* Product preview picture (matches desktop preview) */}
+        <div className="relative my-2 h-16 w-full overflow-hidden">
+          <Image
+            src={DEVICE_IMG[card.ahu.deviceType ?? ""] ?? "/ahu/unit-iso2-t.png"}
+            alt={`${card.ahu.id} unit`}
+            fill
+            sizes="(max-width: 640px) 45vw, 128px"
+            className={cx("scale-[1.15] object-contain", off && "opacity-40 grayscale")}
+          />
         </div>
 
         <div className="grid grid-cols-2 gap-1.5">
