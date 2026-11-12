@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   Building2,
   Check,
+  CheckCheck,
   ChevronRight,
   CircleHelp,
   Clock3,
@@ -16,6 +17,7 @@ import {
   MoreHorizontal,
   RefreshCw,
   ShieldCheck,
+  Trash2,
   Wifi,
   WifiOff,
 } from "lucide-react";
@@ -48,6 +50,8 @@ type Alarm = {
   triggeredAt: string | number;
   acknowledged: boolean;
   acknowledgedBy?: string | null;
+  state?: string;
+  resolvedAt?: string | null;
 };
 type SessionResponse = { user: User | null };
 type AlarmResponse = { alarms: Alarm[]; activeCount: number; state: string };
@@ -80,6 +84,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [tab, setTab] = useState<Tab>("dashboard");
+  const [alarmState, setAlarmState] = useState<"active" | "all">("active");
   const [overview, setOverview] = useState<Overview | null>(null);
   const [alarms, setAlarms] = useState<Alarm[]>([]);
   const [loading, setLoading] = useState(false);
@@ -129,7 +134,7 @@ export default function App() {
     setError(null);
     try {
       if (tab === "alarms") {
-        const result = await api<AlarmResponse>("/api/alarms?state=active");
+        const result = await api<AlarmResponse>(`/api/alarms?state=${alarmState}`);
         setAlarms(result.alarms ?? []);
       } else {
         const overviewRequest = api<Overview>("/api/overview?window=15&lite=1");
@@ -146,7 +151,7 @@ export default function App() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [tab]);
+  }, [tab, alarmState]);
 
   useEffect(() => {
     if (!user) return;
@@ -193,6 +198,43 @@ export default function App() {
       await loadData(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not acknowledge alarm");
+    } finally {
+      setAcknowledging(null);
+    }
+  }
+
+  async function ackAll() {
+    setAcknowledging("all");
+    try {
+      await api("/api/alarms", { method: "POST", body: JSON.stringify({ all: true }) });
+      await loadData(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not acknowledge all alarms");
+    } finally {
+      setAcknowledging(null);
+    }
+  }
+
+  async function clearAllAcknowledged() {
+    if (!window.confirm("Clear all acknowledged alarms from history?")) return;
+    setAcknowledging("clear-all");
+    try {
+      await api("/api/alarms", { method: "DELETE", body: JSON.stringify({ allAcknowledged: true }) });
+      await loadData(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not clear acknowledged alarms");
+    } finally {
+      setAcknowledging(null);
+    }
+  }
+
+  async function clearAlarm(alarmId: string) {
+    setAcknowledging(`clear-${alarmId}`);
+    try {
+      await api("/api/alarms", { method: "DELETE", body: JSON.stringify({ alarmId }) });
+      await loadData(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not clear alarm");
     } finally {
       setAcknowledging(null);
     }
@@ -282,8 +324,74 @@ export default function App() {
         ) : null}
         {tab === "alarms" ? (
           <>
-            <PageHeading eyebrow="ATTENTION REQUIRED" title="Alarms" detail={`${activeAlarms.length} active · refreshes every 5 seconds`} />
-            {loading && !alarms.length ? <LoadingCard /> : activeAlarms.length ? <div className="alarm-list">{activeAlarms.map((alarm) => <AlarmRow key={alarm.id} alarm={alarm} onAcknowledge={() => void acknowledge(alarm.id)} busy={acknowledging === alarm.id} />)}</div> : <EmptyCard icon={<Check size={20} />} title="All clear" message="There are no active alarms right now." />}
+            <PageHeading
+              eyebrow="ATTENTION REQUIRED"
+              title="Alarms"
+              detail={`${alarms.filter((a) => !a.acknowledged).length} unacknowledged · ${alarms.length} total`}
+            />
+            <div className="alarm-toolbar">
+              <div className="alarm-filters">
+                <button
+                  type="button"
+                  className={`filter-chip ${alarmState === "active" ? "is-active" : ""}`}
+                  onClick={() => setAlarmState("active")}
+                >
+                  Active ({alarms.filter((a) => !a.acknowledged || a.state === "ACTIVE").length})
+                </button>
+                <button
+                  type="button"
+                  className={`filter-chip ${alarmState === "all" ? "is-active" : ""}`}
+                  onClick={() => setAlarmState("all")}
+                >
+                  All Logs ({alarms.length})
+                </button>
+              </div>
+              <div className="alarm-bulk-actions">
+                {alarms.some((a) => !a.acknowledged) ? (
+                  <button
+                    type="button"
+                    className="btn-ack-all"
+                    disabled={acknowledging === "all"}
+                    onClick={() => void ackAll()}
+                  >
+                    {acknowledging === "all" ? <RefreshCw size={12} className="spin" /> : <CheckCheck size={12} />}
+                    Ack All ({alarms.filter((a) => !a.acknowledged).length})
+                  </button>
+                ) : null}
+                {alarms.some((a) => a.acknowledged) ? (
+                  <button
+                    type="button"
+                    className="btn-clear-all"
+                    disabled={acknowledging === "clear-all"}
+                    onClick={() => void clearAllAcknowledged()}
+                  >
+                    {acknowledging === "clear-all" ? <RefreshCw size={12} className="spin" /> : <Trash2 size={12} />}
+                    Clear Acked
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            {loading && !alarms.length ? (
+              <LoadingCard />
+            ) : alarms.length ? (
+              <div className="alarm-list">
+                {alarms.map((alarm) => (
+                  <AlarmRow
+                    key={alarm.id}
+                    alarm={alarm}
+                    onAcknowledge={() => void acknowledge(alarm.id)}
+                    onClear={() => void clearAlarm(alarm.id)}
+                    busy={acknowledging === alarm.id || acknowledging === `clear-${alarm.id}`}
+                  />
+                ))}
+              </div>
+            ) : (
+              <EmptyCard
+                icon={<Check size={20} />}
+                title="All clear"
+                message={alarmState === "active" ? "There are no active alarms right now." : "No alarm records found."}
+              />
+            )}
           </>
         ) : null}
         {tab === "more" ? (
@@ -342,13 +450,46 @@ function DeviceRow({ device, compact = false }: { device: DeviceCard; compact?: 
   );
 }
 
-function AlarmRow({ alarm, onAcknowledge, busy = false }: { alarm: Alarm; onAcknowledge?: () => void; busy?: boolean }) {
+function AlarmRow({
+  alarm,
+  onAcknowledge,
+  onClear,
+  busy = false,
+}: {
+  alarm: Alarm;
+  onAcknowledge?: () => void;
+  onClear?: () => void;
+  busy?: boolean;
+}) {
   const tone = alarm.priority.toLowerCase();
   return (
     <article className={`alarm-card alarm-${tone}`}>
       <div className="alarm-mark"><AlertTriangle size={18} /></div>
-      <div className="alarm-content"><div className="alarm-top"><strong>{alarm.ahuId}</strong><span className="priority-chip">{alarm.priority}</span></div><p>{alarm.message || alarm.parameter}</p><div className="alarm-meta"><span>{alarm.parameter}</span><span>{formatTime(alarm.triggeredAt)}</span></div>
-        {onAcknowledge ? <button className="ack-button" disabled={busy || alarm.acknowledged} onClick={onAcknowledge}>{busy ? <RefreshCw size={14} className="spin" /> : <Check size={14} />}{alarm.acknowledged ? "Acknowledged" : "Acknowledge"}</button> : null}
+      <div className="alarm-content">
+        <div className="alarm-top">
+          <strong>{alarm.ahuId}</strong>
+          <span className="priority-chip">{alarm.priority}</span>
+        </div>
+        <p>{alarm.message || alarm.parameter}</p>
+        <div className="alarm-meta">
+          <span>{alarm.parameter}</span>
+          <span>{formatTime(alarm.triggeredAt)}</span>
+          {alarm.acknowledged ? <span className="status-ack-tag">Acknowledged</span> : null}
+        </div>
+        <div className="alarm-actions">
+          {!alarm.acknowledged && onAcknowledge ? (
+            <button className="ack-button" disabled={busy} onClick={onAcknowledge}>
+              {busy ? <RefreshCw size={13} className="spin" /> : <Check size={13} />}
+              Acknowledge
+            </button>
+          ) : null}
+          {alarm.acknowledged && onClear ? (
+            <button className="clear-button" disabled={busy} onClick={onClear}>
+              {busy ? <RefreshCw size={13} className="spin" /> : <Trash2 size={13} />}
+              Clear
+            </button>
+          ) : null}
+        </div>
       </div>
     </article>
   );
