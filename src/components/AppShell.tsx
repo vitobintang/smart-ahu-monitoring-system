@@ -661,7 +661,7 @@ export default function AppShell({
 
       <nav
           aria-label="Mobile navigation"
-          className="no-print fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-slate-200/90 bg-white/95 px-1.5 pt-1.5 pb-[max(0.45rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_-16px_rgba(15,23,42,0.25)] backdrop-blur-xl md:hidden"
+          className="no-print fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 items-center gap-1 border-t border-slate-200/80 bg-white/95 px-2 pt-1.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_-16px_rgba(15,23,42,0.18)] backdrop-blur-xl md:hidden"
         >
           {mobilePrimaryItems.map((item) => {
             const Icon = item.icon;
@@ -673,24 +673,21 @@ export default function AppShell({
                 aria-current={active ? "page" : undefined}
                 onClick={() => setMobileMoreOpen(false)}
                 className={cx(
-                  "relative flex min-h-[50px] min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-1 py-1 text-[10px] font-semibold leading-none [-webkit-tap-highlight-color:transparent] transition-all duration-200",
+                  "group relative flex min-h-[46px] min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1.5 text-[10px] font-semibold leading-none [-webkit-tap-highlight-color:transparent] transition-all duration-200",
                   active
-                    ? "bg-blue-600/12 text-blue-600 font-bold shadow-2xs ring-1 ring-blue-600/25"
-                    : "text-slate-500 hover:text-slate-800",
+                    ? "bg-blue-600/12 text-blue-600 font-bold shadow-2xs ring-1 ring-blue-600/20"
+                    : "text-slate-500 hover:text-slate-800 active:bg-slate-100/60",
                 )}
               >
-                <span className="relative grid h-6 place-items-center">
-                  <Icon size={19} strokeWidth={active ? 2.4 : 1.8} />
+                <span className="relative grid h-5 place-items-center">
+                  <Icon size={19} strokeWidth={active ? 2.5 : 1.8} className={active ? "text-blue-600" : "text-slate-500 group-hover:text-slate-700"} />
                   {item.badge === "alarms" && unackedAlarms > 0 ? (
-                    <span className="absolute -right-2 -top-1 grid h-[15px] min-w-[15px] place-items-center rounded-full bg-rose-600 px-0.5 font-mono text-[8.5px] font-bold text-white ring-2 ring-white">
+                    <span className="absolute -right-2.5 -top-1 grid h-[15px] min-w-[15px] place-items-center rounded-full bg-rose-600 px-0.5 font-mono text-[8.5px] font-bold text-white ring-2 ring-white">
                       {unackedAlarms > 99 ? "99+" : unackedAlarms}
                     </span>
                   ) : null}
                 </span>
-                <span className="block max-w-full truncate tracking-tight">{item.label === "Reports & Data Logger" ? "Reports" : item.label}</span>
-                {active ? (
-                  <span className="absolute bottom-0.5 h-1 w-5 rounded-full bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.8)]" />
-                ) : null}
+                <span className="block max-w-full truncate tracking-tight text-[10px]">{item.label === "Reports & Data Logger" ? "Reports" : item.label}</span>
               </Link>
             );
           })}
@@ -700,19 +697,16 @@ export default function AppShell({
             aria-expanded={mobileMoreOpen}
             onClick={() => setMobileMoreOpen((open) => !open)}
             className={cx(
-              "relative flex min-h-[50px] min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-1 py-1 text-[10px] font-semibold leading-none [-webkit-tap-highlight-color:transparent] transition-all duration-200",
+              "group relative flex min-h-[46px] min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1.5 text-[10px] font-semibold leading-none [-webkit-tap-highlight-color:transparent] transition-all duration-200",
               mobileMoreOpen || mobileMoreActive
-                ? "bg-blue-600/12 text-blue-600 font-bold shadow-2xs ring-1 ring-blue-600/25"
-                : "text-slate-500 hover:text-slate-800",
+                ? "bg-blue-600/12 text-blue-600 font-bold shadow-2xs ring-1 ring-blue-600/20"
+                : "text-slate-500 hover:text-slate-800 active:bg-slate-100/60",
             )}
           >
-            <span className="relative grid h-6 place-items-center">
-              <MoreHorizontal size={19} strokeWidth={mobileMoreOpen || mobileMoreActive ? 2.4 : 1.8} />
+            <span className="relative grid h-5 place-items-center">
+              <MoreHorizontal size={19} strokeWidth={mobileMoreOpen || mobileMoreActive ? 2.5 : 1.8} className={mobileMoreOpen || mobileMoreActive ? "text-blue-600" : "text-slate-500 group-hover:text-slate-700"} />
             </span>
-            <span className="block max-w-full truncate tracking-tight">More</span>
-            {mobileMoreOpen || mobileMoreActive ? (
-              <span className="absolute bottom-0.5 h-1 w-5 rounded-full bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.8)]" />
-            ) : null}
+            <span className="block max-w-full truncate tracking-tight text-[10px]">More</span>
           </button>
         </nav>
 
