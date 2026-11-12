@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { AhuStatus } from "@/lib/ahu";
 import { disposeGroupDeep } from "@/components/ahu-model-builders";
 
@@ -455,9 +456,67 @@ function zoneColorAt(t: number, zones: Array<{ at: number; color: THREE.Color }>
   return best;
 }
 
+function getGlbLabels(type: string, hasHeater: boolean): Array<{ text: string; pos: [number, number, number]; scale?: number }> {
+  if (type === "AC_SPLIT_WALL") {
+    return [
+      { text: "AIR INTAKE", pos: [0, 0.22, 0], scale: 0.72 },
+      { text: "AIR FILTER", pos: [-0.36, 0.16, 0.02], scale: 0.72 },
+      { text: "EVAPORATOR COIL", pos: [-0.36, 0.06, 0.04], scale: 0.75 },
+      { text: "CROSS-FLOW FAN", pos: [0.36, -0.04, 0.02], scale: 0.75 },
+      { text: "AIR LOUVER", pos: [0, -0.19, -0.04], scale: 0.72 },
+    ];
+  }
+  if (type === "AC_DAK") {
+    return [
+      { text: "INTAKE GRILLE", pos: [0, -0.10, 0], scale: 0.72 },
+      { text: "TURBO FAN", pos: [-0.30, 0.06, 0], scale: 0.72 },
+      { text: "COOLING COIL RING", pos: [0.34, 0.08, 0.34], scale: 0.75 },
+      { text: "4-WAY LOUVERS", pos: [0, -0.10, 0.40], scale: 0.75 },
+    ];
+  }
+  if (type === "AC_STANDING") {
+    return [
+      { text: "AIR INTAKE", pos: [0.36, 0.35, 0.15], scale: 0.72 },
+      { text: "EVAPORATOR COIL", pos: [-0.36, 0.82, 0], scale: 0.75 },
+      { text: "CONTROL PANEL", pos: [0.36, 1.48, 0.15], scale: 0.72 },
+      { text: "TOP BLOWER", pos: [0, 1.92, 0], scale: 0.75 },
+    ];
+  }
+  return [
+    { text: "AIR INTAKE DAMPER", pos: [-1.28, 0.62, 0], scale: 0.85 },
+    { text: "PRE-FILTER", pos: [-0.92, 0.62, 0], scale: 0.85 },
+    { text: "BAG FILTERS", pos: [-0.68, 0.62, 0], scale: 0.85 },
+    { text: "COOLING COIL", pos: [-0.18, 0.62, 0], scale: 0.85 },
+    ...(hasHeater ? [{ text: "HEATING COIL", pos: [0.20, 0.62, 0] as [number, number, number], scale: 0.85 }] : []),
+    { text: "CENTRIFUGAL FAN", pos: [0.82, 0.62, 0], scale: 0.85 },
+    { text: "SUPPLY DUCT", pos: [1.32, 0.62, 0], scale: 0.85 },
+  ];
+}
+
+const GLB_MODEL_URLS: Record<string, string> = {
+  AC_SPLIT_WALL: "/models/ac-split-wall.glb",
+  AHU: "/models/ahu.glb",
+  AC_DAK: "/models/ac-dak.glb",
+  AC_STANDING: "/models/ac-standing.glb",
+};
+
 /** Per-device-type airflow path: t∈[0,1] → position in the MODEL-GROUP frame. */
-function pathPoint(deviceType: string, t: number, lane: number, lift: number, out: THREE.Vector3): THREE.Vector3 {
+function pathPoint(deviceType: string, t: number, lane: number, lift: number, out: THREE.Vector3, isGlb = false): THREE.Vector3 {
   if (deviceType === "AC_SPLIT_WALL") {
+    if (isGlb) {
+      if (t < 0.65) {
+        const k = t / 0.65;
+        out.set(
+          lane * 0.42,
+          0.16 - 0.20 * k + lift * 0.02,
+          0.01 + 0.02 * Math.sin(k * Math.PI) + Math.sin(t * 10 + lane * 4) * 0.008,
+        );
+      } else {
+        const k = (t - 0.65) / 0.35;
+        out.set(lane * 0.42 + Math.sin(k * 4 + lane * 6) * 0.015, -0.04 - 0.09 * k, 0.01 - 0.07 * k);
+      }
+      return out;
+    }
     // top intake → down through filter/coil → cross-flow fan → out the front-bottom louver
     if (t < 0.72) {
       const k = t / 0.72;
@@ -505,7 +564,13 @@ function pathPoint(deviceType: string, t: number, lane: number, lift: number, ou
     }
     return out;
   }
-  // AHU: -x → +x through the component chain
+  // AHU
+  if (isGlb) {
+    const x = -1.35 + t * 2.70;
+    const bend = t > 0.4 && t < 0.7 ? Math.sin(((t - 0.4) / 0.3) * Math.PI) * 0.05 : 0;
+    out.set(x, -0.05 + lift * 0.25 + bend, lane * 0.32 + Math.sin(t * 8 + lane * 4) * 0.02);
+    return out;
+  }
   const x = -2.85 + t * 5.7;
   const bend = t > 0.35 && t < 0.6 ? Math.sin(((t - 0.35) / 0.25) * Math.PI) * 0.08 : 0;
   out.set(x, 0.02 + lift * 0.28 + bend, lane * 0.62 + Math.sin(t * 7 + lane * 4) * 0.03);
@@ -529,6 +594,7 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
     const type =
       deviceType === "AC_DAK" || deviceType === "AC_SPLIT_WALL" || deviceType === "AC_STANDING" ? deviceType : "AHU";
     let disposed = false;
+    let isGlbActive = false;
 
     const width = Math.max(320, mount.clientWidth);
     const height = Math.max(240, mount.clientHeight);
@@ -536,20 +602,21 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = false;
+    renderer.domElement.style.touchAction = "none";
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(42, width / height, 0.05, 120);
 
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x334155, 1.15));
-    const key = new THREE.DirectionalLight(0xffffff, 1.6);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x334155, 1.25));
+    const key = new THREE.DirectionalLight(0xffffff, 1.8);
     key.position.set(4, 6, 3);
     scene.add(key);
-    const rim = new THREE.DirectionalLight(0x93c5fd, 0.7);
+    const rim = new THREE.DirectionalLight(0x93c5fd, 0.85);
     rim.position.set(-4, 3, -3);
     scene.add(rim);
 
-    // casing + internals
+    // Initial procedural setup (acts as instant preview while GLB loads, and graceful fallback)
     const casingSize: [number, number, number] =
       type === "AHU"
         ? [6.1, 2.0, 2.1]
@@ -573,38 +640,59 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
     edges.position.copy(casing.position);
     scene.add(edges);
 
-    const { group: internals, rotors, flaps, pathZones, labels } = buildComponentMeshes(type, hasHeater);
+    const procedural = buildComponentMeshes(type, hasHeater);
+    const internals = new THREE.Group();
+    internals.add(procedural.group);
     scene.add(internals);
-    for (const l of labels) {
+
+    const activeRotors: RotorSpec[] = [...procedural.rotors];
+    const activeFlaps: THREE.Object3D[] = [...procedural.flaps];
+    let activePathZones = [...procedural.pathZones];
+
+    for (const l of procedural.labels) {
       const sprite = makeLabel(l.text, l.scale ?? 1);
       sprite.position.set(...l.pos);
       internals.add(sprite);
     }
 
-    // Auto-frame: fit the whole machine (even the slim wall unit) in view.
-    const bbox = new THREE.Box3().setFromObject(internals);
-    const sphere = bbox.getBoundingSphere(new THREE.Sphere());
-    const fitDist = (sphere.radius / Math.sin((camera.fov * Math.PI) / 360)) * 1.12;
-    const viewDir =
-      type === "AC_SPLIT_WALL"
-        ? new THREE.Vector3(0.55, 0.32, 1.35)
-        : type === "AC_DAK"
-          ? new THREE.Vector3(0.8, 0.75, 0.9)
-          : type === "AC_STANDING"
-            ? new THREE.Vector3(0.85, 0.35, 1.15)
-            : new THREE.Vector3(1, 0.5, 1);
-    camera.position.copy(sphere.center).addScaledVector(viewDir.normalize(), fitDist);
-
+    // Auto-frame helper
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.enablePan = false;
-    controls.minDistance = sphere.radius * 0.7;
-    controls.maxDistance = fitDist * 3;
-    controls.target.copy(sphere.center);
-    controls.update();
 
-    // airflow particles (in the model frame — they ride with the internals group)
+    // Grounding disc under the machine
+    const floor = new THREE.Mesh(
+      new THREE.CircleGeometry(3.0, 48),
+      new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.95, transparent: true, opacity: 0.5 }),
+    );
+    floor.rotation.x = -Math.PI / 2;
+    scene.add(floor);
+
+    const frameCameraToModel = () => {
+      const bbox = new THREE.Box3().setFromObject(internals);
+      if (bbox.isEmpty()) return;
+      const sphere = bbox.getBoundingSphere(new THREE.Sphere());
+      const fitDist = (sphere.radius / Math.sin((camera.fov * Math.PI) / 360)) * 1.14;
+      const viewDir =
+        type === "AC_SPLIT_WALL"
+          ? new THREE.Vector3(0.55, 0.32, 1.35)
+          : type === "AC_DAK"
+            ? new THREE.Vector3(0.8, 0.75, 0.9)
+            : type === "AC_STANDING"
+              ? new THREE.Vector3(0.85, 0.35, 1.15)
+              : new THREE.Vector3(1, 0.5, 1);
+      camera.position.copy(sphere.center).addScaledVector(viewDir.normalize(), fitDist);
+      controls.minDistance = sphere.radius * 0.65;
+      controls.maxDistance = fitDist * 3.5;
+      controls.target.copy(sphere.center);
+      controls.update();
+      floor.position.y = bbox.min.y - Math.max(0.12, sphere.radius * 0.12);
+      floor.scale.setScalar(sphere.radius * 1.35);
+    };
+    frameCameraToModel();
+
+    // Airflow particles
     const COUNT = FLOW_CONFIG[type]?.count ?? 130;
     const P_SIZE = FLOW_CONFIG[type]?.size ?? 0.05;
     const positions = new Float32Array(COUNT * 3);
@@ -627,20 +715,117 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
     points.frustumCulled = false;
     internals.add(points);
 
-    // grounding disc under the machine
-    const floor = new THREE.Mesh(
-      new THREE.CircleGeometry(sphere.radius * 1.35, 48),
-      new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.95, transparent: true, opacity: 0.5 }),
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = bbox.min.y - Math.max(0.18, sphere.radius * 0.16);
-    scene.add(floor);
+    // ── Load Blender-generated GLTF 3D Model ──
+    const glbUrl = GLB_MODEL_URLS[type];
+    if (glbUrl) {
+      const loader = new GLTFLoader();
+      loader.load(
+        glbUrl,
+        (gltf) => {
+          if (disposed) {
+            disposeGroupDeep(gltf.scene);
+            return;
+          }
+          isGlbActive = true;
+
+          // Hide the procedural wireframe / outer casing as Blender model has its own sleek casing
+          casing.visible = false;
+          edges.visible = false;
+
+          // Remove procedural mesh group and existing label sprites
+          internals.remove(procedural.group);
+          disposeGroupDeep(procedural.group);
+
+          const toRemove: THREE.Object3D[] = [];
+          internals.children.forEach((c) => {
+            if ((c as THREE.Sprite).isSprite) toRemove.push(c);
+          });
+          toRemove.forEach((s) => {
+            const spr = s as THREE.Sprite;
+            (spr.material as THREE.SpriteMaterial)?.map?.dispose();
+            (spr.material as THREE.Material)?.dispose();
+            internals.remove(s);
+          });
+
+          // Mount Blender model
+          const modelScene = gltf.scene;
+          internals.add(modelScene);
+
+          // Clear previous animation handles
+          activeRotors.length = 0;
+          activeFlaps.length = 0;
+
+          modelScene.traverse((child) => {
+            if (child.name === "Rotor") {
+              // AHU centrifugal fan rotates around Z; split wall along X; dak/standing along Y
+              const axis: "x" | "y" = type === "AC_SPLIT_WALL" ? "x" : "y";
+              activeRotors.push({ obj: child as THREE.Group, axis });
+            }
+            if (child.name === "AirLouver" || child.name === "LouverVane") {
+              activeFlaps.push(child);
+            }
+            if ((child as THREE.Mesh).isMesh) {
+              const mesh = child as THREE.Mesh;
+              if (child.name === "HeatingCoil") {
+                child.visible = hasHeater;
+              }
+              const matName = (mesh.material as THREE.Material)?.name ?? "";
+              if (
+                child.name.includes("Window") ||
+                child.name.includes("Cutaway") ||
+                matName.includes("Glass") ||
+                matName.includes("Cutaway")
+              ) {
+                mesh.material = new THREE.MeshPhysicalMaterial({
+                  color: 0xbae6fd,
+                  transparent: true,
+                  opacity: 0.2,
+                  roughness: 0.08,
+                  metalness: 0.05,
+                  transmission: 0.9,
+                  depthWrite: false,
+                });
+              }
+            }
+          });
+
+          // Add clean billboard labels for Blender model
+          const glbLabels = getGlbLabels(type, hasHeater);
+          for (const l of glbLabels) {
+            const sprite = makeLabel(l.text, l.scale ?? 1);
+            sprite.position.set(...l.pos);
+            internals.add(sprite);
+          }
+
+          // Path zones for colors
+          if (type === "AHU") {
+            activePathZones = [
+              { at: 0, color: COLOR_INTAKE },
+              { at: 0.16, color: COLOR_FILTERED },
+              { at: 0.44, color: COLOR_COOLED },
+              ...(hasHeater ? [{ at: 0.58, color: COLOR_HEATED }] : []),
+              { at: 0.78, color: COLOR_OUT },
+            ];
+          }
+
+          // Ensure airflow particles are at the top of the group
+          internals.remove(points);
+          internals.add(points);
+
+          // Re-frame camera to the Blender model
+          frameCameraToModel();
+        },
+        undefined,
+        (err) => {
+          console.warn("GLTF load error, falling back to procedural model:", err);
+        },
+      );
+    }
 
     let raf = 0;
     let fanAngle = 0;
     let fanSpeedNow = 0;
     let flapPhase = 0;
-    const flapBase = flaps.map((f) => f.rotation.x);
     const clock = new THREE.Clock();
 
     const animate = () => {
@@ -651,14 +836,20 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
       const targetFan = running ? 5 + Math.min(1.2, Math.max(0.4, (fanSpeed ?? 3) / 4)) * 3.6 : 0;
       fanSpeedNow += (targetFan - fanSpeedNow) * Math.min(1, dt * 1.6);
       fanAngle += fanSpeedNow * dt;
-      for (const r of rotors) {
-        // spin around each fan's TRUE airflow axis (AHU/cross-flow → X, scroll/axial → Y)
-        r.obj.rotation[r.axis] = -fanAngle;
+
+      for (const r of activeRotors) {
+        if (type === "AHU" && isGlbActive) {
+          // In AHU Blender GLTF, centrifugal fan rotates around Z axis
+          r.obj.rotation.z = -fanAngle;
+        } else {
+          r.obj.rotation[r.axis] = -fanAngle;
+        }
       }
+
       if (running) flapPhase += dt * 1.8;
-      flaps.forEach((flap, i) => {
-        const base = flapBase[i];
-        const target = running ? base + Math.sin(flapPhase + i * 1.3) * 0.26 : base * 0.5;
+      activeFlaps.forEach((flap, i) => {
+        const base = isGlbActive ? 0.35 : 0.6;
+        const target = running ? base + Math.sin(flapPhase + i * 1.3) * 0.22 : base * 0.5;
         flap.rotation.x += (target - flap.rotation.x) * Math.min(1, dt * 6);
       });
 
@@ -667,11 +858,11 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
         const p = particles[i];
         p.t += flow * p.speed * dt * 3.2;
         if (p.t > 1) p.t -= 1;
-        pathPoint(type, p.t, p.lane, p.lift, tmpVec);
+        pathPoint(type, p.t, p.lane, p.lift, tmpVec, isGlbActive);
         positions[i * 3] = tmpVec.x;
         positions[i * 3 + 1] = tmpVec.y;
         positions[i * 3 + 2] = tmpVec.z;
-        const c = zoneColorAt(p.t, pathZones);
+        const c = zoneColorAt(p.t, activePathZones);
         const dim = running ? 1 : 0.22;
         colors[i * 3] = c.r * dim;
         colors[i * 3 + 1] = c.g * dim;
@@ -701,7 +892,6 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
       cancelAnimationFrame(raf);
       resizeObserver?.disconnect();
       controls.dispose();
-      // sprite materials/textures first (their geometry is engine-shared)
       internals.traverse((obj) => {
         const sprite = obj as THREE.Sprite;
         if (sprite.isSprite) {
@@ -717,10 +907,11 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
       (edges.material as THREE.Material).dispose();
       floor.geometry.dispose();
       (floor.material as THREE.Material).dispose();
+      pointsGeo.dispose();
+      pointsMat.dispose();
       renderer.dispose();
       if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement);
     };
-    // Rebuild only when the machine's identity/look changes.
   }, [ahuId, deviceType, status, hasHeater, fanSpeed]);
 
   return (
