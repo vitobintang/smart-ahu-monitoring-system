@@ -18,6 +18,7 @@ import {
 import { api, LOCAL_POLL_MS, timeAgo, usePoll } from "@/lib/client";
 import { useSessionUser } from "@/components/AppShell";
 import ControlPanel from "@/components/ControlPanel";
+import { getDeviceImage } from "@/app/(app)/dashboard/cards";
 import type { FacilityAhuItem, PendingPlacement } from "@/components/AhuFacilityMap3D";
 import { DEVICE_TYPES, DEVICE_TYPE_LABELS, type RoomRecord } from "@/lib/facility-rooms";
 import { can } from "@/lib/domain";
@@ -654,7 +655,7 @@ export default function AhuIndexPage() {
                 {/* Compact Square Mobile Card (< sm) */}
                 <div
                   className={cx(
-                    "panel card-hover flex aspect-square flex-col justify-between rounded-2xl p-3 sm:hidden",
+                    "panel card-hover group flex flex-col justify-between rounded-2xl p-3 sm:hidden transition-all duration-200 hover:border-blue-400/80 hover:shadow-md",
                     c.status === "FAULT" && "border-red-200 bg-red-50/30",
                   )}
                 >
@@ -664,6 +665,17 @@ export default function AhuIndexPage() {
                       <StatusBadge status={c.status} size="sm" />
                     </div>
                     <p className="mt-0.5 truncate text-[10px] font-medium text-slate-500">{c.ahu.location}</p>
+                  </Link>
+
+                  {/* Product preview picture per device kind */}
+                  <Link href={`/devices/${c.ahu.id}?from=/devices`} className="relative my-2 h-18 w-full overflow-hidden flex items-center justify-center">
+                    <Image
+                      src={getDeviceImage(c.ahu)}
+                      alt={`${c.ahu.id} unit`}
+                      fill
+                      sizes="160px"
+                      className={cx("object-contain transition-transform duration-300 group-hover:scale-105", c.status === "OFFLINE" && "opacity-45 grayscale")}
+                    />
                   </Link>
 
                   <Link href={`/devices/${c.ahu.id}?from=/devices`} className="grid grid-cols-2 gap-1.5">
@@ -712,7 +724,7 @@ export default function AhuIndexPage() {
                 </div>
 
                 {/* Full Tablet/Desktop Card (>= sm) */}
-                <div className="panel card-hover hidden h-full flex-col rounded-2xl p-4 sm:flex">
+                <div className="panel card-hover group hidden h-full flex-col rounded-2xl p-4 sm:flex transition-all duration-200 hover:border-blue-400/80 hover:shadow-md">
                   <div className="flex items-start justify-between gap-2">
                     <Link href={`/devices/${c.ahu.id}?from=/devices`} className="group min-w-0 flex-1">
                       <p className="font-mono text-[14.5px] font-bold text-[#12294d] group-hover:text-[#1d6ef2]">
@@ -727,13 +739,13 @@ export default function AhuIndexPage() {
                   </div>
 
                   <Link href={`/devices/${c.ahu.id}?from=/devices`} className="mt-3 flex items-center gap-3">
-                    <div className="relative h-16 w-20 flex-none sm:w-24">
+                    <div className="relative h-20 w-24 flex-none overflow-hidden flex items-center justify-center">
                       <Image
-                        src="/ahu/unit-iso.png"
+                        src={getDeviceImage(c.ahu)}
                         alt={`${c.ahu.id} illustration`}
                         fill
-                        sizes="96px"
-                        className={cx("object-contain", c.status === "OFFLINE" && "opacity-45 grayscale")}
+                        sizes="128px"
+                        className={cx("object-contain transition-transform duration-300 group-hover:scale-105", c.status === "OFFLINE" && "opacity-45 grayscale")}
                       />
                     </div>
                     <dl className="grid min-w-0 flex-1 grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
