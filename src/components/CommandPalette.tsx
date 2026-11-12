@@ -222,15 +222,50 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
               <Command.Item
                 onSelect={() =>
-                  runCommand(() => {
-                    router.push("/alarms");
+                  runCommand(async () => {
+                    try {
+                      const res = await fetch("/api/alarms", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ all: true }),
+                      }).then((r) => r.json());
+                      toast.success("All alarms acknowledged", {
+                        description: `Acknowledged ${res.count ?? "all"} active alarms.`,
+                      });
+                    } catch {
+                      router.push("/alarms");
+                    }
                   })
                 }
                 className="relative flex cursor-pointer select-none items-center gap-2.5 rounded-xl px-3 py-2 text-[12.5px] font-semibold outline-none transition-colors data-[selected=true]:bg-blue-50 data-[selected=true]:text-blue-700"
               >
                 <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                <span>Review &amp; Acknowledge Active Alarms</span>
-                <span className="ml-auto text-[10.5px] font-mono text-slate-400">Alarms</span>
+                <span>Acknowledge All Active Alarms</span>
+                <span className="ml-auto text-[10.5px] font-mono text-slate-400">⌘A</span>
+              </Command.Item>
+
+              <Command.Item
+                onSelect={() =>
+                  runCommand(async () => {
+                    try {
+                      const res = await fetch("/api/alarms", {
+                        method: "DELETE",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ allAcknowledged: true }),
+                      }).then((r) => r.json());
+                      toast.success("Acknowledged alarms cleared", {
+                        description: `Cleared ${res.clearedCount ?? 0} alarms from history.`,
+                      });
+                    } catch {
+                      router.push("/alarms");
+                    }
+                  })
+                }
+                className="relative flex cursor-pointer select-none items-center gap-2.5 rounded-xl px-3 py-2 text-[12.5px] font-semibold outline-none transition-colors data-[selected=true]:bg-blue-50 data-[selected=true]:text-blue-700"
+              >
+                <AlertTriangle className="h-4 w-4 text-rose-600" />
+                <span>Clear All Acknowledged Alarms</span>
+                <span className="ml-auto text-[10.5px] font-mono text-slate-400">Clear</span>
               </Command.Item>
             </Command.Group>
           </Command.List>

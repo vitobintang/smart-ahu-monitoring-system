@@ -4,6 +4,11 @@ const enforceHttps = process.env.ENFORCE_HTTPS_REDIRECT === "true";
 
 const nextConfig: NextConfig = {
   images: { unoptimized: true },
+  typescript: {
+    // Dedicated type checking runs cleanly via `npm run typecheck` (`tsc --noEmit`).
+    // Avoids Windows Turbopack child-worker V8 zone OOM during next build.
+    ignoreBuildErrors: true,
+  },
   // Firebase Admin relies on Node APIs and its runtime-resolved service subpaths.
   // Keep it external in Vercel functions rather than bundling each dynamic import.
   serverExternalPackages: ["firebase-admin"],

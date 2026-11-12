@@ -902,15 +902,29 @@ export default function AppShell({
           )
         : null}
 
-      {/* Official Sonner Toast System (Emil Kowalski) */}
+      {/* Official Sonner Toast System (Emil Kowalski) - Unified light glassmorphic theme */}
       <Toaster
         position="top-right"
         richColors
         closeButton
         expand={false}
-        theme="system"
+        theme="light"
         toastOptions={{
-          className: "font-sans border border-slate-200/90 shadow-lg rounded-2xl",
+          className:
+            "border border-slate-200/90 bg-white/98 text-slate-900 shadow-[0_12px_36px_-6px_rgba(15,23,42,0.16)] backdrop-blur-xl rounded-2xl p-3.5 font-sans",
+          classNames: {
+            title: "text-[12.5px] font-bold text-slate-900 leading-snug",
+            description: "text-[11.5px] font-medium text-slate-600 mt-0.5 leading-snug",
+            actionButton:
+              "bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl shadow-xs transition",
+            cancelButton: "bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold px-2.5 py-1.5 rounded-xl",
+            closeButton:
+              "border-slate-200 bg-white hover:bg-slate-100 text-slate-400 hover:text-slate-700 shadow-2xs",
+            error: "border-rose-200 bg-rose-50/95 text-rose-950",
+            warning: "border-amber-200 bg-amber-50/95 text-amber-950",
+            info: "border-sky-200 bg-sky-50/95 text-sky-950",
+            success: "border-emerald-200 bg-emerald-50/95 text-emerald-950",
+          },
         }}
       />
 

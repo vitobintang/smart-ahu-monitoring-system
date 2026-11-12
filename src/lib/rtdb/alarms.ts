@@ -204,3 +204,31 @@ export async function applyAlarmResolve(rtdb: RtdbAdapter, alarmId: string, reso
     rtdb.remove(alarmActiveIndexNode(alarmId)),
   ]);
 }
+
+/** Deletes an alarm completely from the database and active index. */
+export async function removeRtdbAlarm(rtdb: RtdbAdapter, alarmId: string): Promise<boolean> {
+  const existing = await rtdb.get<RtdbAlarmRecord>(alarmNode(alarmId));
+  if (!existing) return false;
+  await Promise.all([
+    rtdb.remove(alarmNode(alarmId)),
+    rtdb.remove(alarmActiveIndexNode(alarmId)),
+  ]);
+  return true;
+}
+
+/** Deletes all acknowledged alarms (both active and resolved). */
+export async function removeRtdbAcknowledgedAlarms(rtdb: RtdbAdapter): Promise<number> {
+  const tree = (await rtdb.get<Record<string, RtdbAlarmRecord>>(ALARMS_NODE)) ?? {};
+  const ackedIds = Object.values(tree)
+    .filter((a) => a.acknowledged)
+    .map((a) => a.id);
+  await Promise.all(
+    ackedIds.map((id) =>
+      Promise.all([
+        rtdb.remove(alarmNode(id)),
+        rtdb.remove(alarmActiveIndexNode(id)),
+      ]),
+    ),
+  );
+  return ackedIds.length;
+}
