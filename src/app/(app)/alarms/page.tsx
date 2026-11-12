@@ -259,7 +259,15 @@ export default function AlarmsPage() {
       </div>
 
       <ErrorNote message={error} />
-      {loading && !data ? <Spinner label="Loading alarms…" /> : null}
+      {loading && !data ? (
+        <div className="space-y-3 rounded-2xl border border-slate-200/90 bg-white/95 p-6 shadow-2xs backdrop-blur-md animate-pulse">
+          <div className="h-6 w-48 rounded bg-slate-200/80" />
+          <div className="h-12 w-full rounded-xl bg-slate-100" />
+          <div className="h-12 w-full rounded-xl bg-slate-50" />
+          <div className="h-12 w-full rounded-xl bg-slate-50" />
+          <div className="h-12 w-full rounded-xl bg-slate-50" />
+        </div>
+      ) : null}
 
       {/* Main Alarms Table and Mobile Cards */}
       <div className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white/95 shadow-2xs backdrop-blur-md">

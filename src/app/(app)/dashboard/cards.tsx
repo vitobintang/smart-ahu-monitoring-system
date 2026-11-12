@@ -187,7 +187,7 @@ export function Tile({
   );
   const wrapCls = cx(mobileBanner && "col-span-2 sm:col-span-2 lg:col-span-1");
   return href ? (
-    <Link href={href} className={cx("group block h-full", wrapCls)} title="Sync & system event log (FR-29)">
+    <Link href={href} prefetch={true} className={cx("group block h-full", wrapCls)} title="Sync & system event log (FR-29)">
       {body}
     </Link>
   ) : wrapCls ? (
@@ -240,6 +240,7 @@ export function UnitCard({ card }: { card: Card }) {
       {/* Compact Square Mobile AHU Card (< sm) */}
       <Link
         href={`/devices/${card.ahu.id}?from=/dashboard`}
+        prefetch={true}
         className={cx(
           "panel card-hover group flex flex-col justify-between rounded-2xl p-3 sm:hidden transition-all duration-200 hover:border-blue-400/80 hover:shadow-md",
           card.status === "FAULT" && "border-red-200 bg-red-50/30",
@@ -422,7 +423,7 @@ export function UnitCard({ card }: { card: Card }) {
         </div>
 
         <div className="mt-1 flex justify-end border-t border-[#f1f5f9] pt-2.5">
-          <Link href={`/devices/${card.ahu.id}?from=/dashboard`} className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-[#2563eb] hover:underline">
+          <Link href={`/devices/${card.ahu.id}?from=/dashboard`} prefetch={true} className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-[#2563eb] hover:underline">
             View Details <ArrowRight size={13} />
           </Link>
         </div>

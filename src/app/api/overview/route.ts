@@ -115,7 +115,7 @@ async function loadOverview(windowMin: number, lite: boolean): Promise<Record<st
       windowMin,
       serverTime: new Date().toISOString(),
     };
-    overviewCache.set(key, { data: payload, expiresAt: Date.now() + 350 });
+    overviewCache.set(key, { data: payload, expiresAt: Date.now() + 2500 });
     return payload;
   })().finally(() => {
     overviewInFlight.delete(key);

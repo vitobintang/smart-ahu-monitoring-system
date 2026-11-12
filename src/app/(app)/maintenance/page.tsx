@@ -58,7 +58,15 @@ export default function MaintenancePage() {
       </div>
 
       <ErrorNote message={error} />
-      {loading && !data ? <Spinner label="Loading maintenance indicators…" /> : null}
+      {loading && !data ? (
+        <div className="panel space-y-3 rounded-2xl p-6 animate-pulse">
+          <div className="h-6 w-48 rounded bg-slate-200/80" />
+          <div className="h-10 w-full rounded-xl bg-slate-100" />
+          <div className="h-12 w-full rounded-xl bg-slate-50" />
+          <div className="h-12 w-full rounded-xl bg-slate-50" />
+          <div className="h-12 w-full rounded-xl bg-slate-50" />
+        </div>
+      ) : null}
 
       <div className="panel overflow-hidden rounded-2xl">
         <div className="overflow-x-auto">

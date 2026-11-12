@@ -114,7 +114,20 @@ export default function ConfigPage() {
     }
   }
 
-  if (loading && !data) return <Spinner label="Loading configuration…" />;
+  if (loading && !data) {
+    return (
+      <div className="space-y-5 animate-pulse">
+        <div className="h-8 w-64 rounded bg-slate-200/80" />
+        <div className="panel space-y-4 rounded-2xl p-6">
+          <div className="h-6 w-48 rounded bg-slate-200/80" />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="h-10 rounded-xl bg-slate-100" />
+            <div className="h-10 rounded-xl bg-slate-100" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">

@@ -45,7 +45,19 @@ export default function AuditPage() {
   const path = `/api/audit-logs?limit=250${action ? `&action=${encodeURIComponent(action)}` : ""}`;
   const { data, error, loading, reload, paused, setPaused } = usePoll<{ logs: LogRow[]; actions: string[] }>(path, 15000);
 
-  if (loading && !data) return <Spinner label="Loading audit log…" />;
+  if (loading && !data) {
+    return (
+      <div className="space-y-4 animate-pulse">
+        <div className="h-8 w-48 rounded bg-slate-200/80" />
+        <div className="panel space-y-3 rounded-2xl p-6">
+          <div className="h-10 w-full rounded-xl bg-slate-100" />
+          <div className="h-12 w-full rounded-xl bg-slate-50" />
+          <div className="h-12 w-full rounded-xl bg-slate-50" />
+          <div className="h-12 w-full rounded-xl bg-slate-50" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">

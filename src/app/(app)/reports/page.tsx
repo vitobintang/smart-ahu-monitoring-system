@@ -420,7 +420,19 @@ export default function ReportsPage() {
       </div>
 
       <ErrorNote message={error} />
-      {loading && !report ? <Spinner label="Compiling formal engineering report…" /> : null}
+      {loading && !report ? (
+        <div className="mx-auto w-full max-w-4xl space-y-4 rounded-2xl border border-slate-200/90 bg-white/95 p-8 shadow-sm backdrop-blur-md animate-pulse">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+            <div className="h-7 w-64 rounded bg-slate-200/80" />
+            <div className="h-6 w-28 rounded bg-slate-200/60" />
+          </div>
+          <div className="space-y-3 pt-2">
+            <div className="h-10 w-full rounded bg-slate-100" />
+            <div className="h-32 w-full rounded-xl bg-slate-50" />
+            <div className="h-48 w-full rounded-xl bg-slate-50" />
+          </div>
+        </div>
+      ) : null}
 
       {!report && !loading && !error ? (
         <Empty>Select a device and time window, then click Generate Report.</Empty>

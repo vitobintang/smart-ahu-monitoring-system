@@ -65,7 +65,16 @@ export default function EnergyPage() {
       </div>
 
       <ErrorNote message={error} />
-      {loading && !data ? <Spinner label="Loading energy data…" /> : null}
+      {loading && !data ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 animate-pulse">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="panel h-28 rounded-2xl p-5 bg-white/90 border border-slate-200/80">
+              <div className="h-4 w-24 rounded bg-slate-200/80" />
+              <div className="mt-3 h-7 w-20 rounded bg-slate-200/90" />
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {data ? (
         <>

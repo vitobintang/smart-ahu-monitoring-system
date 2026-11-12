@@ -108,7 +108,17 @@ export default function TrendsPage() {
 
       {notice ? <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11.5px] text-sky-900">{notice}</p> : null}
       <ErrorNote message={error} />
-      {loading && !data ? <Spinner label="Running trend analysis…" /> : null}
+      {loading && !data ? (
+        <div className="space-y-4 animate-pulse">
+          <div className="h-44 w-full rounded-2xl border border-slate-200/90 bg-white/95 p-4 shadow-sm backdrop-blur-md">
+            <div className="mb-3 h-5 w-32 rounded bg-slate-200/80" />
+            <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+              <div className="h-28 rounded-xl bg-slate-100" />
+              <div className="h-28 rounded-xl bg-slate-100" />
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="space-y-4">
         {entries.map(([ahuId, analyses]) => {

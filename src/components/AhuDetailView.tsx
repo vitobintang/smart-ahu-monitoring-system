@@ -1,8 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import AhuDetailed3DView from "@/components/AhuDetailed3DView";
+import dynamic from "next/dynamic";
 import Link from "next/link";
+
+const AhuDetailed3DView = dynamic(() => import("@/components/AhuDetailed3DView"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-[360px] w-full flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200/80 bg-slate-900/90 text-white shadow-inner animate-pulse">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+      <span className="text-xs font-semibold text-slate-300">Loading 3D digital twin…</span>
+      <span className="text-[11px] text-slate-400">Initializing procedural geometry and shaders</span>
+    </div>
+  ),
+});
 import {
   CartesianGrid,
   Line,

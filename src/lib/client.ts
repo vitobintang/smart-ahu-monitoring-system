@@ -53,7 +53,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(message);
   }
   if (method !== "GET") {
-    clearPollCache();
+    // Invalidate the related endpoint domain without deleting data (SWR preservation)
+    clearPollCache(path.split("?")[0]);
   }
   return data as T;
 }
@@ -64,8 +65,28 @@ const POLL_CACHE_MAX = 64;
 const pollCache = new Map<string, { data: unknown; ts: number }>();
 const inFlightGets = new Map<string, Promise<unknown>>();
 
-export function clearPollCache() {
-  pollCache.clear();
+/**
+ * Soft invalidation: marks cached entries as stale (ts: 0) rather than deleting
+ * data completely. This preserves instant 0ms Stale-While-Revalidate (SWR) page
+ * transitions without ever flashing blank loading states.
+ */
+export function clearPollCache(pathOrPrefix?: string) {
+  if (pathOrPrefix) {
+    for (const [key, entry] of pollCache.entries()) {
+      if (key === pathOrPrefix || key.startsWith(pathOrPrefix)) {
+        entry.ts = 0;
+      }
+    }
+    for (const key of inFlightGets.keys()) {
+      if (key === pathOrPrefix || key.startsWith(pathOrPrefix)) {
+        inFlightGets.delete(key);
+      }
+    }
+    return;
+  }
+  for (const entry of pollCache.values()) {
+    entry.ts = 0;
+  }
   inFlightGets.clear();
 }
 

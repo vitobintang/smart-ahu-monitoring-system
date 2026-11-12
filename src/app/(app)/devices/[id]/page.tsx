@@ -17,8 +17,14 @@ export default function AhuDetailPage() {
   return (
     <Suspense
       fallback={
-        <div className="panel rounded-2xl p-6">
-          <Spinner />
+        <div className="space-y-4 animate-pulse">
+          <div className="h-8 w-64 rounded-xl bg-slate-200/80" />
+          <div className="h-[360px] w-full rounded-2xl bg-slate-900/80 border border-slate-200/80" />
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="h-28 rounded-2xl border border-slate-200/80 bg-white/90 p-4" />
+            ))}
+          </div>
         </div>
       }
     >

@@ -338,6 +338,7 @@ export default function AppShell({
               <Link
                 key={item.label}
                 href={item.href}
+                prefetch={true}
                 onClick={() => setMobileOpen(false)}
                 className={cx(
                   "group flex items-center gap-3.5 rounded-xl px-3.5 py-2.5 text-[13.5px] font-medium transition-all duration-150 sm:px-4 sm:py-3",
@@ -670,6 +671,7 @@ export default function AppShell({
               <Link
                 key={item.href}
                 href={item.href}
+                prefetch={true}
                 aria-current={active ? "page" : undefined}
                 onClick={() => setMobileMoreOpen(false)}
                 className={cx(
@@ -748,6 +750,7 @@ export default function AppShell({
                   <Link
                     key={item.href}
                     href={item.href}
+                    prefetch={true}
                     aria-current={active ? "page" : undefined}
                     onClick={() => setMobileMoreOpen(false)}
                     className={cx("mobile-more-link", active && "is-active")}

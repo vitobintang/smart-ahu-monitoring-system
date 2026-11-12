@@ -251,7 +251,34 @@ export default function DashboardPage() {
       </div>
 
       <ErrorNote message={error} />
-      {loading && !data ? <Spinner label="Loading fleet status…" /> : null}
+      {loading && !data ? (
+        <div className="space-y-5 animate-pulse" aria-busy="true">
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-2 sm:gap-3.5 lg:grid-cols-3 xl:grid-cols-5">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="h-32 rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-sm backdrop-blur-md">
+                <div className="h-4 w-20 rounded bg-slate-200/80" />
+                <div className="mt-3 h-8 w-24 rounded bg-slate-200/90" />
+                <div className="mt-3 h-3 w-32 rounded bg-slate-200/60" />
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="h-48 rounded-2xl border border-slate-200/80 bg-white/90 p-5 shadow-sm backdrop-blur-md">
+                <div className="flex justify-between">
+                  <div className="h-5 w-28 rounded bg-slate-200/80" />
+                  <div className="h-5 w-16 rounded bg-slate-200/60" />
+                </div>
+                <div className="mt-6 h-12 w-full rounded bg-slate-100" />
+                <div className="mt-4 flex gap-2">
+                  <div className="h-6 w-20 rounded bg-slate-200/60" />
+                  <div className="h-6 w-20 rounded bg-slate-200/60" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {data ? (
         <>
