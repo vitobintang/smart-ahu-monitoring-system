@@ -110,7 +110,7 @@ body {
   background-image:
     radial-gradient(1100px 420px at 50% -120px, rgba(147, 197, 253, 0.4), transparent 72%),
     linear-gradient(180deg, #f5f9fe 0%, #eef3fa 42%, #e9eef7 100%);
-  background-attachment: fixed;
+  background-attachment: scroll;
   font-variant-numeric: tabular-nums;
 }
 
@@ -429,4 +429,38 @@ input[type="checkbox"] { cursor: pointer; }
 
 @media (prefers-reduced-motion: reduce) {
   .mobile-more-sheet { animation: none; }
+}
+
+/* ================================================================== */
+/* Mobile Hardware Acceleration & Smooth 60 FPS Scrolling            */
+/* ================================================================== */
+@media (max-width: 768px) {
+  html, body {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: none;
+  }
+
+  /* Replace heavy GPU real-time gaussian blur on mobile cards with clean solid card */
+  .panel {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background: #ffffff !important;
+    border-color: #e2e8f0 !important;
+    transform: translateZ(0);
+    will-change: auto;
+  }
+
+  .panel-raised {
+    box-shadow: 0 4px 14px -4px rgba(16, 24, 40, 0.1) !important;
+  }
+
+  /* Disable hover scale physics on touch screens (prevents tap delay and frame stutter) */
+  .card-hover:hover {
+    transform: none !important;
+  }
+
+  /* Faster instant touch response */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
 }
