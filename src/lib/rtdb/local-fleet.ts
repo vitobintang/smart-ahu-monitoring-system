@@ -115,7 +115,8 @@ export async function ensureLocalFleet(rtdb: RtdbAdapter): Promise<string[]> {
       created.push(spec.id);
     }
 
-    if (!registry.has(spec.id)) {
+    const existingRec = registry.get(spec.id);
+    if (!existingRec) {
       const record = defaultAhuRecord(spec.id, now);
       const placed =
         spec.deviceType === "AHU"
@@ -158,6 +159,11 @@ export async function ensureLocalFleet(rtdb: RtdbAdapter): Promise<string[]> {
           lowLimit: 0, highLimit: 5, delaySec: 30, priority: "LOW", validMin: null, validMax: null,
           unit: "level", label: "Fan Speed", trendEnabled: false, updatedAt: nowStr,
         },
+      });
+    } else if (existingRec.deviceType !== spec.deviceType) {
+      await writeRtdbAhu(rtdb, {
+        ...existingRec,
+        deviceType: spec.deviceType,
       });
     }
   }

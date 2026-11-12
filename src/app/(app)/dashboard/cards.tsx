@@ -44,14 +44,18 @@ const DEVICE_IMG: Record<string, string> = {
   AC_STANDING: "/ahu/unit-standing-t.png",
 };
 
-export function getDeviceImage(ahu: { id: string; deviceType?: string | null }): string {
-  if (ahu.deviceType && DEVICE_IMG[ahu.deviceType]) {
-    return DEVICE_IMG[ahu.deviceType];
-  }
-  const upper = ahu.id.toUpperCase();
-  if (upper.includes("SPLIT")) return DEVICE_IMG.AC_SPLIT_WALL;
-  if (upper.includes("DAK") || upper.includes("CASSETTE")) return DEVICE_IMG.AC_DAK;
-  if (upper.includes("STD") || upper.includes("STANDING")) return DEVICE_IMG.AC_STANDING;
+export function inferDeviceType(ahu: { id: string; deviceType?: string | null; name?: string }): string {
+  const upper = `${ahu.id} ${ahu.name ?? ""}`.toUpperCase();
+  if (upper.includes("SPLIT") || upper.includes("WALL")) return "AC_SPLIT_WALL";
+  if (upper.includes("DAK") || upper.includes("CASSETTE")) return "AC_DAK";
+  if (upper.includes("STD") || upper.includes("STANDING") || upper.includes("TOWER") || upper.includes("FLOOR")) return "AC_STANDING";
+  if (ahu.deviceType && ahu.deviceType !== "AHU") return ahu.deviceType;
+  return ahu.deviceType ?? "AHU";
+}
+
+export function getDeviceImage(ahu: { id: string; deviceType?: string | null; name?: string }): string {
+  const kind = inferDeviceType(ahu);
+  if (DEVICE_IMG[kind]) return DEVICE_IMG[kind];
   return DEVICE_IMG.AHU;
 }
 

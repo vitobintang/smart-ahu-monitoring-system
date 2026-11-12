@@ -7,6 +7,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { AhuStatus } from "@/lib/ahu";
 import { disposeGroupDeep } from "@/components/ahu-model-builders";
 import { cx } from "@/components/ui";
+import { inferDeviceType } from "@/app/(app)/dashboard/cards";
 
 /**
  * AhuDetailed3DView — the detailed 3D "inside of the machine" viewer
@@ -65,19 +66,19 @@ function makeLabel(text: string, scale = 1): THREE.Sprite {
   // Render at 2x resolution for retina-crisp typography on high-DPI and mobile screens
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
-  const font = "600 48px ui-sans-serif, system-ui, -apple-system, sans-serif";
+  const font = "600 38px ui-sans-serif, system-ui, -apple-system, sans-serif";
   if (ctx) ctx.font = font;
-  const textW = ctx ? ctx.measureText(text).width : text.length * 28;
-  const padX = 56;
-  const padY = 32;
+  const textW = ctx ? ctx.measureText(text).width : text.length * 24;
+  const padX = 36;
+  const padY = 20;
   const w = Math.ceil(textW + padX * 2);
-  const h = 104;
+  const h = 80;
   canvas.width = w;
   canvas.height = h;
 
   if (ctx) {
     ctx.font = font;
-    const r = 24;
+    const r = 20;
     // Pill background
     ctx.beginPath();
     ctx.moveTo(r, 0);
@@ -93,12 +94,12 @@ function makeLabel(text: string, scale = 1): THREE.Sprite {
 
     ctx.fillStyle = "rgba(10, 18, 35, 0.94)";
     ctx.fill();
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = "rgba(56, 189, 248, 0.85)";
+    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = "rgba(56, 189, 248, 0.90)";
     ctx.stroke();
 
     // Subtle inner glowing border
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 1.2;
     ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
     ctx.stroke();
 
@@ -125,7 +126,7 @@ function makeLabel(text: string, scale = 1): THREE.Sprite {
       opacity: 0.98,
     }),
   );
-  const spriteH = 0.075 * scale;
+  const spriteH = 0.046 * scale;
   sprite.scale.set((w / h) * spriteH, spriteH, 1);
   sprite.renderOrder = 999;
   return sprite;
@@ -485,37 +486,37 @@ function zoneColorAt(t: number, zones: Array<{ at: number; color: THREE.Color }>
 function getGlbLabels(type: string, hasHeater: boolean): Array<{ text: string; pos: [number, number, number]; scale?: number }> {
   if (type === "AC_SPLIT_WALL") {
     return [
-      { text: "AIR INTAKE", pos: [0, 0.24, -0.06], scale: 0.68 },
-      { text: "AIR FILTER", pos: [-0.26, 0.14, -0.08], scale: 0.68 },
-      { text: "EVAPORATOR COIL", pos: [-0.26, 0.02, -0.10], scale: 0.68 },
-      { text: "CROSS-FLOW FAN", pos: [0.26, -0.03, -0.10], scale: 0.68 },
-      { text: "AIR LOUVER", pos: [0, -0.18, -0.08], scale: 0.68 },
+      { text: "AIR INTAKE", pos: [0.10, 0.20, 0.16], scale: 0.85 },
+      { text: "AIR FILTER", pos: [-0.28, 0.14, 0.16], scale: 0.85 },
+      { text: "EVAPORATOR COIL", pos: [-0.20, 0.02, 0.16], scale: 0.85 },
+      { text: "CROSS-FLOW FAN", pos: [0.22, -0.04, 0.16], scale: 0.85 },
+      { text: "AIR LOUVER", pos: [0, -0.19, 0.16], scale: 0.85 },
     ];
   }
   if (type === "AC_DAK") {
     return [
-      { text: "INTAKE GRILLE", pos: [0, -0.08, 0], scale: 0.68 },
-      { text: "TURBO FAN", pos: [-0.22, 0.08, 0], scale: 0.68 },
-      { text: "COOLING COIL", pos: [0.25, 0.08, -0.22], scale: 0.68 },
-      { text: "4-WAY LOUVERS", pos: [0, -0.08, -0.32], scale: 0.68 },
+      { text: "INTAKE GRILLE", pos: [0, -0.05, 0.18], scale: 0.85 },
+      { text: "TURBO FAN", pos: [-0.18, 0.06, 0.14], scale: 0.85 },
+      { text: "COOLING COIL", pos: [0.20, 0.06, -0.12], scale: 0.85 },
+      { text: "4-WAY LOUVERS", pos: [0, -0.15, -0.22], scale: 0.85 },
     ];
   }
   if (type === "AC_STANDING") {
     return [
-      { text: "AIR INTAKE", pos: [0.22, 0.35, -0.12], scale: 0.68 },
-      { text: "EVAPORATOR COIL", pos: [-0.22, 0.85, -0.12], scale: 0.68 },
-      { text: "CONTROL PANEL", pos: [0.22, 1.48, -0.12], scale: 0.68 },
-      { text: "TOP BLOWER", pos: [0, 1.95, -0.04], scale: 0.70 },
+      { text: "AIR INTAKE", pos: [-0.12, 0.35, 0.26], scale: 0.85 },
+      { text: "EVAPORATOR COIL", pos: [0.12, 0.88, 0.26], scale: 0.85 },
+      { text: "CONTROL PANEL", pos: [-0.12, 1.46, 0.26], scale: 0.85 },
+      { text: "TOP BLOWER", pos: [0, 1.84, 0.24], scale: 0.85 },
     ];
   }
   return [
-    { text: "AIR INTAKE DAMPER", pos: [-1.22, 0.62, -0.25], scale: 0.75 },
-    { text: "PRE-FILTER", pos: [-0.88, 0.62, -0.25], scale: 0.75 },
-    { text: "BAG FILTERS", pos: [-0.62, 0.62, -0.25], scale: 0.75 },
-    { text: "COOLING COIL", pos: [-0.15, 0.62, -0.25], scale: 0.75 },
-    ...(hasHeater ? [{ text: "HEATING COIL", pos: [0.18, 0.62, -0.25] as [number, number, number], scale: 0.75 }] : []),
-    { text: "SUPPLY FAN", pos: [0.65, 0.62, -0.25], scale: 0.75 },
-    { text: "SUPPLY DUCT", pos: [1.25, 0.62, -0.25], scale: 0.75 },
+    { text: "AIR INTAKE DAMPER", pos: [-1.08, 0.50, 0.48], scale: 0.88 },
+    { text: "PRE-FILTER", pos: [-0.74, 0.50, 0.48], scale: 0.88 },
+    { text: "BAG FILTERS", pos: [-0.42, 0.50, 0.48], scale: 0.88 },
+    { text: "COOLING COIL", pos: [-0.08, 0.50, 0.48], scale: 0.88 },
+    ...(hasHeater ? [{ text: "HEATING COIL", pos: [0.24, 0.50, 0.48] as [number, number, number], scale: 0.88 }] : []),
+    { text: "SUPPLY FAN", pos: [0.60, 0.50, 0.48], scale: 0.88 },
+    { text: "SUPPLY DUCT", pos: [1.08, 0.50, 0.48], scale: 0.88 },
   ];
 }
 
@@ -628,8 +629,9 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
+    const resolvedType = inferDeviceType({ id: ahuId, deviceType });
     const type =
-      deviceType === "AC_DAK" || deviceType === "AC_SPLIT_WALL" || deviceType === "AC_STANDING" ? deviceType : "AHU";
+      resolvedType === "AC_DAK" || resolvedType === "AC_SPLIT_WALL" || resolvedType === "AC_STANDING" ? resolvedType : "AHU";
     let disposed = false;
     let isGlbActive = false;
 
@@ -686,25 +688,25 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
       const bbox = new THREE.Box3().setFromObject(internals);
       if (bbox.isEmpty()) return;
       const sphere = bbox.getBoundingSphere(new THREE.Sphere());
-      // Balanced zoom factor: reveals fine internal mechanics while keeping labels safely inside canvas
+      // Closer zoom factor: reveals fine internal mechanics while keeping labels safely inside canvas
       const zoomFactor =
         type === "AHU"
-          ? 0.98
+          ? 0.78
           : type === "AC_SPLIT_WALL"
-            ? 1.05
+            ? 0.76
             : type === "AC_DAK"
-              ? 1.08
-              : 1.05;
+              ? 0.78
+              : 0.80;
       const fitDist = (sphere.radius / Math.sin((camera.fov * Math.PI) / 360)) * zoomFactor;
-      // View direction: looking straight into the transparent viewing side (-Z axis in glTF!)
+      // View direction: looking straight into the transparent viewing side (+Z axis in glTF!)
       const viewDir =
         type === "AC_SPLIT_WALL"
-          ? new THREE.Vector3(0.30, 0.18, -1.05)
+          ? new THREE.Vector3(0.24, 0.16, 1.10)
           : type === "AC_DAK"
-            ? new THREE.Vector3(0.75, -0.32, -0.85)
+            ? new THREE.Vector3(0.65, -0.45, 0.65)
             : type === "AC_STANDING"
-              ? new THREE.Vector3(0.48, 0.26, -1.05)
-              : new THREE.Vector3(0.24, 0.20, -1.15); // AHU: front crystal cutaway door reveal!
+              ? new THREE.Vector3(0.32, 0.20, 1.12)
+              : new THREE.Vector3(0.26, 0.20, 1.18); // AHU: front crystal cutaway door reveal!
       camera.position.copy(sphere.center).addScaledVector(viewDir.normalize(), fitDist);
       controls.minDistance = sphere.radius * 0.45;
       controls.maxDistance = fitDist * 3.0;
@@ -1024,13 +1026,13 @@ export default function AhuDetailed3DView({ ahuId, deviceType, status, hasHeater
       <div className="relative">
         <div ref={mountRef} className="h-[340px] w-full sm:h-[400px] touch-none select-none" style={{ touchAction: "none" }} />
         {loadingModel && (
-          <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2.5 bg-slate-950/60 backdrop-blur-xs transition-opacity duration-300">
-            <div className="relative flex h-9 w-9 items-center justify-center">
-              <div className="absolute h-9 w-9 animate-spin rounded-full border-2 border-sky-400/20 border-t-sky-400" />
-              <span className="h-2.5 w-2.5 rounded-full bg-sky-400 shadow-[0_0_10px_#38bdf8]" />
+          <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-slate-950 transition-opacity duration-300">
+            <div className="relative flex h-10 w-10 items-center justify-center">
+              <div className="absolute h-10 w-10 animate-spin rounded-full border-2 border-sky-400/20 border-t-sky-400" />
+              <span className="h-3 w-3 rounded-full bg-sky-400 shadow-[0_0_12px_#38bdf8]" />
             </div>
-            <span className="font-mono text-[11px] font-semibold tracking-wider text-slate-300 uppercase">
-              Loading {typeName} 3D…
+            <span className="font-mono text-[11.5px] font-semibold tracking-wider text-slate-300 uppercase">
+              Loading {typeName} 3D Twin…
             </span>
           </div>
         )}
