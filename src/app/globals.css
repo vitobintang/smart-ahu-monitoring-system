@@ -435,6 +435,12 @@ input[type="checkbox"] { cursor: pointer; }
 /* Mobile Hardware Acceleration & Smooth 60 FPS Scrolling            */
 /* ================================================================== */
 @media (max-width: 768px) {
+  /* Zero-lag: Kill all 33+ Tailwind backdrop-filter blur passes on mobile screens */
+  [class*="backdrop-blur"] {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
   html, body {
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-y: none;
