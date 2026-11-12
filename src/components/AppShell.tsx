@@ -400,7 +400,7 @@ export default function AppShell({
               type="button"
               className={cx(
                 "grid h-10 w-10 flex-none place-items-center rounded-xl text-slate-600 transition hover:bg-slate-100 lg:hidden",
-                !isImmersive3dPage && "hidden md:grid",
+                "hidden md:grid",
               )}
               onClick={() => setMobileOpen((v) => !v)}
               aria-label="Toggle navigation"
@@ -620,7 +620,7 @@ export default function AppShell({
           className={cx(
             "relative min-w-0",
             isImmersive3dPage
-              ? "h-[calc(100dvh-56px)] w-full flex-none overflow-hidden p-0 sm:h-[calc(100dvh-64px)]"
+              ? "h-[calc(100dvh-56px-3.5rem-env(safe-area-inset-bottom))] md:h-[calc(100dvh-56px)] w-full flex-none overflow-hidden p-0 sm:h-[calc(100dvh-64px)]"
               : "flex-1 px-3 py-3 pb-[calc(5.75rem+env(safe-area-inset-bottom))] sm:px-6 sm:py-6 md:pb-6 lg:px-7 lg:pb-6",
           )}
         >
@@ -638,8 +638,7 @@ export default function AppShell({
         ) : null}
       </div>
 
-      {!isImmersive3dPage ? (
-        <nav
+      <nav
           aria-label="Mobile navigation"
           className="no-print fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-[#dbe4f0] bg-white/95 px-1 pt-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_-20px_rgba(15,23,42,0.42)] backdrop-blur-xl md:hidden"
         >
@@ -685,9 +684,8 @@ export default function AppShell({
             <span className="block max-w-full truncate tracking-tight">More</span>
           </button>
         </nav>
-      ) : null}
 
-      {mobileMoreOpen && !isImmersive3dPage ? (
+      {mobileMoreOpen ? (
         <div
           className="no-print fixed inset-0 z-[60] flex items-end bg-slate-950/35 backdrop-blur-[2px] md:hidden"
           role="presentation"
@@ -877,20 +875,29 @@ export default function AppShell({
           )
         : null}
 
-      {/* FR-18 live alarms & trend proximity toast notifications */}
-      <div className="no-print pointer-events-none fixed top-16 right-3 left-3 z-50 flex flex-col gap-2 sm:top-auto sm:bottom-4 sm:right-4 sm:left-auto sm:w-96">
+      {/* FR-18 live alarms & trend proximity toast notifications (compact dynamic island pill) */}
+      <div className="no-print pointer-events-none fixed top-3 inset-x-0 z-[70] flex flex-col items-center px-3 sm:top-auto sm:bottom-4 sm:right-4 sm:left-auto sm:items-end sm:px-0 sm:w-96">
         {toasts.map((t) => (
           <div
             key={t.id}
             className={cx(
-              "panel panel-raised animate-rise pointer-events-auto flex items-start gap-2.5 rounded-xl border px-3 py-2.5 shadow-lg",
-              t.tone === "critical" ? "border-red-200 bg-red-50/95" : t.tone === "warn" ? "border-amber-200 bg-amber-50/95" : "border-violet-200 bg-violet-50/95",
+              "panel-raised animate-rise pointer-events-auto flex max-w-[92vw] items-center gap-2 rounded-full border px-3 py-1.5 shadow-[0_12px_32px_-8px_rgba(15,23,42,0.32)] backdrop-blur-xl sm:rounded-xl sm:p-2.5 sm:max-w-none sm:w-full sm:items-start",
+              t.tone === "critical"
+                ? "border-red-400/40 bg-slate-950/92 text-red-100"
+                : t.tone === "warn"
+                ? "border-amber-400/35 bg-slate-950/92 text-amber-100"
+                : "border-slate-700 bg-slate-950/92 text-slate-100",
             )}
           >
-            <Activity size={14} className={cx("mt-0.5 flex-none", t.tone === "critical" ? "text-red-500" : t.tone === "warn" ? "text-amber-500" : "text-violet-500")} />
-            <p className="flex-1 text-[11.5px] leading-snug text-slate-700">{t.text}</p>
-            <button type="button" onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))} className="flex-none text-slate-400 transition hover:text-slate-700">
-              <X size={12} />
+            <span className={cx("h-2 w-2 flex-none rounded-full animate-pulse", t.tone === "critical" ? "bg-red-400 shadow-[0_0_8px_#f87171]" : t.tone === "warn" ? "bg-amber-400 shadow-[0_0_8px_#fbbf24]" : "bg-sky-400 shadow-[0_0_8px_#38bdf8]")} />
+            <p className="flex-1 truncate text-[11px] font-medium leading-tight sm:whitespace-normal sm:text-[11.5px] sm:leading-snug">{t.text}</p>
+            <button
+              type="button"
+              onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}
+              aria-label="Dismiss notification"
+              className="flex-none rounded-full p-0.5 text-slate-400 transition hover:bg-white/10 hover:text-white"
+            >
+              <X size={13} />
             </button>
           </div>
         ))}

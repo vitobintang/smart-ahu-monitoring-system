@@ -769,9 +769,10 @@ export default function AhuFacilityMap3D({
     const initW = Math.max(320, Math.round(initialRect.width || window.innerWidth));
     const initH = Math.max(320, Math.round(initialRect.height || window.innerHeight - 120));
 
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    const isMobileDevice = typeof window !== "undefined" && (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth < 768);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobileDevice ? 1.5 : 2));
     renderer.setSize(initW, initH, false);
-    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.enabled = !isMobileDevice;
     // PCFSoftShadowMap was removed in three r187 — PCF is the engine's actual fallback.
     renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -785,15 +786,17 @@ export default function AhuFacilityMap3D({
 
     const camera = new THREE.PerspectiveCamera(42, initW / initH, 0.5, 460);
 
-    const hemi = new THREE.HemisphereLight(0xffffff, 0xcbd5e1, 1.25);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0xcbd5e1, isMobileDevice ? 1.45 : 1.25);
     hemi.position.set(0, 50, 0);
     scene.add(hemi);
 
     const sunLight = new THREE.DirectionalLight(0xffffff, 1.35);
     sunLight.position.set(28, 44, 24);
-    sunLight.castShadow = true;
-    sunLight.shadow.mapSize.width = 2048;
-    sunLight.shadow.mapSize.height = 2048;
+    sunLight.castShadow = !isMobileDevice;
+    if (!isMobileDevice) {
+      sunLight.shadow.mapSize.width = 1024;
+      sunLight.shadow.mapSize.height = 1024;
+    }
     sunLight.shadow.camera.near = 5;
     sunLight.shadow.camera.far = 140;
     const d = 48;
